@@ -35,11 +35,9 @@ export function Navbar() {
         <div className="flex justify-between items-center h-20">
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2 group">
-            <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center shadow-lg shadow-primary/30 group-hover:scale-105 transition-transform">
-              <Briefcase className="w-6 h-6 text-white" />
-            </div>
+            <img src="/logo.png" alt="ABIB JOBS Logo" className="w-10 h-10 rounded-xl shadow-lg shadow-primary/30 group-hover:scale-105 transition-transform" />
             <div className="flex flex-col">
-              <span className="font-display font-bold text-xl leading-none text-foreground tracking-tight">SwiftWork</span>
+              <span className="font-display font-bold text-xl leading-none text-foreground tracking-tight">ABIB JOBS</span>
               <span className="text-[10px] font-semibold text-primary uppercase tracking-widest">Nigeria</span>
             </div>
           </Link>
