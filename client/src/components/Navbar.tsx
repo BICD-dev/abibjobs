@@ -1,5 +1,7 @@
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@shared/routes";
 import { Button } from "@/components/ui/button";
 import { 
   Menu, 
@@ -8,7 +10,7 @@ import {
   Wallet, 
   User, 
   LogOut,
-  LayoutDashboard
+  TrendingUp
 } from "lucide-react";
 import { useState } from "react";
 import {
@@ -24,9 +26,22 @@ export function Navbar() {
   const [location] = useLocation();
   const { user, logout, isAuthenticated } = useAuth();
 
+  const { data: profile } = useQuery({
+    queryKey: [api.profile.get.path],
+    queryFn: async () => {
+      const res = await fetch(api.profile.get.path, { credentials: "include" });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: isAuthenticated,
+  });
+
+  const isAdmin = profile?.role === 'admin';
+
   const navLinks = [
     { href: "/jobs", label: "Find Jobs", icon: Briefcase },
     { href: "/wallet", label: "Wallet", icon: Wallet },
+    ...(isAdmin ? [{ href: "/admin/earnings", label: "Earnings", icon: TrendingUp }] : []),
   ];
 
   return (

@@ -154,9 +154,7 @@ export async function registerRoutes(
       jobId: job.id
     });
 
-    // We don't need to do anything with the fee in the user's wallet, 
-    // it effectively stays in the "system" (since we deducted full price from poster).
-    // But we could log a system transaction if we had a system wallet.
+    await storage.addPlatformEarning(fee, job.id, job.title);
 
     const updated = await storage.updateJob(jobId, { status: 'completed' });
     res.json(updated);
@@ -183,6 +181,52 @@ export async function registerRoutes(
 
     const updated = await storage.updateProfile(userId, data);
     res.json(updated);
+  });
+
+  // --- ADMIN ---
+
+  const isAdmin = async (req: any, res: any, next: any) => {
+    const userId = (req.user as any).claims.sub;
+    const profile = await storage.getProfile(userId);
+    if (!profile || profile.role !== 'admin') {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+    next();
+  };
+
+  app.get(api.admin.earnings.path, isAuthenticated, isAdmin, async (_req, res) => {
+    const earnings = await storage.getPlatformEarnings();
+    const txns = await storage.getPlatformTransactions();
+    res.json({
+      balance: earnings.totalBalance,
+      bankName: earnings.bankName,
+      bankCode: earnings.bankCode,
+      accountNumber: earnings.accountNumber,
+      accountName: earnings.accountName,
+      transactions: txns,
+    });
+  });
+
+  app.post(api.admin.withdraw.path, isAuthenticated, isAdmin, async (_req, res) => {
+    const parsed = api.admin.withdraw.input.safeParse(_req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+    const { amount, bankCode, bankName, accountNumber, accountName } = parsed.data;
+
+    try {
+      const updated = await storage.withdrawPlatformEarnings(amount, { bankName, bankCode, accountNumber, accountName });
+      res.json({ newBalance: updated.totalBalance });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message || "Withdrawal failed" });
+    }
+  });
+
+  app.post(api.admin.updateBank.path, isAuthenticated, isAdmin, async (_req, res) => {
+    const parsed = api.admin.updateBank.input.safeParse(_req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+    const { bankCode, bankName, accountNumber, accountName } = parsed.data;
+
+    await storage.updatePlatformBankInfo({ bankName, bankCode, accountNumber, accountName });
+    res.json({ message: "Bank info updated" });
   });
 
   // --- WALLET ---

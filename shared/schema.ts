@@ -56,6 +56,28 @@ export const transactions = pgTable("transactions", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const platformEarnings = pgTable("platform_earnings", {
+  id: serial("id").primaryKey(),
+  totalBalance: numeric("total_balance", { precision: 12, scale: 2 }).default("0").notNull(),
+  bankName: text("bank_name"),
+  bankCode: text("bank_code"),
+  accountNumber: text("account_number"),
+  accountName: text("account_name"),
+});
+
+export const platformTransactions = pgTable("platform_transactions", {
+  id: serial("id").primaryKey(),
+  amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
+  type: text("type").notNull(), // 'fee_earned', 'withdrawal'
+  jobId: integer("job_id"),
+  jobTitle: text("job_title"),
+  bankName: text("bank_name"),
+  bankCode: text("bank_code"),
+  accountNumber: text("account_number"),
+  accountName: text("account_name"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // === SCHEMAS ===
 
 export const insertProfileSchema = createInsertSchema(profiles).omit({ id: true });
@@ -70,6 +92,8 @@ export const insertTransactionSchema = createInsertSchema(transactions).omit({ i
 export type Profile = typeof profiles.$inferSelect;
 export type Job = typeof jobs.$inferSelect;
 export type Transaction = typeof transactions.$inferSelect;
+export type PlatformEarning = typeof platformEarnings.$inferSelect;
+export type PlatformTransaction = typeof platformTransactions.$inferSelect;
 
 export type CreateJobInput = z.infer<typeof createJobSchema>;
 

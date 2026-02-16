@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { createJobSchema, jobs, profiles, transactions } from './schema';
+import { createJobSchema, jobs, profiles, transactions, platformEarnings, platformTransactions } from './schema';
 
 export const errorSchemas = {
   validation: z.object({
@@ -132,6 +132,50 @@ export const api = {
       responses: {
         200: z.object({ newBalance: z.string() }),
         400: errorSchemas.payment,
+      },
+    },
+  },
+  admin: {
+    earnings: {
+      method: 'GET' as const,
+      path: '/api/admin/earnings' as const,
+      responses: {
+        200: z.object({
+          balance: z.string(),
+          bankName: z.string().nullable(),
+          bankCode: z.string().nullable(),
+          accountNumber: z.string().nullable(),
+          accountName: z.string().nullable(),
+          transactions: z.array(z.custom<typeof platformTransactions.$inferSelect>()),
+        }),
+      },
+    },
+    withdraw: {
+      method: 'POST' as const,
+      path: '/api/admin/withdraw' as const,
+      input: z.object({
+        amount: z.number().min(1),
+        bankCode: z.string().min(1),
+        bankName: z.string().min(1),
+        accountNumber: z.string().length(10),
+        accountName: z.string().optional(),
+      }),
+      responses: {
+        200: z.object({ newBalance: z.string() }),
+        400: errorSchemas.payment,
+      },
+    },
+    updateBank: {
+      method: 'POST' as const,
+      path: '/api/admin/bank' as const,
+      input: z.object({
+        bankCode: z.string().min(1),
+        bankName: z.string().min(1),
+        accountNumber: z.string().length(10),
+        accountName: z.string().optional(),
+      }),
+      responses: {
+        200: z.object({ message: z.string() }),
       },
     },
   },

@@ -5,11 +5,15 @@ import {
   profiles,
   jobs,
   transactions,
+  platformEarnings,
+  platformTransactions,
   type Profile,
   type Job,
   type Transaction,
   type CreateJobInput,
   type JobWithDetails,
+  type PlatformEarning,
+  type PlatformTransaction,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -28,6 +32,13 @@ export interface IStorage {
   getTransactions(userId: string): Promise<Transaction[]>;
   createTransaction(tx: { userId: string; amount: string; type: string; jobId?: number; bankName?: string | null; bankCode?: string | null; accountNumber?: string | null; accountName?: string | null }): Promise<Transaction>;
   updateWalletBalance(userId: string, amountChange: number): Promise<Profile>;
+
+  // Platform Earnings (Admin)
+  getPlatformEarnings(): Promise<PlatformEarning>;
+  getPlatformTransactions(): Promise<PlatformTransaction[]>;
+  addPlatformEarning(amount: number, jobId: number, jobTitle: string): Promise<void>;
+  withdrawPlatformEarnings(amount: number, bankInfo: { bankName: string; bankCode: string; accountNumber: string; accountName?: string }): Promise<PlatformEarning>;
+  updatePlatformBankInfo(bankInfo: { bankName: string; bankCode: string; accountNumber: string; accountName?: string }): Promise<PlatformEarning>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -132,13 +143,6 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateWalletBalance(userId: string, amountChange: number): Promise<Profile> {
-    // This should ideally be a transaction with row locking
-    // For MVP, we fetch, calculate, update.
-    // Note: amountChange can be negative.
-    
-    // We assume the caller has checked for sufficient funds if it's a deduction.
-    // But we can double check here or just let it go negative (which we might want to prevent).
-    
     const profile = await this.getProfile(userId);
     if (!profile) throw new Error("Profile not found");
 
@@ -150,6 +154,68 @@ export class DatabaseStorage implements IStorage {
       .where(eq(profiles.userId, userId))
       .returning();
     
+    return updated;
+  }
+
+  async getPlatformEarnings(): Promise<PlatformEarning> {
+    const [earnings] = await db.select().from(platformEarnings);
+    if (!earnings) {
+      const [created] = await db.insert(platformEarnings).values({ totalBalance: "0" }).returning();
+      return created;
+    }
+    return earnings;
+  }
+
+  async getPlatformTransactions(): Promise<PlatformTransaction[]> {
+    return await db.select().from(platformTransactions).orderBy(desc(platformTransactions.createdAt));
+  }
+
+  async addPlatformEarning(amount: number, jobId: number, jobTitle: string): Promise<void> {
+    const earnings = await this.getPlatformEarnings();
+    const newBalance = parseFloat(earnings.totalBalance) + amount;
+    await db.update(platformEarnings).set({ totalBalance: newBalance.toFixed(2) }).where(eq(platformEarnings.id, earnings.id));
+    await db.insert(platformTransactions).values({
+      amount: amount.toFixed(2),
+      type: 'fee_earned',
+      jobId,
+      jobTitle,
+    });
+  }
+
+  async withdrawPlatformEarnings(amount: number, bankInfo: { bankName: string; bankCode: string; accountNumber: string; accountName?: string }): Promise<PlatformEarning> {
+    const earnings = await this.getPlatformEarnings();
+    const currentBalance = parseFloat(earnings.totalBalance);
+    if (currentBalance < amount) throw new Error("Insufficient platform balance");
+
+    const newBalance = currentBalance - amount;
+    const [updated] = await db.update(platformEarnings)
+      .set({ totalBalance: newBalance.toFixed(2) })
+      .where(eq(platformEarnings.id, earnings.id))
+      .returning();
+
+    await db.insert(platformTransactions).values({
+      amount: (-amount).toFixed(2),
+      type: 'withdrawal',
+      bankName: bankInfo.bankName,
+      bankCode: bankInfo.bankCode,
+      accountNumber: bankInfo.accountNumber,
+      accountName: bankInfo.accountName || null,
+    });
+
+    return updated;
+  }
+
+  async updatePlatformBankInfo(bankInfo: { bankName: string; bankCode: string; accountNumber: string; accountName?: string }): Promise<PlatformEarning> {
+    const earnings = await this.getPlatformEarnings();
+    const [updated] = await db.update(platformEarnings)
+      .set({
+        bankName: bankInfo.bankName,
+        bankCode: bankInfo.bankCode,
+        accountNumber: bankInfo.accountNumber,
+        accountName: bankInfo.accountName || null,
+      })
+      .where(eq(platformEarnings.id, earnings.id))
+      .returning();
     return updated;
   }
 }
