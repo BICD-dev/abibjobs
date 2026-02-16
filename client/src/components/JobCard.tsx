@@ -73,8 +73,18 @@ export function JobCard({ job }: JobCardProps) {
             </div>
             
             <div className="text-right">
-              <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Offer</p>
+              <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">
+                {job.workersNeeded > 1 && job.priceType === 'per_person' ? 'Per Person' : 'Offer'}
+              </p>
               <p className="text-lg font-bold text-primary">₦{Number(job.price).toLocaleString()}</p>
+              {job.workersNeeded > 1 && (
+                <p className="text-[11px] text-muted-foreground" data-testid={`text-price-breakdown-${job.id}`}>
+                  {job.priceType === 'per_person' 
+                    ? `₦${(Number(job.price) * job.workersNeeded).toLocaleString()} total`
+                    : `₦${Math.round(Number(job.price) / job.workersNeeded).toLocaleString()}/person`
+                  }
+                </p>
+              )}
             </div>
           </div>
         </div>

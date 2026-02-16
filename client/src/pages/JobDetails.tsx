@@ -245,8 +245,18 @@ export default function JobDetails() {
             </div>
 
             <div className="bg-primary/5 px-8 py-6 rounded-2xl text-center min-w-[200px] border border-primary/10">
-              <p className="text-sm font-medium text-muted-foreground uppercase tracking-widest mb-2">Price</p>
+              <p className="text-sm font-medium text-muted-foreground uppercase tracking-widest mb-2">
+                {job.workersNeeded > 1 && job.priceType === 'per_person' ? 'Price Per Person' : 'Price'}
+              </p>
               <p className="text-4xl font-display font-bold text-primary" data-testid="text-job-price">{"\u20A6"}{Number(job.price).toLocaleString()}</p>
+              {job.workersNeeded > 1 && (
+                <p className="text-sm text-muted-foreground mt-1" data-testid="text-price-breakdown">
+                  {job.priceType === 'per_person'
+                    ? `₦${(Number(job.price) * job.workersNeeded).toLocaleString()} total for ${job.workersNeeded} workers`
+                    : `₦${Math.round(Number(job.price) / job.workersNeeded).toLocaleString()} per person`
+                  }
+                </p>
+              )}
               <div className="mt-3 flex items-center justify-center gap-1.5 text-xs text-primary/80 font-medium">
                 <Shield className="w-3.5 h-3.5" /> Escrow Secured
               </div>

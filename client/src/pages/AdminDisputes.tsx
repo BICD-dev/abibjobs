@@ -124,7 +124,8 @@ export default function AdminDisputes() {
   };
 
   const handleResolve = (dispute: DisputeWithDetails) => {
-    const originalPrice = Number(dispute.job?.price || 0);
+    const jobPrice = Number(dispute.job?.price || 0);
+    const originalPrice = dispute.job?.priceType === 'per_person' ? jobPrice * (dispute.job?.workersNeeded || 1) : jobPrice;
 
     if (resolveAction === 'custom') {
       const wa = parseFloat(customWorkerAmount) || 0;
@@ -209,7 +210,8 @@ export default function AdminDisputes() {
       );
     }
     const dispute = selectedDispute;
-    const originalPrice = Number(dispute.job?.price || 0);
+    const jobPriceRaw = Number(dispute.job?.price || 0);
+    const originalPrice = dispute.job?.priceType === 'per_person' ? jobPriceRaw * (dispute.job?.workersNeeded || 1) : jobPriceRaw;
 
     return (
       <div className="min-h-screen bg-background pb-20">
@@ -700,7 +702,7 @@ export default function AdminDisputes() {
                           )}
                         </div>
                         <p className="text-sm text-muted-foreground">
-                          {"\u20A6"}{Number(dispute.job?.price || 0).toLocaleString()} &middot; {msgCount} messages
+                          {"\u20A6"}{(dispute.job?.priceType === 'per_person' ? Number(dispute.job?.price || 0) * (dispute.job?.workersNeeded || 1) : Number(dispute.job?.price || 0)).toLocaleString()} &middot; {msgCount} messages
                         </p>
                         <div className="flex flex-wrap gap-4 mt-2 text-xs text-muted-foreground">
                           <span>Poster: <span className="text-foreground font-medium">{dispute.poster?.firstName}</span></span>

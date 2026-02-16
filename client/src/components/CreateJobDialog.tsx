@@ -34,6 +34,7 @@ import { z } from "zod";
 
 const formSchema = createJobSchema.extend({
   price: z.coerce.number().min(100, "Minimum price is ₦100"),
+  priceType: z.enum(["total", "per_person"]).default("total"),
   workersNeeded: z.coerce.number().min(1, "At least 1 worker required").max(50, "Maximum 50 workers"),
 });
 
@@ -49,16 +50,26 @@ export function CreateJobDialog() {
       title: "",
       description: "",
       price: undefined,
+      priceType: "total" as const,
       location: "",
       category: "other",
       workersNeeded: 1,
     },
   });
 
+  const watchedWorkersNeeded = form.watch("workersNeeded");
+  const watchedPrice = form.watch("price");
+  const watchedPriceType = form.watch("priceType");
+
+  const totalEscrow = watchedPrice && watchedWorkersNeeded > 1 && watchedPriceType === "per_person"
+    ? watchedPrice * watchedWorkersNeeded
+    : watchedPrice || 0;
+
   const onSubmit = (data: FormValues) => {
     createJob({
       ...data,
       price: String(data.price),
+      priceType: data.workersNeeded > 1 ? data.priceType : "total",
       workersNeeded: Number(data.workersNeeded),
     } as unknown as CreateJobInput, {
       onSuccess: () => {
@@ -141,19 +152,69 @@ export function CreateJobDialog() {
               />
             </div>
 
-            <FormField
-              control={form.control}
-              name="workersNeeded"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel className="font-semibold text-foreground/80">Workers Needed</FormLabel>
-                  <FormControl>
-                    <Input type="number" min={1} max={50} placeholder="1" className="rounded-xl border-2 focus:border-primary/50" {...field} data-testid="input-workers-needed" />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
+            <div className="grid grid-cols-2 gap-4">
+              <FormField
+                control={form.control}
+                name="workersNeeded"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="font-semibold text-foreground/80">Workers Needed</FormLabel>
+                    <FormControl>
+                      <Input type="number" min={1} max={50} placeholder="1" className="rounded-xl border-2 focus:border-primary/50" {...field} data-testid="input-workers-needed" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              {Number(watchedWorkersNeeded) > 1 && (
+                <FormField
+                  control={form.control}
+                  name="priceType"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="font-semibold text-foreground/80">Price Is</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value}>
+                        <FormControl>
+                          <SelectTrigger className="rounded-xl border-2 focus:border-primary/50" data-testid="select-price-type">
+                            <SelectValue placeholder="Select" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="total">Total for all</SelectItem>
+                          <SelectItem value="per_person">Per person</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
               )}
-            />
+            </div>
+
+            {Number(watchedWorkersNeeded) > 1 && watchedPrice > 0 && (
+              <div className="bg-muted/50 rounded-xl p-3 border border-border text-sm space-y-1" data-testid="section-price-summary">
+                {watchedPriceType === "per_person" ? (
+                  <>
+                    <p className="text-muted-foreground">
+                      Each worker earns: <span className="font-semibold text-foreground">{"\u20A6"}{Number(watchedPrice).toLocaleString()}</span>
+                    </p>
+                    <p className="text-muted-foreground">
+                      Total escrow held: <span className="font-semibold text-foreground">{"\u20A6"}{totalEscrow.toLocaleString()}</span> ({watchedWorkersNeeded} workers)
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-muted-foreground">
+                      Total price: <span className="font-semibold text-foreground">{"\u20A6"}{Number(watchedPrice).toLocaleString()}</span>
+                    </p>
+                    <p className="text-muted-foreground">
+                      Each worker earns: <span className="font-semibold text-foreground">{"\u20A6"}{Math.round(Number(watchedPrice) / Number(watchedWorkersNeeded)).toLocaleString()}</span>
+                    </p>
+                  </>
+                )}
+              </div>
+            )}
 
             <FormField
               control={form.control}

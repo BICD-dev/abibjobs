@@ -64,23 +64,24 @@ export async function registerRoutes(
       if (!profile) return res.status(404).json({ message: "Profile not found" });
 
       const price = parseFloat(input.price);
+      const workersNeeded = input.workersNeeded || 1;
+      const priceType = input.priceType || 'total';
+      const escrowAmount = priceType === 'per_person' ? price * workersNeeded : price;
       const balance = parseFloat(profile.walletBalance);
 
-      // Check balance
-      if (balance < price) {
-        return res.status(400).json({ message: "Insufficient funds in wallet. Please deposit money first." });
+      if (balance < escrowAmount) {
+        return res.status(400).json({ message: `Insufficient funds. You need ₦${escrowAmount.toLocaleString()} in your wallet${priceType === 'per_person' ? ` (₦${price.toLocaleString()} × ${workersNeeded} workers)` : ''}.` });
       }
 
-      // Deduct funds (Escrow)
       try {
-        await storage.updateWalletBalance(userId, -price);
+        await storage.updateWalletBalance(userId, -escrowAmount);
       } catch (err) {
         return res.status(400).json({ message: "Payment failed. Please check your balance." });
       }
 
       await storage.createTransaction({
         userId,
-        amount: (-price).toString(),
+        amount: (-escrowAmount).toString(),
         type: 'escrow_hold',
       });
 
@@ -148,10 +149,10 @@ export async function registerRoutes(
     }
 
     const price = parseFloat(job.price);
-    const fee = price * 0.22;
-    const totalPayout = price - fee;
-
     const workerIds = job.workerId.split(',').filter(Boolean);
+    const totalEscrow = job.priceType === 'per_person' ? price * job.workersNeeded : price;
+    const fee = totalEscrow * 0.22;
+    const totalPayout = totalEscrow - fee;
     const payoutPerWorker = totalPayout / workerIds.length;
 
     for (const wId of workerIds) {
@@ -190,10 +191,11 @@ export async function registerRoutes(
     }
 
     const price = parseFloat(job.price);
-    await storage.updateWalletBalance(userId, price);
+    const escrowAmount = job.priceType === 'per_person' ? price * job.workersNeeded : price;
+    await storage.updateWalletBalance(userId, escrowAmount);
     await storage.createTransaction({
       userId,
-      amount: price.toString(),
+      amount: escrowAmount.toString(),
       type: 'escrow_refund',
       jobId: job.id,
     });
@@ -345,34 +347,35 @@ export async function registerRoutes(
 
       const newPrice = parseFloat(offer.amount);
       const oldPrice = parseFloat(job.price);
-      const priceDiff = newPrice - oldPrice;
+      const multiplier = job.priceType === 'per_person' ? job.workersNeeded : 1;
+      const escrowDiff = (newPrice - oldPrice) * multiplier;
 
-      if (isPoster && priceDiff > 0) {
+      if (isPoster && escrowDiff > 0) {
         const profile = await storage.getProfile(userId);
         if (!profile) return res.status(404).json({ message: "Profile not found" });
         const balance = parseFloat(profile.walletBalance);
 
-        if (balance < priceDiff) {
+        if (balance < escrowDiff) {
           return res.json({
             offer,
             job,
             insufficientFunds: true,
-            shortfall: priceDiff - balance,
+            shortfall: escrowDiff - balance,
           });
         }
 
-        await storage.updateWalletBalance(userId, -priceDiff);
+        await storage.updateWalletBalance(userId, -escrowDiff);
         await storage.createTransaction({
           userId,
-          amount: (-priceDiff).toString(),
+          amount: (-escrowDiff).toString(),
           type: 'escrow_hold',
           jobId: job.id,
         });
-      } else if (isPoster && priceDiff < 0) {
-        await storage.updateWalletBalance(userId, Math.abs(priceDiff));
+      } else if (isPoster && escrowDiff < 0) {
+        await storage.updateWalletBalance(userId, Math.abs(escrowDiff));
         await storage.createTransaction({
           userId,
-          amount: Math.abs(priceDiff).toString(),
+          amount: Math.abs(escrowDiff).toString(),
           type: 'escrow_refund',
           jobId: job.id,
         });
@@ -965,7 +968,7 @@ export async function registerRoutes(
       if (!job) return res.status(404).json({ message: "Job not found" });
 
       const resolvedAmount = parseFloat(dispute.proposedAmount);
-      const originalPrice = parseFloat(job.price);
+      const originalPrice = job.priceType === 'per_person' ? parseFloat(job.price) * job.workersNeeded : parseFloat(job.price);
       const fee = resolvedAmount * 0.22;
       const workerPayout = resolvedAmount - fee;
       const refundToPoster = originalPrice - resolvedAmount;
@@ -1134,7 +1137,7 @@ export async function registerRoutes(
       const job = await storage.getJob(dispute.jobId);
       if (!job) return res.status(404).json({ message: "Job not found" });
 
-      const originalPrice = parseFloat(job.price);
+      const originalPrice = job.priceType === 'per_person' ? parseFloat(job.price) * job.workersNeeded : parseFloat(job.price);
       const workerIds = job.workerId ? job.workerId.split(',').filter(Boolean) : [];
       const { action } = parsed.data;
 

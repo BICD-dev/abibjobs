@@ -203,6 +203,8 @@ export interface DisputeWithDetails extends Dispute {
   job?: {
     title: string;
     price: string;
+    priceType?: string;
+    workersNeeded?: number;
   };
   messages?: DisputeMessageWithSender[];
 }

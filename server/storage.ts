@@ -265,6 +265,8 @@ export class DatabaseStorage implements IStorage {
     const [jobInfo] = await db.select({
       title: jobs.title,
       price: jobs.price,
+      priceType: jobs.priceType,
+      workersNeeded: jobs.workersNeeded,
     }).from(jobs).where(eq(jobs.id, result.dispute.jobId));
 
     const messages = await this.getDisputeMessages(id);
@@ -307,6 +309,8 @@ export class DatabaseStorage implements IStorage {
       const [jobInfo] = await db.select({
         title: jobs.title,
         price: jobs.price,
+        priceType: jobs.priceType,
+        workersNeeded: jobs.workersNeeded,
       }).from(jobs).where(eq(jobs.id, r.dispute.jobId));
 
       mapped.push({
