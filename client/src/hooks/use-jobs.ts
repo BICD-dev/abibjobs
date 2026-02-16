@@ -25,6 +25,18 @@ export function useJobs(filters?: { category?: string; status?: 'open' | 'in_pro
   });
 }
 
+export function useMyJobs(enabled = true) {
+  return useQuery({
+    queryKey: [api.jobs.myJobs.path],
+    queryFn: async () => {
+      const res = await fetch(api.jobs.myJobs.path, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch my jobs");
+      return res.json();
+    },
+    enabled,
+  });
+}
+
 export function useJob(id: number) {
   return useQuery({
     queryKey: [api.jobs.get.path, id],

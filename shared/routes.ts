@@ -100,6 +100,13 @@ export const api = {
         401: errorSchemas.unauthorized,
       },
     },
+    myJobs: {
+      method: 'GET' as const,
+      path: '/api/jobs/my-jobs' as const,
+      responses: {
+        200: z.array(z.any()),
+      },
+    },
     noShow: {
       method: 'POST' as const,
       path: '/api/jobs/:id/no-show' as const,

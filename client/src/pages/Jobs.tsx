@@ -1,16 +1,19 @@
 import { useState } from "react";
-import { useJobs } from "@/hooks/use-jobs";
+import { useJobs, useMyJobs } from "@/hooks/use-jobs";
+import { useAuth } from "@/hooks/use-auth";
 import { Navbar } from "@/components/Navbar";
 import { JobCard } from "@/components/JobCard";
 import { CreateJobDialog } from "@/components/CreateJobDialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Search, Loader2, Filter } from "lucide-react";
+import { Search, Loader2, Filter, Briefcase } from "lucide-react";
 
 export default function Jobs() {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState<string | undefined>(undefined);
   const { data: jobs, isLoading, error } = useJobs({ search, category, status: 'open' });
+  const { isAuthenticated } = useAuth();
+  const { data: myJobs } = useMyJobs(isAuthenticated);
 
   const categories = [
     { id: "cleaning", label: "Cleaning" },
@@ -32,6 +35,20 @@ export default function Jobs() {
           </div>
           <CreateJobDialog />
         </div>
+
+        {isAuthenticated && myJobs && myJobs.length > 0 && (
+          <div className="mb-10" data-testid="section-my-active-jobs">
+            <div className="flex items-center gap-2 mb-4">
+              <Briefcase className="w-5 h-5 text-primary" />
+              <h2 className="text-xl font-display font-bold text-foreground">My Active Jobs</h2>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {myJobs.map((job: any) => (
+                <JobCard key={job.id} job={job} />
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Filters */}
         <div className="bg-card rounded-2xl p-4 shadow-sm border border-border/50 mb-8 space-y-4 md:space-y-0 md:flex md:items-center md:gap-4">

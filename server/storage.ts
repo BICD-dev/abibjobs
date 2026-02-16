@@ -47,6 +47,9 @@ export interface IStorage {
   createJob(job: CreateJobInput & { posterId: string }): Promise<Job>;
   updateJob(id: number, data: Partial<Job>): Promise<Job>;
 
+  // My Jobs
+  getMyJobs(userId: string): Promise<JobWithDetails[]>;
+
   // Wallet & Transactions
   getTransactions(userId: string): Promise<Transaction[]>;
   createTransaction(tx: { userId: string; amount: string; type: string; jobId?: number; bankName?: string | null; bankCode?: string | null; accountNumber?: string | null; accountName?: string | null }): Promise<Transaction>;
@@ -185,6 +188,28 @@ export class DatabaseStorage implements IStorage {
       ...result.job,
       poster: result.poster || { firstName: 'Unknown', lastName: '', profileImageUrl: null }
     };
+  }
+
+  async getMyJobs(userId: string): Promise<JobWithDetails[]> {
+    const results = await db.select({
+      job: jobs,
+      poster: {
+        firstName: users.firstName,
+        lastName: users.lastName,
+        profileImageUrl: users.profileImageUrl,
+      }
+    })
+    .from(jobs)
+    .leftJoin(users, eq(jobs.posterId, users.id))
+    .where(
+      sql`(${jobs.posterId} = ${userId} OR ${jobs.workerId} LIKE '%' || ${userId} || '%') AND ${jobs.status} IN ('open', 'in_progress')`
+    )
+    .orderBy(desc(jobs.updatedAt));
+
+    return results.map(r => ({
+      ...r.job,
+      poster: r.poster || { firstName: 'Unknown', lastName: '', profileImageUrl: null }
+    }));
   }
 
   async createJob(job: CreateJobInput & { posterId: string }): Promise<Job> {
