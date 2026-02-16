@@ -1,7 +1,5 @@
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
-import { useQuery } from "@tanstack/react-query";
-import { api } from "@shared/routes";
 import { Button } from "@/components/ui/button";
 import { 
   Menu, 
@@ -26,17 +24,8 @@ export function Navbar() {
   const [location] = useLocation();
   const { user, logout, isAuthenticated } = useAuth();
 
-  const { data: profile } = useQuery({
-    queryKey: [api.profile.get.path],
-    queryFn: async () => {
-      const res = await fetch(api.profile.get.path, { credentials: "include" });
-      if (!res.ok) return null;
-      return res.json();
-    },
-    enabled: isAuthenticated,
-  });
-
-  const isAdmin = profile?.role === 'admin';
+  const ADMIN_EMAILS = ['abeebakeem265@gmail.com'];
+  const isAdmin = isAuthenticated && !!user?.email && ADMIN_EMAILS.includes(user.email.toLowerCase());
 
   const navLinks = [
     { href: "/jobs", label: "Find Jobs", icon: Briefcase },
@@ -162,6 +151,15 @@ export function Navbar() {
                     <span className="font-medium">Profile</span>
                   </div>
                 </Link>
+
+                {isAdmin && (
+                  <Link href="/admin/earnings" onClick={() => setIsOpen(false)}>
+                    <div className="flex items-center p-3 rounded-xl text-foreground">
+                      <TrendingUp className="w-5 h-5 mr-3" />
+                      <span className="font-medium">Platform Earnings</span>
+                    </div>
+                  </Link>
+                )}
 
                 <Button 
                   variant="destructive" 

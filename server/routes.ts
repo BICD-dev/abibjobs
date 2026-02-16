@@ -190,10 +190,11 @@ export async function registerRoutes(
 
   // --- ADMIN ---
 
+  const ADMIN_EMAILS = ['abeebakeem265@gmail.com'];
+
   const isAdmin = async (req: any, res: any, next: any) => {
-    const userId = (req.user as any).claims.sub;
-    const profile = await storage.getProfile(userId);
-    if (!profile || profile.role !== 'admin') {
+    const email = (req.user as any).claims.email;
+    if (!email || !ADMIN_EMAILS.includes(email.toLowerCase())) {
       return res.status(403).json({ message: "Admin access required" });
     }
     next();
