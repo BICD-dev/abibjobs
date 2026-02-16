@@ -99,6 +99,9 @@ export const disputes = pgTable("disputes", {
   proposedAmount: numeric("proposed_amount", { precision: 10, scale: 2 }),
   resolvedAmount: numeric("resolved_amount", { precision: 10, scale: 2 }),
   resolvedBy: text("resolved_by"),
+  assignedAdminId: text("assigned_admin_id"),
+  assignedAdminName: text("assigned_admin_name"),
+  assignedAt: timestamp("assigned_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
