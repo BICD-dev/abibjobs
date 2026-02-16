@@ -13,6 +13,7 @@ import {
   adminUsers,
   adminActivity,
   notifications,
+  lagosAddresses,
   type Profile,
   type Job,
   type Transaction,
@@ -22,6 +23,7 @@ import {
   type AdminUser,
   type AdminActivity,
   type Notification,
+  type LagosAddress,
   type CreateJobInput,
   type JobWithDetails,
   type OfferWithSender,
@@ -89,6 +91,11 @@ export interface IStorage {
   markNotificationRead(id: number, userId: string): Promise<void>;
   markAllNotificationsRead(userId: string): Promise<void>;
   getUnreadNotificationCount(userId: string): Promise<number>;
+
+  // Lagos Addresses
+  searchAddresses(query: string): Promise<LagosAddress[]>;
+  getAddressCount(): Promise<number>;
+  seedAddresses(addresses: { area: string; lga: string }[]): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -528,6 +535,27 @@ export class DatabaseStorage implements IStorage {
   async getUnreadNotificationCount(userId: string): Promise<number> {
     const result = await db.select({ count: sql<number>`count(*)` }).from(notifications).where(and(eq(notifications.userId, userId), eq(notifications.isRead, false)));
     return Number(result[0]?.count || 0);
+  }
+
+  async searchAddresses(query: string): Promise<LagosAddress[]> {
+    if (!query || query.length < 2) return [];
+    const pattern = `%${query}%`;
+    return await db.select().from(lagosAddresses)
+      .where(sql`${lagosAddresses.area} ILIKE ${pattern} OR ${lagosAddresses.lga} ILIKE ${pattern}`)
+      .limit(15);
+  }
+
+  async getAddressCount(): Promise<number> {
+    const result = await db.select({ count: sql<number>`count(*)` }).from(lagosAddresses);
+    return Number(result[0]?.count || 0);
+  }
+
+  async seedAddresses(addresses: { area: string; lga: string }[]): Promise<void> {
+    const batchSize = 100;
+    for (let i = 0; i < addresses.length; i += batchSize) {
+      const batch = addresses.slice(i, i + batchSize);
+      await db.insert(lagosAddresses).values(batch);
+    }
   }
 }
 

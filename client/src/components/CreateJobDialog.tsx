@@ -6,6 +6,7 @@ import { useCreateJob } from "@/hooks/use-jobs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import {
   Dialog,
   DialogContent,
@@ -223,7 +224,12 @@ export function CreateJobDialog() {
                 <FormItem>
                   <FormLabel className="font-semibold text-foreground/80">Location</FormLabel>
                   <FormControl>
-                    <Input placeholder="e.g. Lagos, Ikeja" className="rounded-xl border-2 focus:border-primary/50" {...field} />
+                    <AddressAutocomplete
+                      value={field.value}
+                      onChange={field.onChange}
+                      placeholder="Start typing an area in Lagos..."
+                      className="rounded-xl border-2 focus:border-primary/50"
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

@@ -152,6 +152,12 @@ export const notifications = pgTable("notifications", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const lagosAddresses = pgTable("lagos_addresses", {
+  id: serial("id").primaryKey(),
+  area: text("area").notNull(),
+  lga: text("lga").notNull(),
+});
+
 // === SCHEMAS ===
 
 export const insertProfileSchema = createInsertSchema(profiles).omit({ id: true });
@@ -179,6 +185,7 @@ export type DisputeMessage = typeof disputeMessages.$inferSelect;
 export type AdminUser = typeof adminUsers.$inferSelect;
 export type AdminActivity = typeof adminActivity.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
+export type LagosAddress = typeof lagosAddresses.$inferSelect;
 
 export type CreateJobInput = z.infer<typeof createJobSchema>;
 export type CreateOfferInput = z.infer<typeof createOfferSchema>;
