@@ -755,7 +755,9 @@ export async function registerRoutes(
       const disputeId = Number(req.params.id);
       const userId = (req.user as any)?.claims?.sub;
       const email = (req.user as any)?.claims?.email;
-      const isAdminUser = (email && email.toLowerCase() === OWNER_EMAIL) || !!(req.session as any)?.adminId;
+      const isOwnerUser = email && email.toLowerCase() === OWNER_EMAIL;
+      const adminId = (req.session as any)?.adminId;
+      const isAdminUser = isOwnerUser || !!adminId;
 
       const dispute = await storage.getDispute(disputeId);
       if (!dispute) return res.status(404).json({ message: "Dispute not found" });
@@ -764,7 +766,40 @@ export async function registerRoutes(
         return res.status(403).json({ message: "You don't have access to this dispute" });
       }
 
-      res.json(dispute);
+      if (isAdminUser && dispute.status !== 'resolved') {
+        let currentAdminId = 'owner';
+        let currentAdminName = 'Owner';
+        if (adminId) {
+          const adminUser = await storage.getAdminUser(adminId);
+          currentAdminId = `staff_${adminId}`;
+          currentAdminName = adminUser?.name || 'Staff Admin';
+        }
+
+        if (!isOwnerUser) {
+          const lockStatus = isDisputeLocked(dispute, currentAdminId);
+          if (lockStatus.locked) {
+            return res.status(423).json({
+              message: `This dispute is being handled by ${lockStatus.assignedTo}. It will become available in ${lockStatus.daysRemaining} day(s) if still unresolved.`,
+              lockedBy: lockStatus.assignedTo,
+              daysRemaining: lockStatus.daysRemaining,
+            });
+          }
+        }
+
+        if (!dispute.assignedAdminId || dispute.assignedAdminId !== currentAdminId) {
+          const lockCheck = isDisputeLocked(dispute, currentAdminId);
+          if (!lockCheck.locked) {
+            await storage.updateDispute(disputeId, {
+              assignedAdminId: currentAdminId,
+              assignedAdminName: currentAdminName,
+              assignedAt: new Date(),
+            });
+          }
+        }
+      }
+
+      const updatedDispute = await storage.getDispute(disputeId);
+      res.json(updatedDispute);
     } catch (err) {
       res.status(500).json({ message: "Internal server error" });
     }
@@ -789,10 +824,21 @@ export async function registerRoutes(
       }
 
       const email = (req.user as any)?.claims?.email;
-      const isAdminUser = (email && email.toLowerCase() === OWNER_EMAIL) || !!adminId;
+      const isOwnerUser = email && email.toLowerCase() === OWNER_EMAIL;
+      const isAdminUser = isOwnerUser || !!adminId;
 
       if (!isAdminUser && dispute.posterId !== userId && dispute.workerId !== userId) {
         return res.status(403).json({ message: "You are not part of this dispute" });
+      }
+
+      if (isAdminUser && !isOwnerUser && adminId) {
+        const currentAdminId = `staff_${adminId}`;
+        const lockStatus = isDisputeLocked(dispute, currentAdminId);
+        if (lockStatus.locked) {
+          return res.status(423).json({
+            message: `This dispute is being handled by ${lockStatus.assignedTo}. You cannot send messages.`,
+          });
+        }
       }
 
       if (parsed.data.type === 'proposal' && !parsed.data.amount) {
@@ -931,11 +977,56 @@ export async function registerRoutes(
     }
   });
 
+  const DISPUTE_LOCK_DAYS = 7;
+
+  function isDisputeLocked(dispute: any, currentAdminId: string): { locked: boolean; assignedTo?: string; daysRemaining?: number } {
+    if (!dispute.assignedAdminId || dispute.status === 'resolved') {
+      return { locked: false };
+    }
+    if (dispute.assignedAdminId === currentAdminId) {
+      return { locked: false };
+    }
+    if (dispute.assignedAt) {
+      const assignedDate = new Date(dispute.assignedAt);
+      const daysSinceAssigned = (Date.now() - assignedDate.getTime()) / (1000 * 60 * 60 * 24);
+      if (daysSinceAssigned >= DISPUTE_LOCK_DAYS) {
+        return { locked: false };
+      }
+      return { locked: true, assignedTo: dispute.assignedAdminName || dispute.assignedAdminId, daysRemaining: Math.ceil(DISPUTE_LOCK_DAYS - daysSinceAssigned) };
+    }
+    return { locked: true, assignedTo: dispute.assignedAdminName || dispute.assignedAdminId };
+  }
+
+  function getAdminIdentifier(req: any): { id: string; name: string } {
+    const email = (req.user as any)?.claims?.email;
+    if (email && email.toLowerCase() === OWNER_EMAIL) {
+      return { id: 'owner', name: 'Owner' };
+    }
+    const admin = (req as any).adminUser;
+    if (admin) {
+      return { id: `staff_${admin.id}`, name: admin.name };
+    }
+    return { id: 'unknown', name: 'Unknown' };
+  }
+
   app.get('/api/admin/disputes', isAdminOrOwner, async (req, res) => {
     try {
       const status = req.query.status as string | undefined;
       const allDisputes = await storage.getDisputes(status ? { status } : undefined);
-      res.json(allDisputes);
+      const adminInfo = getAdminIdentifier(req);
+      const isOwnerUser = (req as any).adminRole === 'owner';
+
+      const enriched = allDisputes.map(d => {
+        const lockStatus = isOwnerUser ? { locked: false } : isDisputeLocked(d, adminInfo.id);
+        return {
+          ...d,
+          isLockedByOther: lockStatus.locked,
+          lockedByName: lockStatus.assignedTo,
+          daysRemaining: lockStatus.daysRemaining,
+        };
+      });
+
+      res.json(enriched);
     } catch (err) {
       res.status(500).json({ message: "Internal server error" });
     }
@@ -953,6 +1044,18 @@ export async function registerRoutes(
 
       if (dispute.status === 'resolved') {
         return res.status(400).json({ message: "This dispute has already been resolved" });
+      }
+
+      const isOwnerUser = (req as any).adminRole === 'owner';
+      const staffAdminId = (req.session as any)?.adminId;
+      if (!isOwnerUser && staffAdminId) {
+        const currentAdminId = `staff_${staffAdminId}`;
+        const lockStatus = isDisputeLocked(dispute, currentAdminId);
+        if (lockStatus.locked) {
+          return res.status(423).json({
+            message: `This dispute is being handled by ${lockStatus.assignedTo}. You cannot resolve it.`,
+          });
+        }
       }
 
       const job = await storage.getJob(dispute.jobId);
