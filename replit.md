@@ -58,6 +58,14 @@ Schema changes use `drizzle-kit push` (not migrations). Run `npm run db:push` to
 - Key endpoint groups: jobs (CRUD + accept/complete/cancel), profile (get/update), wallet (get/deposit/withdraw/transactions)
 - The `shared/routes.ts` `api` object serves as a single source of truth for paths, methods, and schemas used by both frontend hooks and backend handlers
 
+### Worker Progress Tracking
+- After a job is accepted (single-worker jobs only), the worker can update their progress through 3 stages: Getting Ready → On the Way → At Location
+- Once worker marks "On the Way", the job poster can no longer cancel the job (escrow funds locked)
+- When worker marks "At Location", the poster gets a "Confirm Worker Has Arrived" button
+- Progress is stored in `workerProgress` column on jobs table; poster confirmation in `posterConfirmedArrival`
+- Routes: POST /api/jobs/:id/progress (worker), POST /api/jobs/:id/confirm-arrival (poster)
+- Multi-worker jobs do not use progress tracking (only single-worker jobs)
+
 ### Escrow / Wallet System
 - Users have a wallet balance stored in `profiles.walletBalance`
 - Job payments go through escrow: poster's funds are held when posting, released to worker(s) on completion

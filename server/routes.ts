@@ -185,6 +185,10 @@ export async function registerRoutes(
       return res.status(400).json({ message: "Job is already " + job.status });
     }
 
+    if (job.workerProgress === 'on_the_way' || job.workerProgress === 'at_location') {
+      return res.status(400).json({ message: "Cannot cancel this job. The worker is already on the way." });
+    }
+
     const price = parseFloat(job.price);
     await storage.updateWalletBalance(userId, price);
     await storage.createTransaction({
@@ -196,6 +200,75 @@ export async function registerRoutes(
 
     const updated = await storage.updateJob(jobId, { status: 'cancelled' });
     res.json(updated);
+  });
+
+  // --- WORKER PROGRESS ---
+
+  app.post(api.jobs.updateProgress.path, isAuthenticated, async (req, res) => {
+    try {
+      const jobId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      const { progress } = req.body;
+
+      if (!['getting_ready', 'on_the_way', 'at_location'].includes(progress)) {
+        return res.status(400).json({ message: "Invalid progress value" });
+      }
+
+      const job = await storage.getJob(jobId);
+      if (!job) return res.status(404).json({ message: "Job not found" });
+
+      if (job.status !== 'in_progress') {
+        return res.status(400).json({ message: "Job is not in progress" });
+      }
+
+      const workerIds = job.workerId ? job.workerId.split(',') : [];
+      if (!workerIds.includes(userId)) {
+        return res.status(403).json({ message: "Only a worker on this job can update progress" });
+      }
+
+      if (workerIds.length > 1) {
+        return res.status(400).json({ message: "Progress tracking is only available for single-worker jobs" });
+      }
+
+      const progressOrder = ['getting_ready', 'on_the_way', 'at_location'];
+      const currentIndex = job.workerProgress ? progressOrder.indexOf(job.workerProgress) : -1;
+      const newIndex = progressOrder.indexOf(progress);
+      if (newIndex <= currentIndex) {
+        return res.status(400).json({ message: "Cannot go back to a previous step" });
+      }
+
+      const updated = await storage.updateJob(jobId, { workerProgress: progress });
+      res.json(updated);
+    } catch (err) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post(api.jobs.confirmArrival.path, isAuthenticated, async (req, res) => {
+    try {
+      const jobId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+
+      const job = await storage.getJob(jobId);
+      if (!job) return res.status(404).json({ message: "Job not found" });
+
+      if (job.posterId !== userId) {
+        return res.status(403).json({ message: "Only the job poster can confirm arrival" });
+      }
+
+      if (job.status !== 'in_progress') {
+        return res.status(400).json({ message: "Job is not in progress" });
+      }
+
+      if (job.workerProgress !== 'at_location') {
+        return res.status(400).json({ message: "Worker has not indicated they are at the location yet" });
+      }
+
+      const updated = await storage.updateJob(jobId, { posterConfirmedArrival: true });
+      res.json(updated);
+    } catch (err) {
+      res.status(500).json({ message: "Internal server error" });
+    }
   });
 
   // --- OFFERS ---

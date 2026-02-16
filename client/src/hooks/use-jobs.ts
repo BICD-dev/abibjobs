@@ -149,6 +149,75 @@ export function useCompleteJob() {
   });
 }
 
+export function useUpdateJobProgress() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async ({ id, progress }: { id: number; progress: string }) => {
+      const url = buildUrl(api.jobs.updateProgress.path, { id });
+      const res = await fetch(url, {
+        method: api.jobs.updateProgress.method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ progress }),
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || "Failed to update progress");
+      }
+      return res.json();
+    },
+    onSuccess: (_, { id }) => {
+      queryClient.invalidateQueries({ queryKey: [api.jobs.get.path, id] });
+      queryClient.invalidateQueries({ queryKey: [api.jobs.list.path] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+}
+
+export function useConfirmArrival() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (id: number) => {
+      const url = buildUrl(api.jobs.confirmArrival.path, { id });
+      const res = await fetch(url, {
+        method: api.jobs.confirmArrival.method,
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || "Failed to confirm arrival");
+      }
+      return res.json();
+    },
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: [api.jobs.get.path, id] });
+      toast({
+        title: "Arrival Confirmed",
+        description: "You've confirmed the worker has arrived at the location.",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+}
+
 export function useCancelJob() {
   const queryClient = useQueryClient();
   const { toast } = useToast();

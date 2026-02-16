@@ -1,6 +1,6 @@
 import { useState, useRef } from "react";
 import { useRoute, useLocation } from "wouter";
-import { useJob, useAcceptJob, useCompleteJob, useCancelJob } from "@/hooks/use-jobs";
+import { useJob, useAcceptJob, useCompleteJob, useCancelJob, useUpdateJobProgress, useConfirmArrival } from "@/hooks/use-jobs";
 import { useOffers, useCreateOffer, useAcceptOffer, useDeclineOffer, useCounterOffer } from "@/hooks/use-offers";
 import { useDisputeByJob, useCreateDispute, useDisputeMessage, useAcceptProposal, useEscalateDispute, useUploadDisputeImage } from "@/hooks/use-disputes";
 import { useAuth } from "@/hooks/use-auth";
@@ -14,7 +14,7 @@ import { Card } from "@/components/ui/card";
 import {
   Loader2, MapPin, Calendar, ArrowLeft, CheckCircle, Shield, Users, XCircle,
   MessageSquare, ArrowUpDown, Send, Check, X, AlertTriangle, Wallet,
-  Flag, Scale, ArrowUpCircle, Image as ImageIcon
+  Flag, Scale, ArrowUpCircle, Image as ImageIcon, Navigation, Clock, MapPinCheck
 } from "lucide-react";
 import { format } from "date-fns";
 import type { OfferWithSender, DisputeMessageWithSender } from "@shared/schema";
@@ -31,6 +31,8 @@ export default function JobDetails() {
   const { mutate: acceptJob, isPending: isAccepting } = useAcceptJob();
   const { mutate: completeJob, isPending: isCompleting } = useCompleteJob();
   const { mutate: cancelJob, isPending: isCancelling } = useCancelJob();
+  const { mutate: updateProgress, isPending: isUpdatingProgress } = useUpdateJobProgress();
+  const { mutate: confirmArrival, isPending: isConfirmingArrival } = useConfirmArrival();
 
   const { mutate: createOffer, isPending: isCreatingOffer } = useCreateOffer();
   const { mutate: acceptOffer, isPending: isAcceptingOffer } = useAcceptOffer();
@@ -292,6 +294,57 @@ export default function JobDetails() {
                         <p className="text-sm text-muted-foreground">You posted this job.</p>
                         {isInProgress ? (
                           <>
+                            {/* Worker Progress Tracker for Poster (single worker only) */}
+                            {workerIds.length === 1 && (
+                            <div className="bg-muted/50 rounded-xl p-4 border border-border space-y-3" data-testid="section-poster-progress-view">
+                              <p className="text-sm font-medium text-foreground">Worker Progress</p>
+                              <div className="flex items-center gap-2">
+                                {[
+                                  { key: 'getting_ready', label: 'Getting Ready', icon: Clock },
+                                  { key: 'on_the_way', label: 'On the Way', icon: Navigation },
+                                  { key: 'at_location', label: 'At Location', icon: MapPinCheck },
+                                ].map((step, idx) => {
+                                  const progressOrder = ['getting_ready', 'on_the_way', 'at_location'];
+                                  const currentIdx = job.workerProgress ? progressOrder.indexOf(job.workerProgress) : -1;
+                                  const stepIdx = progressOrder.indexOf(step.key);
+                                  const isActive = stepIdx <= currentIdx;
+                                  const StepIcon = step.icon;
+                                  return (
+                                    <div key={step.key} className="flex items-center gap-2 flex-1" data-testid={`poster-progress-step-${step.key}`}>
+                                      <div className={`flex items-center justify-center w-8 h-8 rounded-full shrink-0 ${isActive ? 'bg-green-500 text-white' : 'bg-muted-foreground/20 text-muted-foreground'}`}>
+                                        <StepIcon className="w-4 h-4" />
+                                      </div>
+                                      <span className={`text-xs font-medium ${isActive ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>{step.label}</span>
+                                      {idx < 2 && <div className={`h-0.5 flex-1 ${stepIdx < currentIdx ? 'bg-green-500' : 'bg-muted-foreground/20'}`} />}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              {!job.workerProgress && (
+                                <p className="text-xs text-muted-foreground">Worker hasn't started yet.</p>
+                              )}
+                            </div>
+                            )}
+
+                            {/* Poster Confirm Arrival (single worker only) */}
+                            {workerIds.length === 1 && job.workerProgress === 'at_location' && !job.posterConfirmedArrival && (
+                              <Button
+                                className="w-full h-12 text-lg bg-blue-600 text-white rounded-xl shadow-lg shadow-blue-600/20"
+                                onClick={() => confirmArrival(job.id)}
+                                disabled={isConfirmingArrival}
+                                data-testid="button-confirm-arrival"
+                              >
+                                {isConfirmingArrival ? <Loader2 className="animate-spin mr-2" /> : <MapPinCheck className="mr-2 h-5 w-5" />}
+                                Confirm Worker Has Arrived
+                              </Button>
+                            )}
+                            {workerIds.length === 1 && job.posterConfirmedArrival && (
+                              <div className="flex items-center text-green-600 bg-green-50 dark:bg-green-950/30 p-3 rounded-xl border border-green-100 dark:border-green-900 text-sm">
+                                <CheckCircle className="w-4 h-4 mr-2 shrink-0" />
+                                You confirmed the worker has arrived.
+                              </div>
+                            )}
+
                             <Button
                               className="w-full h-12 text-lg bg-green-600 text-white rounded-xl shadow-lg shadow-green-600/20"
                               onClick={() => completeJob(job.id)}
@@ -317,7 +370,7 @@ export default function JobDetails() {
                           </p>
                         ) : null}
 
-                        {(isOpen || isInProgress) && (
+                        {(isOpen || (isInProgress && !(job.workerProgress === 'on_the_way' || job.workerProgress === 'at_location'))) && (
                           <Button
                             variant="destructive"
                             className="w-full rounded-xl"
@@ -360,7 +413,59 @@ export default function JobDetails() {
                           <div className="text-center p-4 bg-primary/10 rounded-xl text-primary font-medium border border-primary/20">
                             You've joined this job. Waiting for more workers ({job.workersAccepted}/{job.workersNeeded}).
                           </div>
-                        ) : isWorker && isInProgress ? (
+                        ) : isWorker && isInProgress && workerIds.length === 1 ? (
+                          <div className="space-y-4" data-testid="section-worker-progress">
+                            <p className="text-sm font-medium text-foreground">Update your progress:</p>
+                            <div className="space-y-3">
+                              {[
+                                { key: 'getting_ready', label: 'Getting Ready', description: 'Preparing for the job', icon: Clock },
+                                { key: 'on_the_way', label: 'On the Way', description: 'Heading to the location', icon: Navigation },
+                                { key: 'at_location', label: 'At Location', description: 'Arrived at the job site', icon: MapPinCheck },
+                              ].map((step) => {
+                                const progressOrder = ['getting_ready', 'on_the_way', 'at_location'];
+                                const currentIdx = job.workerProgress ? progressOrder.indexOf(job.workerProgress) : -1;
+                                const stepIdx = progressOrder.indexOf(step.key);
+                                const isDone = stepIdx <= currentIdx;
+                                const isNext = stepIdx === currentIdx + 1;
+                                const StepIcon = step.icon;
+                                return (
+                                  <div key={step.key} className={`flex items-center gap-3 p-3 rounded-xl border ${isDone ? 'bg-green-50 border-green-200 dark:bg-green-950/30 dark:border-green-800' : isNext ? 'bg-primary/5 border-primary/20' : 'bg-muted/30 border-border'}`} data-testid={`worker-progress-step-${step.key}`}>
+                                    <div className={`flex items-center justify-center w-10 h-10 rounded-full shrink-0 ${isDone ? 'bg-green-500 text-white' : isNext ? 'bg-primary/20 text-primary' : 'bg-muted-foreground/10 text-muted-foreground'}`}>
+                                      {isDone ? <Check className="w-5 h-5" /> : <StepIcon className="w-5 h-5" />}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <p className={`text-sm font-medium ${isDone ? 'text-green-700 dark:text-green-300' : 'text-foreground'}`}>{step.label}</p>
+                                      <p className="text-xs text-muted-foreground">{step.description}</p>
+                                    </div>
+                                    {isNext && (
+                                      <Button
+                                        size="sm"
+                                        onClick={() => updateProgress({ id: job.id, progress: step.key })}
+                                        disabled={isUpdatingProgress}
+                                        data-testid={`button-progress-${step.key}`}
+                                      >
+                                        {isUpdatingProgress ? <Loader2 className="w-4 h-4 animate-spin" /> : step.key === 'on_the_way' ? <Navigation className="w-4 h-4 mr-1" /> : step.key === 'at_location' ? <MapPinCheck className="w-4 h-4 mr-1" /> : <Clock className="w-4 h-4 mr-1" />}
+                                        {step.label}
+                                      </Button>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            {job.workerProgress === 'on_the_way' && (
+                              <div className="flex items-center text-amber-600 bg-amber-50 dark:bg-amber-950/30 p-3 rounded-xl border border-amber-100 dark:border-amber-900 text-sm">
+                                <AlertTriangle className="w-4 h-4 mr-2 shrink-0" />
+                                The job poster can no longer cancel this job.
+                              </div>
+                            )}
+                            {job.workerProgress === 'at_location' && (
+                              <div className="flex items-center text-blue-600 bg-blue-50 dark:bg-blue-950/30 p-3 rounded-xl border border-blue-100 dark:border-blue-900 text-sm">
+                                <MapPinCheck className="w-4 h-4 mr-2 shrink-0" />
+                                {job.posterConfirmedArrival ? "The poster has confirmed your arrival." : "Waiting for the poster to confirm your arrival."}
+                              </div>
+                            )}
+                          </div>
+                        ) : isWorker && isInProgress && workerIds.length > 1 ? (
                           <div className="text-center p-4 bg-primary/10 rounded-xl text-primary font-medium border border-primary/20">
                             You are working on this job. Waiting for client to confirm completion.
                           </div>

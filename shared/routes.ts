@@ -79,6 +79,27 @@ export const api = {
         401: errorSchemas.unauthorized,
       },
     },
+    updateProgress: {
+      method: 'POST' as const,
+      path: '/api/jobs/:id/progress' as const,
+      input: z.object({
+        progress: z.enum(['getting_ready', 'on_the_way', 'at_location']),
+      }),
+      responses: {
+        200: z.custom<typeof jobs.$inferSelect>(),
+        400: errorSchemas.validation,
+        401: errorSchemas.unauthorized,
+      },
+    },
+    confirmArrival: {
+      method: 'POST' as const,
+      path: '/api/jobs/:id/confirm-arrival' as const,
+      responses: {
+        200: z.custom<typeof jobs.$inferSelect>(),
+        400: errorSchemas.validation,
+        401: errorSchemas.unauthorized,
+      },
+    },
   },
   profile: {
     get: {
