@@ -48,6 +48,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createProfile(userId: string): Promise<Profile> {
+    const existing = await this.getProfile(userId);
+    if (existing) return existing;
     const [profile] = await db.insert(profiles).values({ userId }).returning();
     return profile;
   }
