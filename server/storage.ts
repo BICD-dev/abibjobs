@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and } from "drizzle-orm";
 import {
   users,
   profiles,
@@ -8,13 +8,19 @@ import {
   platformEarnings,
   platformTransactions,
   offers,
+  disputes,
+  disputeMessages,
   type Profile,
   type Job,
   type Transaction,
   type Offer,
+  type Dispute,
+  type DisputeMessage,
   type CreateJobInput,
   type JobWithDetails,
   type OfferWithSender,
+  type DisputeWithDetails,
+  type DisputeMessageWithSender,
   type PlatformEarning,
   type PlatformTransaction,
 } from "@shared/schema";
@@ -41,6 +47,15 @@ export interface IStorage {
   getOffer(id: number): Promise<Offer | undefined>;
   createOffer(data: { jobId: number; senderId: string; amount: string; message?: string }): Promise<Offer>;
   updateOffer(id: number, data: Partial<Offer>): Promise<Offer>;
+
+  // Disputes
+  createDispute(data: { jobId: number; posterId: string; workerId: string }): Promise<Dispute>;
+  getDispute(id: number): Promise<DisputeWithDetails | undefined>;
+  getDisputeByJob(jobId: number): Promise<Dispute | undefined>;
+  getDisputes(filters?: { status?: string }): Promise<DisputeWithDetails[]>;
+  updateDispute(id: number, data: Partial<Dispute>): Promise<Dispute>;
+  createDisputeMessage(data: { disputeId: number; senderId: string; message: string; type: string; amount?: string }): Promise<DisputeMessage>;
+  getDisputeMessages(disputeId: number): Promise<DisputeMessageWithSender[]>;
 
   // Platform Earnings (Admin)
   getPlatformEarnings(): Promise<PlatformEarning>;
@@ -201,6 +216,124 @@ export class DatabaseStorage implements IStorage {
   async updateOffer(id: number, data: Partial<Offer>): Promise<Offer> {
     const [updated] = await db.update(offers).set(data).where(eq(offers.id, id)).returning();
     return updated;
+  }
+
+  async createDispute(data: { jobId: number; posterId: string; workerId: string }): Promise<Dispute> {
+    const [dispute] = await db.insert(disputes).values(data).returning();
+    return dispute;
+  }
+
+  async getDispute(id: number): Promise<DisputeWithDetails | undefined> {
+    const [result] = await db.select({
+      dispute: disputes,
+      poster: {
+        firstName: users.firstName,
+        lastName: users.lastName,
+        profileImageUrl: users.profileImageUrl,
+      }
+    })
+    .from(disputes)
+    .leftJoin(users, eq(disputes.posterId, users.id))
+    .where(eq(disputes.id, id));
+
+    if (!result) return undefined;
+
+    const workerAlias = db.select({
+      firstName: users.firstName,
+      lastName: users.lastName,
+      profileImageUrl: users.profileImageUrl,
+    }).from(users).where(eq(users.id, result.dispute.workerId));
+    const [workerInfo] = await workerAlias;
+
+    const [jobInfo] = await db.select({
+      title: jobs.title,
+      price: jobs.price,
+    }).from(jobs).where(eq(jobs.id, result.dispute.jobId));
+
+    const messages = await this.getDisputeMessages(id);
+
+    return {
+      ...result.dispute,
+      poster: result.poster || { firstName: 'Unknown', lastName: '', profileImageUrl: null },
+      worker: workerInfo || { firstName: 'Unknown', lastName: '', profileImageUrl: null },
+      job: jobInfo || { title: 'Unknown', price: '0' },
+      messages,
+    };
+  }
+
+  async getDisputeByJob(jobId: number): Promise<Dispute | undefined> {
+    const [dispute] = await db.select().from(disputes).where(eq(disputes.jobId, jobId));
+    return dispute;
+  }
+
+  async getDisputes(filters?: { status?: string }): Promise<DisputeWithDetails[]> {
+    const results = await db.select({
+      dispute: disputes,
+      poster: {
+        firstName: users.firstName,
+        lastName: users.lastName,
+        profileImageUrl: users.profileImageUrl,
+      }
+    })
+    .from(disputes)
+    .leftJoin(users, eq(disputes.posterId, users.id))
+    .orderBy(desc(disputes.createdAt));
+
+    const mapped: DisputeWithDetails[] = [];
+    for (const r of results) {
+      const [workerInfo] = await db.select({
+        firstName: users.firstName,
+        lastName: users.lastName,
+        profileImageUrl: users.profileImageUrl,
+      }).from(users).where(eq(users.id, r.dispute.workerId));
+
+      const [jobInfo] = await db.select({
+        title: jobs.title,
+        price: jobs.price,
+      }).from(jobs).where(eq(jobs.id, r.dispute.jobId));
+
+      mapped.push({
+        ...r.dispute,
+        poster: r.poster || { firstName: 'Unknown', lastName: '', profileImageUrl: null },
+        worker: workerInfo || { firstName: 'Unknown', lastName: '', profileImageUrl: null },
+        job: jobInfo || { title: 'Unknown', price: '0' },
+      });
+    }
+
+    if (filters?.status) {
+      return mapped.filter(d => d.status === filters.status);
+    }
+    return mapped;
+  }
+
+  async updateDispute(id: number, data: Partial<Dispute>): Promise<Dispute> {
+    const [updated] = await db.update(disputes).set({ ...data, updatedAt: new Date() }).where(eq(disputes.id, id)).returning();
+    return updated;
+  }
+
+  async createDisputeMessage(data: { disputeId: number; senderId: string; message: string; type: string; amount?: string }): Promise<DisputeMessage> {
+    const [msg] = await db.insert(disputeMessages).values(data).returning();
+    return msg;
+  }
+
+  async getDisputeMessages(disputeId: number): Promise<DisputeMessageWithSender[]> {
+    const results = await db.select({
+      msg: disputeMessages,
+      sender: {
+        firstName: users.firstName,
+        lastName: users.lastName,
+        profileImageUrl: users.profileImageUrl,
+      }
+    })
+    .from(disputeMessages)
+    .leftJoin(users, eq(disputeMessages.senderId, users.id))
+    .where(eq(disputeMessages.disputeId, disputeId))
+    .orderBy(disputeMessages.createdAt);
+
+    return results.map(r => ({
+      ...r.msg,
+      sender: r.sender || { firstName: 'Unknown', lastName: '', profileImageUrl: null },
+    }));
   }
 
   async getPlatformEarnings(): Promise<PlatformEarning> {

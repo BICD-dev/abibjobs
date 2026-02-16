@@ -472,6 +472,348 @@ export async function registerRoutes(
     res.json({ message: "Bank info updated" });
   });
 
+  // --- DISPUTES ---
+
+  app.post('/api/jobs/:id/dispute', isAuthenticated, async (req, res) => {
+    try {
+      const jobId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      const parsed = api.disputes.create.input.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+
+      const job = await storage.getJob(jobId);
+      if (!job) return res.status(404).json({ message: "Job not found" });
+
+      if (job.posterId !== userId) {
+        return res.status(403).json({ message: "Only the job poster can raise a dispute" });
+      }
+
+      if (job.status !== 'in_progress' && job.status !== 'completed') {
+        return res.status(400).json({ message: "Disputes can only be raised for in-progress or completed jobs" });
+      }
+
+      const existingDispute = await storage.getDisputeByJob(jobId);
+      if (existingDispute) {
+        return res.status(400).json({ message: "A dispute already exists for this job" });
+      }
+
+      const workerIds = job.workerId ? job.workerId.split(',') : [];
+      if (!workerIds.includes(parsed.data.workerId)) {
+        return res.status(400).json({ message: "The specified worker is not assigned to this job" });
+      }
+
+      const dispute = await storage.createDispute({
+        jobId,
+        posterId: userId,
+        workerId: parsed.data.workerId,
+      });
+
+      await storage.createDisputeMessage({
+        disputeId: dispute.id,
+        senderId: userId,
+        message: parsed.data.message,
+        type: 'message',
+      });
+
+      await storage.updateJob(jobId, { status: 'disputed' });
+
+      const full = await storage.getDispute(dispute.id);
+      res.status(201).json(full);
+    } catch (err) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.get('/api/jobs/:id/dispute', isAuthenticated, async (req, res) => {
+    try {
+      const jobId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+
+      const dispute = await storage.getDisputeByJob(jobId);
+      if (!dispute) return res.status(404).json({ message: "No dispute found for this job" });
+
+      const job = await storage.getJob(jobId);
+      const workerIds = job?.workerId ? job.workerId.split(',') : [];
+      const email = (req.user as any).claims.email;
+      const isAdminUser = email && ADMIN_EMAILS.includes(email.toLowerCase());
+
+      if (dispute.posterId !== userId && !workerIds.includes(userId) && !isAdminUser) {
+        return res.status(403).json({ message: "You don't have access to this dispute" });
+      }
+
+      const full = await storage.getDispute(dispute.id);
+      res.json(full);
+    } catch (err) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.get('/api/disputes/:id', isAuthenticated, async (req, res) => {
+    try {
+      const disputeId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      const email = (req.user as any).claims.email;
+      const isAdminUser = email && ADMIN_EMAILS.includes(email.toLowerCase());
+
+      const dispute = await storage.getDispute(disputeId);
+      if (!dispute) return res.status(404).json({ message: "Dispute not found" });
+
+      if (dispute.posterId !== userId && dispute.workerId !== userId && !isAdminUser) {
+        return res.status(403).json({ message: "You don't have access to this dispute" });
+      }
+
+      res.json(dispute);
+    } catch (err) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post('/api/disputes/:id/message', isAuthenticated, async (req, res) => {
+    try {
+      const disputeId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      const parsed = api.disputes.message.input.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+
+      const dispute = await storage.getDispute(disputeId);
+      if (!dispute) return res.status(404).json({ message: "Dispute not found" });
+
+      if (dispute.status === 'resolved') {
+        return res.status(400).json({ message: "This dispute has already been resolved" });
+      }
+
+      const email = (req.user as any).claims.email;
+      const isAdminUser = email && ADMIN_EMAILS.includes(email.toLowerCase());
+
+      if (dispute.posterId !== userId && dispute.workerId !== userId && !isAdminUser) {
+        return res.status(403).json({ message: "You are not part of this dispute" });
+      }
+
+      if (parsed.data.type === 'proposal' && !parsed.data.amount) {
+        return res.status(400).json({ message: "A proposal must include an amount" });
+      }
+
+      const msg = await storage.createDisputeMessage({
+        disputeId,
+        senderId: userId,
+        message: parsed.data.message,
+        type: parsed.data.type,
+        amount: parsed.data.amount?.toFixed(2),
+      });
+
+      if (parsed.data.type === 'proposal') {
+        await storage.updateDispute(disputeId, {
+          status: 'negotiating',
+          proposedAmount: parsed.data.amount!.toFixed(2),
+        });
+      }
+
+      const full = await storage.getDispute(disputeId);
+      res.status(201).json(full);
+    } catch (err) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post('/api/disputes/:id/accept-proposal', isAuthenticated, async (req, res) => {
+    try {
+      const disputeId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+
+      const dispute = await storage.getDispute(disputeId);
+      if (!dispute) return res.status(404).json({ message: "Dispute not found" });
+
+      if (dispute.status === 'resolved') {
+        return res.status(400).json({ message: "This dispute has already been resolved" });
+      }
+
+      if (dispute.workerId !== userId) {
+        return res.status(403).json({ message: "Only the worker can accept a proposal" });
+      }
+
+      if (!dispute.proposedAmount) {
+        return res.status(400).json({ message: "No proposal to accept" });
+      }
+
+      const job = await storage.getJob(dispute.jobId);
+      if (!job) return res.status(404).json({ message: "Job not found" });
+
+      const resolvedAmount = parseFloat(dispute.proposedAmount);
+      const originalPrice = parseFloat(job.price);
+      const fee = resolvedAmount * 0.22;
+      const workerPayout = resolvedAmount - fee;
+      const refundToPoster = originalPrice - resolvedAmount;
+
+      const workerIds = job.workerId ? job.workerId.split(',').filter(Boolean) : [];
+      const payoutPerWorker = workerPayout / workerIds.length;
+
+      for (const wId of workerIds) {
+        await storage.updateWalletBalance(wId, payoutPerWorker);
+        await storage.createTransaction({
+          userId: wId,
+          amount: payoutPerWorker.toFixed(2),
+          type: 'job_earning',
+          jobId: job.id,
+        });
+      }
+
+      if (refundToPoster > 0) {
+        await storage.updateWalletBalance(dispute.posterId, refundToPoster);
+        await storage.createTransaction({
+          userId: dispute.posterId,
+          amount: refundToPoster.toFixed(2),
+          type: 'escrow_refund',
+          jobId: job.id,
+        });
+      }
+
+      await storage.addPlatformEarning(fee, job.id, job.title);
+
+      await storage.createDisputeMessage({
+        disputeId,
+        senderId: userId,
+        message: `Accepted the proposed amount of \u20A6${resolvedAmount.toLocaleString()}`,
+        type: 'acceptance',
+        amount: resolvedAmount.toFixed(2),
+      });
+
+      await storage.updateDispute(disputeId, {
+        status: 'resolved',
+        resolvedAmount: resolvedAmount.toFixed(2),
+        resolvedBy: 'agreement',
+      });
+
+      await storage.updateJob(dispute.jobId, { status: 'completed' });
+
+      const full = await storage.getDispute(disputeId);
+      res.json(full);
+    } catch (err) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post('/api/disputes/:id/escalate', isAuthenticated, async (req, res) => {
+    try {
+      const disputeId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+
+      const dispute = await storage.getDispute(disputeId);
+      if (!dispute) return res.status(404).json({ message: "Dispute not found" });
+
+      if (dispute.posterId !== userId && dispute.workerId !== userId) {
+        return res.status(403).json({ message: "Only dispute participants can escalate" });
+      }
+
+      if (dispute.status === 'resolved') {
+        return res.status(400).json({ message: "This dispute has already been resolved" });
+      }
+
+      await storage.updateDispute(disputeId, { status: 'escalated' });
+
+      await storage.createDisputeMessage({
+        disputeId,
+        senderId: userId,
+        message: 'This dispute has been escalated to admin for resolution.',
+        type: 'message',
+      });
+
+      const full = await storage.getDispute(disputeId);
+      res.json(full);
+    } catch (err) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.get('/api/admin/disputes', isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const status = req.query.status as string | undefined;
+      const allDisputes = await storage.getDisputes(status ? { status } : undefined);
+      res.json(allDisputes);
+    } catch (err) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post('/api/disputes/:id/resolve', isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const disputeId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      const parsed = api.disputes.resolve.input.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+
+      const dispute = await storage.getDispute(disputeId);
+      if (!dispute) return res.status(404).json({ message: "Dispute not found" });
+
+      if (dispute.status === 'resolved') {
+        return res.status(400).json({ message: "This dispute has already been resolved" });
+      }
+
+      const job = await storage.getJob(dispute.jobId);
+      if (!job) return res.status(404).json({ message: "Job not found" });
+
+      const resolvedAmount = parsed.data.resolvedAmount;
+      const originalPrice = parseFloat(job.price);
+      const fee = resolvedAmount * 0.22;
+      const workerPayout = resolvedAmount - fee;
+      const refundToPoster = originalPrice - resolvedAmount;
+
+      const workerIds = job.workerId ? job.workerId.split(',').filter(Boolean) : [];
+      const payoutPerWorker = workerPayout / workerIds.length;
+
+      for (const wId of workerIds) {
+        await storage.updateWalletBalance(wId, payoutPerWorker);
+        await storage.createTransaction({
+          userId: wId,
+          amount: payoutPerWorker.toFixed(2),
+          type: 'job_earning',
+          jobId: job.id,
+        });
+      }
+
+      if (refundToPoster > 0) {
+        await storage.updateWalletBalance(dispute.posterId, refundToPoster);
+        await storage.createTransaction({
+          userId: dispute.posterId,
+          amount: refundToPoster.toFixed(2),
+          type: 'escrow_refund',
+          jobId: job.id,
+        });
+      }
+
+      await storage.addPlatformEarning(fee, job.id, job.title);
+
+      if (parsed.data.message) {
+        await storage.createDisputeMessage({
+          disputeId,
+          senderId: userId,
+          message: parsed.data.message,
+          type: 'message',
+        });
+      }
+
+      await storage.createDisputeMessage({
+        disputeId,
+        senderId: userId,
+        message: `Admin resolved dispute. Final amount: \u20A6${resolvedAmount.toLocaleString()}`,
+        type: 'acceptance',
+        amount: resolvedAmount.toFixed(2),
+      });
+
+      await storage.updateDispute(disputeId, {
+        status: 'resolved',
+        resolvedAmount: resolvedAmount.toFixed(2),
+        resolvedBy: 'admin',
+      });
+
+      await storage.updateJob(dispute.jobId, { status: 'completed' });
+
+      const full = await storage.getDispute(disputeId);
+      res.json(full);
+    } catch (err) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   // --- WALLET ---
 
   app.get(api.wallet.get.path, isAuthenticated, async (req, res) => {

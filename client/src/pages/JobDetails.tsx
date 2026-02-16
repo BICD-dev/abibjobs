@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useRoute, useLocation } from "wouter";
 import { useJob, useAcceptJob, useCompleteJob, useCancelJob } from "@/hooks/use-jobs";
 import { useOffers, useCreateOffer, useAcceptOffer, useDeclineOffer, useCounterOffer } from "@/hooks/use-offers";
+import { useDisputeByJob, useCreateDispute, useDisputeMessage, useAcceptProposal, useEscalateDispute } from "@/hooks/use-disputes";
 import { useAuth } from "@/hooks/use-auth";
 import { Navbar } from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
@@ -12,10 +13,11 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card } from "@/components/ui/card";
 import {
   Loader2, MapPin, Calendar, ArrowLeft, CheckCircle, Shield, Users, XCircle,
-  MessageSquare, ArrowUpDown, Send, Check, X, AlertTriangle, Wallet
+  MessageSquare, ArrowUpDown, Send, Check, X, AlertTriangle, Wallet,
+  Flag, Scale, ArrowUpCircle
 } from "lucide-react";
 import { format } from "date-fns";
-import type { OfferWithSender } from "@shared/schema";
+import type { OfferWithSender, DisputeMessageWithSender } from "@shared/schema";
 
 export default function JobDetails() {
   const [match, params] = useRoute("/jobs/:id");
@@ -23,6 +25,7 @@ export default function JobDetails() {
   const id = parseInt(params?.id || "0");
   const { data: job, isLoading, error } = useJob(id);
   const { data: offersData, isLoading: offersLoading } = useOffers(id);
+  const { data: disputeData, isLoading: disputeLoading } = useDisputeByJob(id);
   const { user } = useAuth();
 
   const { mutate: acceptJob, isPending: isAccepting } = useAcceptJob();
@@ -34,6 +37,11 @@ export default function JobDetails() {
   const { mutate: declineOffer, isPending: isDecliningOffer } = useDeclineOffer();
   const { mutate: counterOffer, isPending: isCounteringOffer } = useCounterOffer();
 
+  const { mutate: createDispute, isPending: isCreatingDispute } = useCreateDispute();
+  const { mutate: sendDisputeMessage, isPending: isSendingMessage } = useDisputeMessage();
+  const { mutate: acceptProposal, isPending: isAcceptingProposal } = useAcceptProposal();
+  const { mutate: escalateDispute, isPending: isEscalating } = useEscalateDispute();
+
   const [offerAmount, setOfferAmount] = useState("");
   const [offerMessage, setOfferMessage] = useState("");
   const [showOfferForm, setShowOfferForm] = useState(false);
@@ -42,6 +50,14 @@ export default function JobDetails() {
   const [counteringOfferId, setCounteringOfferId] = useState<number | null>(null);
   const [showInsufficientFunds, setShowInsufficientFunds] = useState(false);
   const [shortfallAmount, setShortfallAmount] = useState(0);
+
+  const [showDisputeForm, setShowDisputeForm] = useState(false);
+  const [disputeMessage, setDisputeMessage] = useState("");
+  const [disputeWorkerId, setDisputeWorkerId] = useState("");
+  const [disputeReplyMessage, setDisputeReplyMessage] = useState("");
+  const [showProposalForm, setShowProposalForm] = useState(false);
+  const [proposalAmount, setProposalAmount] = useState("");
+  const [proposalMessage, setProposalMessage] = useState("");
 
   if (isLoading) return <div className="min-h-screen bg-background flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
   if (error || !job) return <div className="min-h-screen bg-background flex items-center justify-center text-destructive">Job not found</div>;
@@ -53,10 +69,13 @@ export default function JobDetails() {
   const isInProgress = job.status === "in_progress";
   const isCompleted = job.status === "completed";
   const isCancelled = job.status === "cancelled";
+  const isDisputed = job.status === "disputed";
 
   const offers: OfferWithSender[] = offersData || [];
   const pendingOffers = offers.filter(o => o.status === 'pending');
-  const hasActivePendingOffer = pendingOffers.length > 0;
+
+  const dispute = disputeData;
+  const isDisputeParticipant = dispute && user && (dispute.posterId === user.id || dispute.workerId === user.id);
 
   const handleCreateOffer = () => {
     const amount = parseFloat(offerAmount);
@@ -106,12 +125,71 @@ export default function JobDetails() {
     });
   };
 
+  const handleCreateDispute = () => {
+    if (!disputeMessage.trim()) return;
+    const targetWorker = disputeWorkerId || workerIds[0];
+    if (!targetWorker) return;
+    createDispute({
+      jobId: job.id,
+      workerId: targetWorker,
+      message: disputeMessage,
+    }, {
+      onSuccess: () => {
+        setDisputeMessage("");
+        setShowDisputeForm(false);
+        setDisputeWorkerId("");
+      }
+    });
+  };
+
+  const handleSendDisputeReply = () => {
+    if (!disputeReplyMessage.trim() || !dispute) return;
+    sendDisputeMessage({
+      disputeId: dispute.id,
+      jobId: job.id,
+      message: disputeReplyMessage,
+      type: 'message',
+    }, {
+      onSuccess: () => {
+        setDisputeReplyMessage("");
+      }
+    });
+  };
+
+  const handleSendProposal = () => {
+    const amount = parseFloat(proposalAmount);
+    if (!amount || amount <= 0 || !dispute) return;
+    sendDisputeMessage({
+      disputeId: dispute.id,
+      jobId: job.id,
+      message: proposalMessage || `Proposing adjusted price of \u20A6${amount.toLocaleString()}`,
+      type: 'proposal',
+      amount,
+    }, {
+      onSuccess: () => {
+        setProposalAmount("");
+        setProposalMessage("");
+        setShowProposalForm(false);
+      }
+    });
+  };
+
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'pending': return <Badge variant="outline" className="text-amber-600 border-amber-200 bg-amber-50">Pending</Badge>;
       case 'accepted': return <Badge variant="outline" className="text-green-600 border-green-200 bg-green-50">Accepted</Badge>;
       case 'declined': return <Badge variant="outline" className="text-red-600 border-red-200 bg-red-50">Declined</Badge>;
       case 'countered': return <Badge variant="outline" className="text-blue-600 border-blue-200 bg-blue-50">Countered</Badge>;
+      default: return null;
+    }
+  };
+
+  const getDisputeStatusBadge = (status: string) => {
+    switch (status) {
+      case 'open': return <Badge variant="outline" className="text-amber-600 border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-400">Open</Badge>;
+      case 'negotiating': return <Badge variant="outline" className="text-blue-600 border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-800 dark:text-blue-400">Negotiating</Badge>;
+      case 'escalated': return <Badge variant="outline" className="text-red-600 border-red-200 bg-red-50 dark:bg-red-950/30 dark:border-red-800 dark:text-red-400">Escalated to Admin</Badge>;
+      case 'resolved': return <Badge variant="outline" className="text-green-600 border-green-200 bg-green-50 dark:bg-green-950/30 dark:border-green-800 dark:text-green-400">Resolved</Badge>;
       default: return null;
     }
   };
@@ -128,7 +206,11 @@ export default function JobDetails() {
         <div className="bg-card border border-border/50 rounded-3xl p-8 shadow-sm">
           <div className="flex flex-col md:flex-row justify-between items-start gap-6 mb-8">
             <div className="space-y-4">
-              <Badge variant="outline" className="rounded-lg px-3 py-1 font-medium bg-primary/5 text-primary border-primary/20 capitalize">
+              <Badge variant="outline" className={`rounded-lg px-3 py-1 font-medium capitalize ${
+                isDisputed 
+                  ? 'bg-red-50 text-red-600 border-red-200 dark:bg-red-950/30 dark:text-red-400 dark:border-red-800' 
+                  : 'bg-primary/5 text-primary border-primary/20'
+              }`}>
                 {job.status.replace('_', ' ')}
               </Badge>
               <h1 className="text-3xl md:text-4xl font-display font-bold text-foreground" data-testid="text-job-title">{job.title}</h1>
@@ -182,21 +264,37 @@ export default function JobDetails() {
                     <XCircle className="w-5 h-5 mr-2" />
                     This job has been cancelled. Funds were refunded.
                   </div>
+                ) : isDisputed ? (
+                  <div className="flex items-center text-amber-600 bg-amber-50 dark:bg-amber-950/30 p-4 rounded-xl border border-amber-100 dark:border-amber-900">
+                    <Flag className="w-5 h-5 mr-2 shrink-0" />
+                    <span>This job is under dispute. Funds remain in escrow until resolved.</span>
+                  </div>
                 ) : (
                   <div className="space-y-4">
                     {isPoster && (
                       <div className="space-y-4">
                         <p className="text-sm text-muted-foreground">You posted this job.</p>
                         {isInProgress ? (
-                          <Button
-                            className="w-full h-12 text-lg bg-green-600 text-white rounded-xl shadow-lg shadow-green-600/20"
-                            onClick={() => completeJob(job.id)}
-                            disabled={isCompleting}
-                            data-testid="button-complete-job"
-                          >
-                            {isCompleting ? <Loader2 className="animate-spin mr-2" /> : <CheckCircle className="mr-2 h-5 w-5" />}
-                            Mark as Completed & Release Funds
-                          </Button>
+                          <>
+                            <Button
+                              className="w-full h-12 text-lg bg-green-600 text-white rounded-xl shadow-lg shadow-green-600/20"
+                              onClick={() => completeJob(job.id)}
+                              disabled={isCompleting}
+                              data-testid="button-complete-job"
+                            >
+                              {isCompleting ? <Loader2 className="animate-spin mr-2" /> : <CheckCircle className="mr-2 h-5 w-5" />}
+                              Mark as Completed & Release Funds
+                            </Button>
+                            <Button
+                              variant="outline"
+                              className="w-full rounded-xl text-amber-600 border-amber-200 dark:border-amber-800"
+                              onClick={() => setShowDisputeForm(!showDisputeForm)}
+                              data-testid="button-toggle-dispute-form"
+                            >
+                              <Flag className="mr-2 h-4 w-4" />
+                              {showDisputeForm ? "Cancel" : "Not Satisfied? Raise a Concern"}
+                            </Button>
+                          </>
                         ) : isOpen ? (
                           <p className="text-sm font-medium text-amber-600 bg-amber-50 dark:bg-amber-950/30 p-3 rounded-lg border border-amber-100 dark:border-amber-900">
                             Waiting for workers to accept your job ({job.workersAccepted}/{job.workersNeeded} joined).
@@ -260,6 +358,248 @@ export default function JobDetails() {
                   </div>
                 )}
               </div>
+
+              {showDisputeForm && isPoster && isInProgress && !dispute && (
+                <Card className="p-6">
+                  <h4 className="font-bold font-display mb-4 flex items-center gap-2">
+                    <Flag className="w-5 h-5 text-amber-600" />
+                    Raise a Concern
+                  </h4>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    Describe your concern about the work. The worker will be notified and you can negotiate a fair resolution.
+                  </p>
+                  <div className="space-y-3">
+                    {workerIds.length > 1 && (
+                      <div>
+                        <label className="text-sm font-medium mb-1 block">Select Worker</label>
+                        <select
+                          className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm"
+                          value={disputeWorkerId}
+                          onChange={(e) => setDisputeWorkerId(e.target.value)}
+                          data-testid="select-dispute-worker"
+                        >
+                          <option value="">Select a worker...</option>
+                          {workerIds.map((wId) => (
+                            <option key={wId} value={wId}>{wId}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    <div>
+                      <label className="text-sm font-medium mb-1 block">What's the issue?</label>
+                      <Textarea
+                        placeholder="Describe the problem with the work..."
+                        value={disputeMessage}
+                        onChange={(e) => setDisputeMessage(e.target.value)}
+                        className="resize-none"
+                        rows={3}
+                        data-testid="input-dispute-message"
+                      />
+                    </div>
+                    <Button
+                      className="w-full rounded-xl"
+                      variant="destructive"
+                      onClick={handleCreateDispute}
+                      disabled={isCreatingDispute || !disputeMessage.trim()}
+                      data-testid="button-submit-dispute"
+                    >
+                      {isCreatingDispute ? <Loader2 className="animate-spin mr-2" /> : <Flag className="mr-2 h-4 w-4" />}
+                      Submit Concern
+                    </Button>
+                  </div>
+                </Card>
+              )}
+
+              {dispute && isDisputeParticipant && (
+                <div className="space-y-4" data-testid="section-dispute">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <h3 className="text-lg font-bold font-display flex items-center gap-2">
+                      <Scale className="w-5 h-5 text-amber-600" />
+                      Dispute Resolution
+                    </h3>
+                    {getDisputeStatusBadge(dispute.status)}
+                  </div>
+
+                  {dispute.status === 'resolved' && dispute.resolvedAmount && (
+                    <Card className="p-4 border-green-200 bg-green-50 dark:bg-green-950/30 dark:border-green-900">
+                      <div className="flex items-start gap-3">
+                        <CheckCircle className="w-5 h-5 text-green-600 mt-0.5 shrink-0" />
+                        <div>
+                          <p className="font-medium text-green-800 dark:text-green-200">Dispute Resolved</p>
+                          <p className="text-sm text-green-700 dark:text-green-300">
+                            Final amount: {"\u20A6"}{Number(dispute.resolvedAmount).toLocaleString()}
+                            {dispute.resolvedBy === 'admin' ? ' (decided by admin)' : ' (agreed by both parties)'}
+                          </p>
+                        </div>
+                      </div>
+                    </Card>
+                  )}
+
+                  <div className="space-y-3 max-h-96 overflow-y-auto">
+                    {dispute.messages?.map((msg: DisputeMessageWithSender) => {
+                      const isMe = msg.senderId === user?.id;
+                      return (
+                        <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`} data-testid={`dispute-message-${msg.id}`}>
+                          <div className={`max-w-[80%] rounded-2xl p-4 ${
+                            msg.type === 'proposal' 
+                              ? 'bg-blue-50 border border-blue-200 dark:bg-blue-950/30 dark:border-blue-800' 
+                              : msg.type === 'acceptance'
+                              ? 'bg-green-50 border border-green-200 dark:bg-green-950/30 dark:border-green-800'
+                              : isMe 
+                              ? 'bg-primary/10 border border-primary/20' 
+                              : 'bg-muted/50 border border-border'
+                          }`}>
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-xs font-medium text-foreground">
+                                {isMe ? "You" : (msg.sender?.firstName || "User")}
+                              </span>
+                              {msg.type === 'proposal' && (
+                                <Badge variant="secondary" className="text-xs">Price Proposal</Badge>
+                              )}
+                              {msg.type === 'acceptance' && (
+                                <Badge variant="secondary" className="text-xs bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300">Accepted</Badge>
+                              )}
+                            </div>
+                            <p className="text-sm text-foreground">{msg.message}</p>
+                            {msg.amount && (
+                              <p className="text-lg font-bold text-primary mt-1">{"\u20A6"}{Number(msg.amount).toLocaleString()}</p>
+                            )}
+                            <p className="text-xs text-muted-foreground mt-1">
+                              {msg.createdAt ? format(new Date(msg.createdAt), "PP p") : ""}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {dispute.status !== 'resolved' && (
+                    <div className="space-y-3">
+                      {dispute.proposedAmount && dispute.workerId === user?.id && dispute.status === 'negotiating' && (
+                        <Card className="p-4 border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-800">
+                          <div className="flex items-start gap-3">
+                            <Scale className="w-5 h-5 text-blue-600 mt-0.5 shrink-0" />
+                            <div className="space-y-2 w-full">
+                              <p className="font-medium text-blue-800 dark:text-blue-200">Price Proposal</p>
+                              <p className="text-sm text-blue-700 dark:text-blue-300">
+                                The poster is proposing {"\u20A6"}{Number(dispute.proposedAmount).toLocaleString()} instead of the original {"\u20A6"}{Number(job.price).toLocaleString()}.
+                              </p>
+                              <div className="flex flex-wrap gap-2">
+                                <Button
+                                  size="sm"
+                                  className="bg-green-600 text-white"
+                                  onClick={() => acceptProposal({ disputeId: dispute.id, jobId: job.id })}
+                                  disabled={isAcceptingProposal}
+                                  data-testid="button-accept-proposal"
+                                >
+                                  {isAcceptingProposal ? <Loader2 className="animate-spin mr-1 h-3 w-3" /> : <Check className="mr-1 h-3 w-3" />}
+                                  Accept Proposal
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => escalateDispute({ disputeId: dispute.id, jobId: job.id })}
+                                  disabled={isEscalating}
+                                  data-testid="button-escalate-from-proposal"
+                                >
+                                  <ArrowUpCircle className="mr-1 h-3 w-3" />
+                                  Escalate to Admin
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        </Card>
+                      )}
+
+                      <div className="flex gap-2">
+                        <Input
+                          placeholder="Type your message..."
+                          value={disputeReplyMessage}
+                          onChange={(e) => setDisputeReplyMessage(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && handleSendDisputeReply()}
+                          data-testid="input-dispute-reply"
+                        />
+                        <Button
+                          size="icon"
+                          onClick={handleSendDisputeReply}
+                          disabled={isSendingMessage || !disputeReplyMessage.trim()}
+                          data-testid="button-send-dispute-reply"
+                        >
+                          {isSendingMessage ? <Loader2 className="animate-spin h-4 w-4" /> : <Send className="h-4 w-4" />}
+                        </Button>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        {isPoster && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setShowProposalForm(!showProposalForm)}
+                            data-testid="button-toggle-proposal"
+                          >
+                            <Scale className="mr-1 h-3 w-3" />
+                            {showProposalForm ? "Cancel" : "Propose Adjusted Price"}
+                          </Button>
+                        )}
+                        {dispute.status !== 'escalated' && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="text-red-600 border-red-200 dark:border-red-800"
+                            onClick={() => escalateDispute({ disputeId: dispute.id, jobId: job.id })}
+                            disabled={isEscalating}
+                            data-testid="button-escalate"
+                          >
+                            {isEscalating ? <Loader2 className="animate-spin mr-1 h-3 w-3" /> : <ArrowUpCircle className="mr-1 h-3 w-3" />}
+                            Escalate to Admin
+                          </Button>
+                        )}
+                      </div>
+
+                      {showProposalForm && isPoster && (
+                        <Card className="p-4">
+                          <h4 className="font-medium text-sm mb-3">Propose a new price</h4>
+                          <div className="space-y-2">
+                            <Input
+                              type="number"
+                              placeholder="Enter proposed amount"
+                              value={proposalAmount}
+                              onChange={(e) => setProposalAmount(e.target.value)}
+                              min={0}
+                              max={Number(job.price)}
+                              data-testid="input-proposal-amount"
+                            />
+                            <Textarea
+                              placeholder="Explain your proposal (optional)"
+                              value={proposalMessage}
+                              onChange={(e) => setProposalMessage(e.target.value)}
+                              className="resize-none"
+                              rows={2}
+                              data-testid="input-proposal-message"
+                            />
+                            <Button
+                              size="sm"
+                              className="w-full"
+                              onClick={handleSendProposal}
+                              disabled={isSendingMessage || !proposalAmount}
+                              data-testid="button-send-proposal"
+                            >
+                              {isSendingMessage ? <Loader2 className="animate-spin mr-1 h-3 w-3" /> : <Send className="mr-1 h-3 w-3" />}
+                              Send Price Proposal
+                            </Button>
+                          </div>
+                        </Card>
+                      )}
+
+                      {dispute.status === 'escalated' && (
+                        <div className="text-center p-4 bg-amber-50 dark:bg-amber-950/30 rounded-xl border border-amber-100 dark:border-amber-900 text-amber-700 dark:text-amber-300 text-sm">
+                          This dispute has been escalated. An admin will review and make a final decision.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {showOfferForm && isOpen && !isPoster && user && (
                 <Card className="p-6">
@@ -463,19 +803,38 @@ export default function JobDetails() {
               )}
             </div>
 
-            <div className="space-y-8">
+            <div className="space-y-6">
+              <section>
+                <h3 className="text-lg font-bold font-display mb-4">Job Details</h3>
+                <div className="space-y-3">
+                  <div className="flex justify-between">
+                    <span className="text-sm text-muted-foreground">Category</span>
+                    <span className="text-sm font-medium capitalize text-foreground">{job.category}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-sm text-muted-foreground">Workers Needed</span>
+                    <span className="text-sm font-medium text-foreground">{job.workersNeeded}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-sm text-muted-foreground">Status</span>
+                    <span className="text-sm font-medium capitalize text-foreground">{job.status.replace('_', ' ')}</span>
+                  </div>
+                </div>
+              </section>
+
               <section>
                 <h3 className="text-lg font-bold font-display mb-4">Posted By</h3>
-                <div className="flex items-center gap-4 bg-background p-4 rounded-xl border border-border shadow-sm">
-                  <Avatar className="h-12 w-12 border border-border">
-                    <AvatarImage src={undefined} />
+                <div className="flex items-center gap-3">
+                  <Avatar className="h-10 w-10 border border-border">
+                    <AvatarImage src={job.poster?.profileImageUrl || undefined} />
                     <AvatarFallback className="bg-primary/10 text-primary font-bold">
-                      {job.posterId.slice(0, 2).toUpperCase()}
+                      {job.poster?.firstName?.[0] || "?"}
                     </AvatarFallback>
                   </Avatar>
                   <div>
-                    <p className="font-bold text-sm">User {job.posterId.slice(0, 8)}</p>
-                    <p className="text-xs text-muted-foreground">Verified Member</p>
+                    <p className="font-medium text-foreground">
+                      {job.poster?.firstName} {job.poster?.lastName}
+                    </p>
                   </div>
                 </div>
               </section>

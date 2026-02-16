@@ -8,7 +8,8 @@ import {
   Wallet, 
   User, 
   LogOut,
-  TrendingUp
+  TrendingUp,
+  Scale
 } from "lucide-react";
 import { useState } from "react";
 import {
@@ -30,7 +31,10 @@ export function Navbar() {
   const navLinks = [
     { href: "/jobs", label: "Find Jobs", icon: Briefcase },
     { href: "/wallet", label: "Wallet", icon: Wallet },
-    ...(isAdmin ? [{ href: "/admin/earnings", label: "Earnings", icon: TrendingUp }] : []),
+    ...(isAdmin ? [
+      { href: "/admin/earnings", label: "Earnings", icon: TrendingUp },
+      { href: "/admin/disputes", label: "Disputes", icon: Scale },
+    ] : []),
   ];
 
   return (
@@ -89,12 +93,20 @@ export function Navbar() {
                       </DropdownMenuItem>
                     </Link>
                     {isAdmin && (
-                      <Link href="/admin/earnings">
-                        <DropdownMenuItem className="cursor-pointer">
-                          <TrendingUp className="mr-2 h-4 w-4" />
-                          <span>Platform Earnings</span>
-                        </DropdownMenuItem>
-                      </Link>
+                      <>
+                        <Link href="/admin/earnings">
+                          <DropdownMenuItem className="cursor-pointer">
+                            <TrendingUp className="mr-2 h-4 w-4" />
+                            <span>Platform Earnings</span>
+                          </DropdownMenuItem>
+                        </Link>
+                        <Link href="/admin/disputes">
+                          <DropdownMenuItem className="cursor-pointer">
+                            <Scale className="mr-2 h-4 w-4" />
+                            <span>Manage Disputes</span>
+                          </DropdownMenuItem>
+                        </Link>
+                      </>
                     )}
                     <DropdownMenuItem className="cursor-pointer text-destructive focus:text-destructive" onClick={() => logout()}>
                       <LogOut className="mr-2 h-4 w-4" />
@@ -153,12 +165,20 @@ export function Navbar() {
                 </Link>
 
                 {isAdmin && (
-                  <Link href="/admin/earnings" onClick={() => setIsOpen(false)}>
-                    <div className="flex items-center p-3 rounded-xl text-foreground">
-                      <TrendingUp className="w-5 h-5 mr-3" />
-                      <span className="font-medium">Platform Earnings</span>
-                    </div>
-                  </Link>
+                  <>
+                    <Link href="/admin/earnings" onClick={() => setIsOpen(false)}>
+                      <div className="flex items-center p-3 rounded-xl text-foreground">
+                        <TrendingUp className="w-5 h-5 mr-3" />
+                        <span className="font-medium">Platform Earnings</span>
+                      </div>
+                    </Link>
+                    <Link href="/admin/disputes" onClick={() => setIsOpen(false)}>
+                      <div className="flex items-center p-3 rounded-xl text-foreground">
+                        <Scale className="w-5 h-5 mr-3" />
+                        <span className="font-medium">Manage Disputes</span>
+                      </div>
+                    </Link>
+                  </>
                 )}
 
                 <Button 

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { createJobSchema, createOfferSchema, jobs, profiles, transactions, platformEarnings, platformTransactions, offers } from './schema';
+import { createJobSchema, createOfferSchema, jobs, profiles, transactions, platformEarnings, platformTransactions, offers, disputes, disputeMessages } from './schema';
 
 export const errorSchemas = {
   validation: z.object({
@@ -194,6 +194,81 @@ export const api = {
         200: z.custom<typeof offers.$inferSelect>(),
         400: errorSchemas.validation,
         401: errorSchemas.unauthorized,
+      },
+    },
+  },
+  disputes: {
+    create: {
+      method: 'POST' as const,
+      path: '/api/jobs/:id/dispute' as const,
+      input: z.object({
+        workerId: z.string().min(1),
+        message: z.string().min(1),
+      }),
+      responses: {
+        201: z.any(),
+        400: errorSchemas.validation,
+      },
+    },
+    get: {
+      method: 'GET' as const,
+      path: '/api/disputes/:id' as const,
+      responses: {
+        200: z.any(),
+        404: errorSchemas.notFound,
+      },
+    },
+    getByJob: {
+      method: 'GET' as const,
+      path: '/api/jobs/:id/dispute' as const,
+      responses: {
+        200: z.any(),
+        404: errorSchemas.notFound,
+      },
+    },
+    list: {
+      method: 'GET' as const,
+      path: '/api/admin/disputes' as const,
+      responses: {
+        200: z.array(z.any()),
+      },
+    },
+    message: {
+      method: 'POST' as const,
+      path: '/api/disputes/:id/message' as const,
+      input: z.object({
+        message: z.string().min(1),
+        type: z.enum(['message', 'proposal', 'acceptance']).default('message'),
+        amount: z.number().optional(),
+      }),
+      responses: {
+        201: z.any(),
+        400: errorSchemas.validation,
+      },
+    },
+    escalate: {
+      method: 'POST' as const,
+      path: '/api/disputes/:id/escalate' as const,
+      responses: {
+        200: z.any(),
+      },
+    },
+    resolve: {
+      method: 'POST' as const,
+      path: '/api/disputes/:id/resolve' as const,
+      input: z.object({
+        resolvedAmount: z.number().min(0),
+        message: z.string().optional(),
+      }),
+      responses: {
+        200: z.any(),
+      },
+    },
+    acceptProposal: {
+      method: 'POST' as const,
+      path: '/api/disputes/:id/accept-proposal' as const,
+      responses: {
+        200: z.any(),
       },
     },
   },

@@ -12,6 +12,7 @@ import JobDetails from "@/pages/JobDetails";
 import Wallet from "@/pages/Wallet";
 import Profile from "@/pages/Profile";
 import AdminEarnings from "@/pages/AdminEarnings";
+import AdminDisputes from "@/pages/AdminDisputes";
 import NotFound from "@/pages/not-found";
 
 // Higher-order component for protected routes
@@ -55,6 +56,9 @@ function Router() {
       </Route>
       <Route path="/admin/earnings">
         {() => <ProtectedRoute component={AdminEarnings} />}
+      </Route>
+      <Route path="/admin/disputes">
+        {() => <ProtectedRoute component={AdminDisputes} />}
       </Route>
 
       <Route component={NotFound} />
