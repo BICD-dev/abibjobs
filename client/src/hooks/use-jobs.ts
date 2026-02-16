@@ -133,10 +133,47 @@ export function useCompleteJob() {
     onSuccess: (_, id) => {
       queryClient.invalidateQueries({ queryKey: [api.jobs.list.path] });
       queryClient.invalidateQueries({ queryKey: [api.jobs.get.path, id] });
-      queryClient.invalidateQueries({ queryKey: [api.wallet.get.path] }); // Wallet balance changes
+      queryClient.invalidateQueries({ queryKey: [api.wallet.get.path] });
       toast({
         title: "Job Completed",
-        description: "Funds have been released to the worker.",
+        description: "Funds have been released to the worker(s).",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+}
+
+export function useCancelJob() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (id: number) => {
+      const url = buildUrl(api.jobs.cancel.path, { id });
+      const res = await fetch(url, {
+        method: api.jobs.cancel.method,
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || "Failed to cancel job");
+      }
+      return api.jobs.cancel.responses[200].parse(await res.json());
+    },
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: [api.jobs.list.path] });
+      queryClient.invalidateQueries({ queryKey: [api.jobs.get.path, id] });
+      queryClient.invalidateQueries({ queryKey: [api.wallet.get.path] });
+      toast({
+        title: "Job Cancelled",
+        description: "Your escrow funds have been refunded to your wallet.",
       });
     },
     onError: (error: Error) => {

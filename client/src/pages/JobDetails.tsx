@@ -1,11 +1,11 @@
 import { useRoute, useLocation } from "wouter";
-import { useJob, useAcceptJob, useCompleteJob } from "@/hooks/use-jobs";
+import { useJob, useAcceptJob, useCompleteJob, useCancelJob } from "@/hooks/use-jobs";
 import { useAuth } from "@/hooks/use-auth";
 import { Navbar } from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Loader2, MapPin, Calendar, ArrowLeft, CheckCircle, Shield } from "lucide-react";
+import { Loader2, MapPin, Calendar, ArrowLeft, CheckCircle, Shield, Users, XCircle } from "lucide-react";
 import { format } from "date-fns";
 
 export default function JobDetails() {
@@ -17,15 +17,18 @@ export default function JobDetails() {
   
   const { mutate: acceptJob, isPending: isAccepting } = useAcceptJob();
   const { mutate: completeJob, isPending: isCompleting } = useCompleteJob();
+  const { mutate: cancelJob, isPending: isCancelling } = useCancelJob();
 
   if (isLoading) return <div className="min-h-screen bg-background flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
   if (error || !job) return <div className="min-h-screen bg-background flex items-center justify-center text-destructive">Job not found</div>;
 
   const isPoster = user?.id === job.posterId;
-  const isWorker = user?.id === job.workerId;
+  const workerIds = job.workerId ? job.workerId.split(',') : [];
+  const isWorker = user?.id ? workerIds.includes(user.id) : false;
   const isOpen = job.status === "open";
   const isInProgress = job.status === "in_progress";
   const isCompleted = job.status === "completed";
+  const isCancelled = job.status === "cancelled";
 
   return (
     <div className="min-h-screen bg-background pb-20">
@@ -62,6 +65,11 @@ export default function JobDetails() {
               <div className="mt-3 flex items-center justify-center gap-1.5 text-xs text-primary/80 font-medium">
                 <Shield className="w-3.5 h-3.5" /> Escrow Secured
               </div>
+              {job.workersNeeded > 1 && (
+                <div className="mt-3 flex items-center justify-center gap-1.5 text-xs text-muted-foreground font-medium" data-testid="text-workers-info">
+                  <Users className="w-3.5 h-3.5" /> {job.workersAccepted}/{job.workersNeeded} workers
+                </div>
+              )}
             </div>
           </div>
 
@@ -86,9 +94,13 @@ export default function JobDetails() {
                     <CheckCircle className="w-5 h-5 mr-2" />
                     This job has been completed and paid for.
                   </div>
+                ) : isCancelled ? (
+                  <div className="flex items-center text-red-600 bg-red-50 p-4 rounded-xl border border-red-100">
+                    <XCircle className="w-5 h-5 mr-2" />
+                    This job has been cancelled. Funds were refunded.
+                  </div>
                 ) : (
                   <div className="space-y-4">
-                    {/* Poster Actions */}
                     {isPoster && (
                       <div className="space-y-4">
                         <p className="text-sm text-muted-foreground">You posted this job.</p>
@@ -97,29 +109,47 @@ export default function JobDetails() {
                             className="w-full h-12 text-lg bg-green-600 hover:bg-green-700 text-white rounded-xl shadow-lg shadow-green-600/20"
                             onClick={() => completeJob(job.id)}
                             disabled={isCompleting}
+                            data-testid="button-complete-job"
                           >
                             {isCompleting ? <Loader2 className="animate-spin mr-2" /> : <CheckCircle className="mr-2 h-5 w-5" />}
                             Mark as Completed & Release Funds
                           </Button>
                         ) : isOpen ? (
                           <p className="text-sm font-medium text-amber-600 bg-amber-50 p-3 rounded-lg border border-amber-100">
-                            Waiting for someone to accept your job.
+                            Waiting for workers to accept your job ({job.workersAccepted}/{job.workersNeeded} joined).
                           </p>
                         ) : null}
+                        
+                        {(isOpen || isInProgress) && (
+                          <Button 
+                            variant="destructive"
+                            className="w-full rounded-xl"
+                            onClick={() => cancelJob(job.id)}
+                            disabled={isCancelling}
+                            data-testid="button-cancel-job"
+                          >
+                            {isCancelling ? <Loader2 className="animate-spin mr-2" /> : <XCircle className="mr-2 h-4 w-4" />}
+                            Cancel Job & Get Refund
+                          </Button>
+                        )}
                       </div>
                     )}
 
-                    {/* Worker Actions */}
                     {!isPoster && (
                       <div className="space-y-4">
-                        {isOpen ? (
+                        {isOpen && !isWorker ? (
                           <Button 
                             className="w-full h-12 text-lg bg-primary hover:bg-primary/90 text-white rounded-xl shadow-lg shadow-primary/25"
                             onClick={() => acceptJob(job.id)}
                             disabled={isAccepting}
+                            data-testid="button-accept-job"
                           >
                             {isAccepting ? <Loader2 className="animate-spin mr-2" /> : "Accept This Job"}
                           </Button>
+                        ) : isOpen && isWorker ? (
+                          <div className="text-center p-4 bg-primary/10 rounded-xl text-primary font-medium border border-primary/20">
+                            You've joined this job. Waiting for more workers ({job.workersAccepted}/{job.workersNeeded}).
+                          </div>
                         ) : isWorker && isInProgress ? (
                           <div className="text-center p-4 bg-primary/10 rounded-xl text-primary font-medium border border-primary/20">
                             You are working on this job. Waiting for client to confirm completion.

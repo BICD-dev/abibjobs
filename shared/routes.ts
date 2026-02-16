@@ -70,6 +70,15 @@ export const api = {
         401: errorSchemas.unauthorized,
       },
     },
+    cancel: {
+      method: 'POST' as const,
+      path: '/api/jobs/:id/cancel' as const,
+      responses: {
+        200: z.custom<typeof jobs.$inferSelect>(),
+        400: errorSchemas.validation,
+        401: errorSchemas.unauthorized,
+      },
+    },
   },
   profile: {
     get: {

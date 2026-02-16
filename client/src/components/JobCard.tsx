@@ -1,6 +1,6 @@
 import { Link } from "wouter";
 import { formatDistanceToNow } from "date-fns";
-import { MapPin, Calendar, Briefcase, CheckCircle2, Clock, XCircle } from "lucide-react";
+import { MapPin, Briefcase, CheckCircle2, Clock, XCircle, Users } from "lucide-react";
 import type { JobWithDetails } from "@shared/schema";
 import { Badge } from "@/components/ui/badge";
 
@@ -49,9 +49,17 @@ export function JobCard({ job }: JobCardProps) {
             {job.title}
           </h3>
 
-          <div className="flex items-center text-sm text-muted-foreground mb-6">
-            <MapPin className="w-4 h-4 mr-1 text-primary/70" />
-            <span className="truncate">{job.location}</span>
+          <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground mb-6">
+            <div className="flex items-center">
+              <MapPin className="w-4 h-4 mr-1 text-primary/70" />
+              <span className="truncate">{job.location}</span>
+            </div>
+            {job.workersNeeded > 1 && (
+              <div className="flex items-center" data-testid={`text-workers-${job.id}`}>
+                <Users className="w-4 h-4 mr-1 text-primary/70" />
+                <span>{job.workersAccepted}/{job.workersNeeded} workers</span>
+              </div>
+            )}
           </div>
 
           <div className="mt-auto flex items-center justify-between border-t border-border/50 pt-4">

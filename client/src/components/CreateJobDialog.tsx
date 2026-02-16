@@ -32,9 +32,9 @@ import {
 import { Loader2, Plus } from "lucide-react";
 import { z } from "zod";
 
-// Extend the schema to handle string inputs from form
 const formSchema = createJobSchema.extend({
-  price: z.coerce.number().min(100, "Minimum price is ₦100"), // Form returns string usually
+  price: z.coerce.number().min(100, "Minimum price is ₦100"),
+  workersNeeded: z.coerce.number().min(1, "At least 1 worker required").max(50, "Maximum 50 workers"),
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -51,6 +51,7 @@ export function CreateJobDialog() {
       price: undefined,
       location: "",
       category: "other",
+      workersNeeded: 1,
     },
   });
 
@@ -138,6 +139,20 @@ export function CreateJobDialog() {
                 )}
               />
             </div>
+
+            <FormField
+              control={form.control}
+              name="workersNeeded"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="font-semibold text-foreground/80">Workers Needed</FormLabel>
+                  <FormControl>
+                    <Input type="number" min={1} max={50} placeholder="1" className="rounded-xl border-2 focus:border-primary/50" {...field} data-testid="input-workers-needed" />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
             <FormField
               control={form.control}

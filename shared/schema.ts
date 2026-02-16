@@ -34,10 +34,12 @@ export const jobs = pgTable("jobs", {
   description: text("description").notNull(),
   price: numeric("price", { precision: 10, scale: 2 }).notNull(),
   location: text("location").notNull(),
-  category: text("category").notNull(), // 'cleaning', 'ac_repair', 'phone_repair', 'other'
+  category: text("category").notNull(),
   status: text("status").default("open").notNull(), // 'open', 'in_progress', 'completed', 'cancelled'
-  posterId: text("poster_id").notNull(), // Links to auth.users.id
-  workerId: text("worker_id"), // Links to auth.users.id
+  posterId: text("poster_id").notNull(),
+  workerId: text("worker_id"),
+  workersNeeded: integer("workers_needed").default(1).notNull(),
+  workersAccepted: integer("workers_accepted").default(0).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -81,8 +83,7 @@ export const platformTransactions = pgTable("platform_transactions", {
 // === SCHEMAS ===
 
 export const insertProfileSchema = createInsertSchema(profiles).omit({ id: true });
-export const insertJobSchema = createInsertSchema(jobs).omit({ id: true, createdAt: true, updatedAt: true, workerId: true, status: true });
-// For API input where we don't expect posterId (inferred from session)
+export const insertJobSchema = createInsertSchema(jobs).omit({ id: true, createdAt: true, updatedAt: true, workerId: true, status: true, workersAccepted: true });
 export const createJobSchema = insertJobSchema.omit({ posterId: true });
 
 export const insertTransactionSchema = createInsertSchema(transactions).omit({ id: true, createdAt: true });

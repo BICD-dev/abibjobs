@@ -54,13 +54,15 @@ Schema changes use `drizzle-kit push` (not migrations). Run `npm run db:push` to
 ### API Design
 - Routes defined declaratively in `shared/routes.ts` with Zod schemas for input/output validation
 - RESTful endpoints under `/api/` prefix
-- Key endpoint groups: jobs (CRUD + accept/complete), profile (get/update), wallet (get/deposit/withdraw/transactions)
+- Key endpoint groups: jobs (CRUD + accept/complete/cancel), profile (get/update), wallet (get/deposit/withdraw/transactions)
 - The `shared/routes.ts` `api` object serves as a single source of truth for paths, methods, and schemas used by both frontend hooks and backend handlers
 
 ### Escrow / Wallet System
 - Users have a wallet balance stored in `profiles.walletBalance`
-- Job payments go through escrow: poster's funds are held when a worker accepts, released to worker on completion
-- Transaction types: deposit, withdrawal, job_payment, job_earning, fee
+- Job payments go through escrow: poster's funds are held when posting, released to worker(s) on completion
+- Jobs support multiple workers (workersNeeded field); payment is split equally among all workers
+- Poster can cancel a job (open or in_progress) to get escrow refund
+- Transaction types: deposit, withdrawal, escrow_hold, escrow_refund, job_earning, fee
 
 ### Key Environment Variables
 - `DATABASE_URL` — PostgreSQL connection string (required)

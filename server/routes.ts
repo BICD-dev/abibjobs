@@ -106,21 +106,27 @@ export async function registerRoutes(
     if (!job) return res.status(404).json({ message: "Job not found" });
 
     if (job.status !== 'open') {
-      return res.status(400).json({ message: "Job is not open" });
+      return res.status(400).json({ message: "Job is not open for new workers" });
     }
 
     if (job.posterId === userId) {
       return res.status(400).json({ message: "You cannot accept your own job" });
     }
 
-    // Verify worker has ID uploaded (optional security check requested)
-    const profile = await storage.getProfile(userId);
-    if (!profile?.isVerified && !profile?.idCardUrl) {
-       // Allow for now but warn, or strictly block:
-       // return res.status(400).json({ message: "You must upload an ID to accept jobs." });
+    const currentWorkers = job.workerId ? job.workerId.split(',') : [];
+    if (currentWorkers.includes(userId)) {
+      return res.status(400).json({ message: "You have already accepted this job" });
     }
 
-    const updated = await storage.updateJob(jobId, { status: 'in_progress', workerId: userId });
+    const newWorkers = [...currentWorkers, userId];
+    const newAccepted = newWorkers.length;
+    const newStatus = newAccepted >= job.workersNeeded ? 'in_progress' : 'open';
+
+    const updated = await storage.updateJob(jobId, { 
+      workerId: newWorkers.join(','), 
+      workersAccepted: newAccepted,
+      status: newStatus,
+    });
     res.json(updated);
   });
 
@@ -131,7 +137,6 @@ export async function registerRoutes(
     const job = await storage.getJob(jobId);
     if (!job) return res.status(404).json({ message: "Job not found" });
 
-    // Only poster can mark as complete (approving the work)
     if (job.posterId !== userId) {
       return res.status(403).json({ message: "Only the poster can mark the job as completed" });
     }
@@ -140,23 +145,54 @@ export async function registerRoutes(
       return res.status(400).json({ message: "Job is not in progress" });
     }
 
-    // Payout Logic
     const price = parseFloat(job.price);
-    const fee = price * 0.22; // 22% fee
-    const payout = price - fee;
+    const fee = price * 0.22;
+    const totalPayout = price - fee;
 
-    // Credit worker
-    await storage.updateWalletBalance(job.workerId, payout);
-    await storage.createTransaction({
-      userId: job.workerId,
-      amount: payout.toString(),
-      type: 'job_earning',
-      jobId: job.id
-    });
+    const workerIds = job.workerId.split(',').filter(Boolean);
+    const payoutPerWorker = totalPayout / workerIds.length;
+
+    for (const wId of workerIds) {
+      await storage.updateWalletBalance(wId, payoutPerWorker);
+      await storage.createTransaction({
+        userId: wId,
+        amount: payoutPerWorker.toFixed(2),
+        type: 'job_earning',
+        jobId: job.id
+      });
+    }
 
     await storage.addPlatformEarning(fee, job.id, job.title);
 
     const updated = await storage.updateJob(jobId, { status: 'completed' });
+    res.json(updated);
+  });
+
+  app.post(api.jobs.cancel.path, isAuthenticated, async (req, res) => {
+    const jobId = Number(req.params.id);
+    const userId = (req.user as any).claims.sub;
+    
+    const job = await storage.getJob(jobId);
+    if (!job) return res.status(404).json({ message: "Job not found" });
+
+    if (job.posterId !== userId) {
+      return res.status(403).json({ message: "Only the poster can cancel this job" });
+    }
+
+    if (job.status === 'completed' || job.status === 'cancelled') {
+      return res.status(400).json({ message: "Job is already " + job.status });
+    }
+
+    const price = parseFloat(job.price);
+    await storage.updateWalletBalance(userId, price);
+    await storage.createTransaction({
+      userId,
+      amount: price.toString(),
+      type: 'escrow_refund',
+      jobId: job.id,
+    });
+
+    const updated = await storage.updateJob(jobId, { status: 'cancelled' });
     res.json(updated);
   });
 
