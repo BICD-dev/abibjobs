@@ -121,9 +121,18 @@ export async function setupAuth(app: Express) {
     if (req.session) {
       delete (req.session as any).returnTo;
     }
-    passport.authenticate(`replitauth:${req.hostname}`, {
-      successReturnToOrRedirect: returnTo,
-      failureRedirect: "/api/login",
+    passport.authenticate(`replitauth:${req.hostname}`, (err: any, user: any, info: any) => {
+      if (err || !user) {
+        console.error("Auth callback error:", err?.message || info);
+        return res.redirect("/api/login");
+      }
+      req.logIn(user, (loginErr) => {
+        if (loginErr) {
+          console.error("Login error:", loginErr.message);
+          return res.redirect("/api/login");
+        }
+        return res.redirect(returnTo);
+      });
     })(req, res, next);
   });
 
