@@ -13,6 +13,7 @@ import {
   TrendingUp,
   Scale,
   Shield,
+  ShieldCheck,
   Users,
   Bell,
   ClipboardList
@@ -45,9 +46,11 @@ export function Navbar() {
   const adminLinks = [];
   if (isOwner) {
     adminLinks.push({ href: "/admin/earnings", label: "Earnings", icon: TrendingUp });
+    adminLinks.push({ href: "/admin/verifications", label: "Verifications", icon: ShieldCheck });
     adminLinks.push({ href: "/admin/disputes", label: "Disputes", icon: Scale });
     adminLinks.push({ href: "/admin/staff", label: "Admin Staff", icon: Users });
   } else if (isStaff) {
+    adminLinks.push({ href: "/admin/verifications", label: "Verifications", icon: ShieldCheck });
     adminLinks.push({ href: "/admin/disputes", label: "Disputes", icon: Scale });
   }
 
@@ -138,12 +141,20 @@ export function Navbar() {
                       </>
                     )}
                     {(isOwner || isStaff) && (
-                      <Link href="/admin/disputes">
-                        <DropdownMenuItem className="cursor-pointer">
-                          <Scale className="mr-2 h-4 w-4" />
-                          <span>Manage Disputes</span>
-                        </DropdownMenuItem>
-                      </Link>
+                      <>
+                        <Link href="/admin/verifications">
+                          <DropdownMenuItem className="cursor-pointer">
+                            <ShieldCheck className="mr-2 h-4 w-4" />
+                            <span>Verifications</span>
+                          </DropdownMenuItem>
+                        </Link>
+                        <Link href="/admin/disputes">
+                          <DropdownMenuItem className="cursor-pointer">
+                            <Scale className="mr-2 h-4 w-4" />
+                            <span>Manage Disputes</span>
+                          </DropdownMenuItem>
+                        </Link>
+                      </>
                     )}
                     {isStaff && !isAuthenticated && (
                       <Link href="/admin/settings">

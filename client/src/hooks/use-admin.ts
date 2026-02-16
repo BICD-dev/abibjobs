@@ -18,11 +18,12 @@ export function useAdminWithdraw() {
   const { toast } = useToast();
 
   return useMutation({
-    mutationFn: async (input: { amount: number; bankCode: string; bankName: string; accountNumber: string; accountName?: string }) => {
+    mutationFn: async (input: { amount: number; bankCode: string; bankName: string; accountNumber: string; accountName?: string; passcode: string }) => {
+      const { passcode, ...body } = input;
       const res = await fetch(api.admin.withdraw.path, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
+        headers: { "Content-Type": "application/json", "x-owner-passcode": passcode },
+        body: JSON.stringify(body),
         credentials: "include",
       });
       if (!res.ok) {

@@ -15,6 +15,7 @@ import {
   notifications,
   scheduledPayments,
   lagosAddresses,
+  ownerSettings,
   type Profile,
   type Job,
   type Transaction,
@@ -107,6 +108,19 @@ export interface IStorage {
   searchAddresses(query: string): Promise<LagosAddress[]>;
   getAddressCount(): Promise<number>;
   seedAddresses(addresses: { area: string; lga: string }[]): Promise<void>;
+
+  // Verification
+  getPendingVerifications(): Promise<(Profile & { userName?: string; userEmail?: string })[]>;
+  submitVerification(userId: string, idCardUrl: string, faceScanUrl: string): Promise<Profile>;
+  reviewVerification(userId: string, action: 'approve' | 'decline' | 'redo', note?: string): Promise<Profile>;
+
+  // Owner Settings
+  getOwnerSettings(): Promise<{ passcodeHash: string | null; ownerEmail: string; id: number } | undefined>;
+  setOwnerPasscode(hash: string): Promise<void>;
+  updateOwnerEmail(newEmail: string): Promise<void>;
+  setResetToken(token: string, expiresAt: Date): Promise<void>;
+  getResetToken(): Promise<{ resetToken: string | null; resetTokenExpiresAt: Date | null; ownerEmail: string } | undefined>;
+  clearResetToken(): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -659,6 +673,101 @@ export class DatabaseStorage implements IStorage {
       type: "success",
       jobId: payment.jobId ?? undefined,
     });
+  }
+  async getPendingVerifications(): Promise<(Profile & { userName?: string; userEmail?: string })[]> {
+    const results = await db.select({
+      profile: profiles,
+      userName: sql<string>`COALESCE(${users.firstName} || ' ' || ${users.lastName}, 'Unknown')`,
+      userEmail: users.email,
+    })
+    .from(profiles)
+    .leftJoin(users, eq(profiles.userId, users.id))
+    .where(eq(profiles.verificationStatus, 'pending'))
+    .orderBy(desc(profiles.id));
+
+    return results.map(r => ({
+      ...r.profile,
+      userName: r.userName || undefined,
+      userEmail: r.userEmail || undefined,
+    }));
+  }
+
+  async submitVerification(userId: string, idCardUrl: string, faceScanUrl: string): Promise<Profile> {
+    const [updated] = await db.update(profiles)
+      .set({
+        idCardUrl,
+        faceScanUrl,
+        verificationStatus: 'pending',
+        verificationNote: null,
+        isVerified: false,
+      })
+      .where(eq(profiles.userId, userId))
+      .returning();
+    return updated;
+  }
+
+  async reviewVerification(userId: string, action: 'approve' | 'decline' | 'redo', note?: string): Promise<Profile> {
+    const updates: Partial<Profile> = { verificationNote: note || null };
+    if (action === 'approve') {
+      updates.verificationStatus = 'verified';
+      updates.isVerified = true;
+    } else if (action === 'decline') {
+      updates.verificationStatus = 'declined';
+      updates.isVerified = false;
+    } else {
+      updates.verificationStatus = 'redo_requested';
+      updates.isVerified = false;
+      updates.idCardUrl = null;
+      updates.faceScanUrl = null;
+    }
+    const [updated] = await db.update(profiles)
+      .set(updates)
+      .where(eq(profiles.userId, userId))
+      .returning();
+    return updated;
+  }
+
+  async getOwnerSettings(): Promise<{ passcodeHash: string | null; ownerEmail: string; id: number } | undefined> {
+    const [settings] = await db.select().from(ownerSettings).limit(1);
+    if (!settings) {
+      const [created] = await db.insert(ownerSettings).values({ ownerEmail: 'abeebakeem265@gmail.com' }).returning();
+      return created;
+    }
+    return settings;
+  }
+
+  async setOwnerPasscode(hash: string): Promise<void> {
+    const settings = await this.getOwnerSettings();
+    if (settings) {
+      await db.update(ownerSettings).set({ passcodeHash: hash, updatedAt: new Date() }).where(eq(ownerSettings.id, settings.id));
+    }
+  }
+
+  async updateOwnerEmail(newEmail: string): Promise<void> {
+    const settings = await this.getOwnerSettings();
+    if (settings) {
+      await db.update(ownerSettings).set({ ownerEmail: newEmail, updatedAt: new Date() }).where(eq(ownerSettings.id, settings.id));
+    }
+  }
+
+  async setResetToken(token: string, expiresAt: Date): Promise<void> {
+    const settings = await this.getOwnerSettings();
+    if (settings) {
+      await db.update(ownerSettings).set({ resetToken: token, resetTokenExpiresAt: expiresAt, updatedAt: new Date() }).where(eq(ownerSettings.id, settings.id));
+    }
+  }
+
+  async getResetToken(): Promise<{ resetToken: string | null; resetTokenExpiresAt: Date | null; ownerEmail: string } | undefined> {
+    const settings = await this.getOwnerSettings();
+    if (!settings) return undefined;
+    return { resetToken: settings.passcodeHash ? null : null, resetTokenExpiresAt: null, ownerEmail: settings.ownerEmail };
+  }
+
+  async clearResetToken(): Promise<void> {
+    const settings = await this.getOwnerSettings();
+    if (settings) {
+      await db.update(ownerSettings).set({ resetToken: null, resetTokenExpiresAt: null, updatedAt: new Date() }).where(eq(ownerSettings.id, settings.id));
+    }
   }
 }
 

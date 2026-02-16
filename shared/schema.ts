@@ -18,12 +18,15 @@ export * from "./models/auth";
 
 export const profiles = pgTable("profiles", {
   id: serial("id").primaryKey(),
-  userId: text("user_id").notNull().unique(), // Links to auth.users.id
+  userId: text("user_id").notNull().unique(),
   bio: text("bio"),
-  role: text("role").default("user"), // 'user' or 'admin'
+  role: text("role").default("user"),
   walletBalance: numeric("wallet_balance", { precision: 10, scale: 2 }).default("0").notNull(),
   isVerified: boolean("is_verified").default(false).notNull(),
+  verificationStatus: text("verification_status").default("unverified").notNull(), // 'unverified', 'pending', 'verified', 'declined', 'redo_requested'
   idCardUrl: text("id_card_url"),
+  faceScanUrl: text("face_scan_url"),
+  verificationNote: text("verification_note"),
   phoneNumber: text("phone_number"),
   location: text("location"),
   noShowCount: integer("no_show_count").default(0).notNull(),
@@ -170,6 +173,15 @@ export const lagosAddresses = pgTable("lagos_addresses", {
   lga: text("lga").notNull(),
 });
 
+export const ownerSettings = pgTable("owner_settings", {
+  id: serial("id").primaryKey(),
+  passcodeHash: text("passcode_hash"),
+  ownerEmail: text("owner_email").default("abeebakeem265@gmail.com").notNull(),
+  resetToken: text("reset_token"),
+  resetTokenExpiresAt: timestamp("reset_token_expires_at"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // === SCHEMAS ===
 
 export const insertProfileSchema = createInsertSchema(profiles).omit({ id: true });
@@ -200,8 +212,10 @@ export type AdminActivity = typeof adminActivity.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
 export type ScheduledPayment = typeof scheduledPayments.$inferSelect;
 export type LagosAddress = typeof lagosAddresses.$inferSelect;
+export type OwnerSettings = typeof ownerSettings.$inferSelect;
 
 export type CreateJobInput = z.infer<typeof createJobSchema>;
+export type VerificationStatus = 'unverified' | 'pending' | 'verified' | 'declined' | 'redo_requested';
 export type CreateOfferInput = z.infer<typeof createOfferSchema>;
 
 export type UserRole = "user" | "admin";

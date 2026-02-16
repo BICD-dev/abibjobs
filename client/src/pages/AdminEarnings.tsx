@@ -6,9 +6,11 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, ArrowUpRight, ArrowDownLeft, TrendingUp, Building2, Settings, Banknote } from "lucide-react";
+import { Loader2, ArrowUpRight, ArrowDownLeft, TrendingUp, Building2, Settings, Banknote, Lock, Key } from "lucide-react";
 import { format } from "date-fns";
 import { NIGERIAN_BANKS } from "@/lib/nigerian-banks";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
 
 export default function AdminEarnings() {
   const { data: earnings, isLoading, isError, error } = useAdminEarnings();
@@ -21,6 +23,7 @@ export default function AdminEarnings() {
   const [bankCode, setBankCode] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
   const [accountName, setAccountName] = useState("");
+  const [passcode, setPasscode] = useState("");
 
   const selectedBank = NIGERIAN_BANKS.find(b => b.code === bankCode);
 
@@ -29,18 +32,20 @@ export default function AdminEarnings() {
     setBankCode("");
     setAccountNumber("");
     setAccountName("");
+    setPasscode("");
   };
 
   const handleWithdraw = (e: React.FormEvent) => {
     e.preventDefault();
     const val = Number(amount);
-    if (!val || !bankCode || !accountNumber) return;
+    if (!val || !bankCode || !accountNumber || !passcode || passcode.length !== 6) return;
     withdraw({
       amount: val,
       bankCode,
       bankName: selectedBank?.name || "",
       accountNumber,
       accountName: accountName || undefined,
+      passcode,
     }, { onSuccess: () => { setWithdrawOpen(false); resetForm(); }});
   };
 
@@ -128,6 +133,8 @@ export default function AdminEarnings() {
           </Card>
         )}
 
+        <PasscodeSetupCard />
+
         <div className="flex gap-3 mb-8 flex-wrap">
           <Dialog open={withdrawOpen} onOpenChange={(v) => { setWithdrawOpen(v); if (!v) resetForm(); }}>
             <DialogTrigger asChild>
@@ -181,6 +188,16 @@ export default function AdminEarnings() {
                     className="rounded-xl text-lg" data-testid="input-admin-amount"
                   />
                 </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">6-Digit Passcode</label>
+                  <Input 
+                    type="password" inputMode="numeric" pattern="[0-9]*" maxLength={6}
+                    placeholder="Enter your 6-digit passcode"
+                    value={passcode} onChange={e => setPasscode(e.target.value.replace(/\D/g, ''))}
+                    className="rounded-xl text-center text-lg tracking-widest" data-testid="input-admin-passcode"
+                  />
+                  <p className="text-xs text-muted-foreground">Required for all withdrawals</p>
+                </div>
                 {bankCode && accountNumber && amount && (
                   <Card className="bg-muted/50 border-dashed">
                     <CardContent className="p-4 space-y-1 text-sm">
@@ -202,7 +219,7 @@ export default function AdminEarnings() {
                 )}
                 <Button 
                   type="submit" className="w-full rounded-xl font-bold"
-                  disabled={isWithdrawing || !bankCode || !accountNumber || !amount}
+                  disabled={isWithdrawing || !bankCode || !accountNumber || !amount || passcode.length !== 6}
                   data-testid="button-confirm-admin-withdraw"
                 >
                   {isWithdrawing ? <Loader2 className="animate-spin" /> : "Confirm Withdrawal"}
@@ -313,5 +330,121 @@ export default function AdminEarnings() {
         </Card>
       </main>
     </div>
+  );
+}
+
+function PasscodeSetupCard() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [newPasscode, setNewPasscode] = useState("");
+  const [confirmPasscode, setConfirmPasscode] = useState("");
+  const [setupOpen, setSetupOpen] = useState(false);
+
+  const { data: passcodeStatus } = useQuery<{ hasPasscode: boolean; ownerEmail: string }>({
+    queryKey: ['/api/owner/passcode/status'],
+    queryFn: async () => {
+      const res = await fetch('/api/owner/passcode/status', { credentials: 'include' });
+      if (!res.ok) return { hasPasscode: false, ownerEmail: '' };
+      return res.json();
+    },
+  });
+
+  const setupMutation = useMutation({
+    mutationFn: async (passcode: string) => {
+      const res = await fetch('/api/owner/passcode/setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passcode }),
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message);
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/owner/passcode/status'] });
+      toast({ title: "Passcode Set", description: "Your 6-digit passcode has been saved." });
+      setSetupOpen(false);
+      setNewPasscode("");
+      setConfirmPasscode("");
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const handleSetup = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newPasscode.length !== 6 || !/^\d{6}$/.test(newPasscode)) {
+      toast({ title: "Error", description: "Passcode must be exactly 6 digits.", variant: "destructive" });
+      return;
+    }
+    if (newPasscode !== confirmPasscode) {
+      toast({ title: "Error", description: "Passcodes don't match.", variant: "destructive" });
+      return;
+    }
+    setupMutation.mutate(newPasscode);
+  };
+
+  return (
+    <Card className="rounded-2xl mb-6 border-border" data-testid="card-passcode-setup">
+      <CardContent className="p-6 flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-3">
+          <Lock className="w-5 h-5 text-primary" />
+          <div>
+            <p className="text-sm text-muted-foreground">Withdrawal Passcode</p>
+            <p className="font-bold text-foreground" data-testid="text-passcode-status">
+              {passcodeStatus?.hasPasscode ? "Passcode is set" : "No passcode set"}
+            </p>
+          </div>
+        </div>
+        <Dialog open={setupOpen} onOpenChange={setSetupOpen}>
+          <DialogTrigger asChild>
+            <Button variant="outline" className="rounded-xl" data-testid="button-setup-passcode">
+              <Key className="w-4 h-4 mr-2" /> {passcodeStatus?.hasPasscode ? "Change Passcode" : "Set Passcode"}
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="rounded-2xl">
+            <DialogHeader>
+              <DialogTitle>{passcodeStatus?.hasPasscode ? "Change" : "Set Up"} 6-Digit Passcode</DialogTitle>
+            </DialogHeader>
+            <form onSubmit={handleSetup} className="space-y-4 mt-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">New 6-Digit Passcode</label>
+                <Input
+                  type="password" inputMode="numeric" pattern="[0-9]*" maxLength={6}
+                  placeholder="000000"
+                  value={newPasscode}
+                  onChange={e => setNewPasscode(e.target.value.replace(/\D/g, ''))}
+                  className="rounded-xl text-center text-lg tracking-widest"
+                  data-testid="input-new-passcode"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Confirm Passcode</label>
+                <Input
+                  type="password" inputMode="numeric" pattern="[0-9]*" maxLength={6}
+                  placeholder="000000"
+                  value={confirmPasscode}
+                  onChange={e => setConfirmPasscode(e.target.value.replace(/\D/g, ''))}
+                  className="rounded-xl text-center text-lg tracking-widest"
+                  data-testid="input-confirm-passcode"
+                />
+              </div>
+              <Button
+                type="submit"
+                className="w-full rounded-xl font-bold"
+                disabled={setupMutation.isPending || newPasscode.length !== 6 || confirmPasscode.length !== 6}
+                data-testid="button-save-passcode"
+              >
+                {setupMutation.isPending ? <Loader2 className="animate-spin" /> : "Save Passcode"}
+              </Button>
+            </form>
+          </DialogContent>
+        </Dialog>
+      </CardContent>
+    </Card>
   );
 }

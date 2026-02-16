@@ -75,6 +75,9 @@ export async function registerRoutes(
       const profile = await storage.getProfile(userId);
 
       if (!profile) return res.status(404).json({ message: "Profile not found" });
+      if (profile.verificationStatus !== 'verified') {
+        return res.status(403).json({ message: "You must complete identity verification before posting a job." });
+      }
 
       const price = parseFloat(input.price);
       const workersNeeded = input.workersNeeded || 1;
@@ -117,6 +120,11 @@ export async function registerRoutes(
   app.post(api.jobs.accept.path, isAuthenticated, async (req, res) => {
     const jobId = Number(req.params.id);
     const userId = (req.user as any).claims.sub;
+
+    const acceptorProfile = await storage.getProfile(userId);
+    if (acceptorProfile && acceptorProfile.verificationStatus !== 'verified') {
+      return res.status(403).json({ message: "You must complete identity verification before accepting a job." });
+    }
     
     const job = await storage.getJob(jobId);
     if (!job) return res.status(404).json({ message: "Job not found" });
@@ -860,9 +868,11 @@ export async function registerRoutes(
     delete data.id;
     delete data.walletBalance;
 
-    if (data.idCardUrl) {
-      (data as any).isVerified = true;
-    }
+    delete data.isVerified;
+    delete data.verificationStatus;
+    delete data.faceScanUrl;
+    delete data.verificationNote;
+    delete data.idCardUrl;
 
     const updated = await storage.updateProfile(userId, data);
     res.json(updated);
@@ -1097,6 +1107,19 @@ export async function registerRoutes(
     const parsed = api.admin.withdraw.input.safeParse(_req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
     const { amount, bankCode, bankName, accountNumber, accountName } = parsed.data;
+
+    const passcode = _req.headers['x-owner-passcode'] as string;
+    if (!passcode || passcode.length !== 6) {
+      return res.status(403).json({ message: "6-digit passcode is required for withdrawals." });
+    }
+    const settings = await storage.getOwnerSettings();
+    if (!settings?.passcodeHash) {
+      return res.status(403).json({ message: "Please set up your 6-digit passcode first." });
+    }
+    const valid = await bcrypt.compare(passcode, settings.passcodeHash);
+    if (!valid) {
+      return res.status(403).json({ message: "Invalid passcode." });
+    }
 
     try {
       const updated = await storage.withdrawPlatformEarnings(amount, { bankName, bankCode, accountNumber, accountName });
@@ -1651,6 +1674,177 @@ export async function registerRoutes(
 
     const updatedProfile = await storage.getProfile(userId);
     res.json({ newBalance: updatedProfile?.walletBalance || "0" });
+  });
+
+  // --- VERIFICATION ---
+
+  app.post(api.verification.submit.path, isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const parsed = api.verification.submit.input.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+
+    const profile = await storage.getProfile(userId);
+    if (!profile) return res.status(404).json({ message: "Profile not found" });
+    if (profile.verificationStatus === 'verified') {
+      return res.status(400).json({ message: "You are already verified." });
+    }
+    if (profile.verificationStatus === 'pending') {
+      return res.status(400).json({ message: "Your verification is already under review." });
+    }
+
+    const updated = await storage.submitVerification(userId, parsed.data.idCardUrl, parsed.data.faceScanUrl);
+    res.json(updated);
+  });
+
+  app.get(api.verification.pending.path, async (req, res) => {
+    const email = req.isAuthenticated() ? (req.user as any)?.claims?.email : null;
+    const adminId = (req.session as any)?.adminId;
+    const OWNER_EMAIL = 'abeebakeem265@gmail.com';
+    const isOwnerUser = email && email.toLowerCase() === OWNER_EMAIL;
+    const isStaffUser = !!adminId;
+
+    if (!isOwnerUser && !isStaffUser) {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+
+    const pending = await storage.getPendingVerifications();
+    res.json(pending);
+  });
+
+  app.post(api.verification.review.path, async (req, res) => {
+    const email = req.isAuthenticated() ? (req.user as any)?.claims?.email : null;
+    const adminId = (req.session as any)?.adminId;
+    const OWNER_EMAIL = 'abeebakeem265@gmail.com';
+    const isOwnerUser = email && email.toLowerCase() === OWNER_EMAIL;
+    const isStaffUser = !!adminId;
+
+    if (!isOwnerUser && !isStaffUser) {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+
+    const parsed = api.verification.review.input.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+
+    const targetUserId = req.params.userId;
+    const { action, note } = parsed.data;
+
+    const updated = await storage.reviewVerification(targetUserId, action, note);
+
+    let notifTitle = '';
+    let notifMessage = '';
+    let notifType = 'info';
+    if (action === 'approve') {
+      notifTitle = 'Verification Approved';
+      notifMessage = 'Your identity has been verified. You can now post and accept jobs.';
+      notifType = 'success';
+    } else if (action === 'decline') {
+      notifTitle = 'Verification Declined';
+      notifMessage = note ? `Your verification was declined: ${note}` : 'Your verification was declined. Please contact support.';
+      notifType = 'error';
+    } else {
+      notifTitle = 'Verification: Redo Required';
+      notifMessage = note ? `Please resubmit your verification: ${note}` : 'Please resubmit your verification documents.';
+      notifType = 'warning';
+    }
+
+    await storage.createNotification({
+      userId: targetUserId,
+      title: notifTitle,
+      message: notifMessage,
+      type: notifType,
+    });
+
+    res.json(updated);
+  });
+
+  // --- OWNER PASSCODE ---
+
+  app.get(api.ownerPasscode.status.path, isAuthenticated, isOwner, async (_req, res) => {
+    const settings = await storage.getOwnerSettings();
+    res.json({
+      hasPasscode: !!settings?.passcodeHash,
+      ownerEmail: settings?.ownerEmail || 'abeebakeem265@gmail.com',
+    });
+  });
+
+  app.post(api.ownerPasscode.setup.path, isAuthenticated, isOwner, async (req, res) => {
+    const parsed = api.ownerPasscode.setup.input.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Passcode must be exactly 6 digits." });
+
+    if (!/^\d{6}$/.test(parsed.data.passcode)) {
+      return res.status(400).json({ message: "Passcode must be exactly 6 digits (numbers only)." });
+    }
+
+    const hash = await bcrypt.hash(parsed.data.passcode, 10);
+    await storage.setOwnerPasscode(hash);
+    res.json({ message: "Passcode set successfully." });
+  });
+
+  app.post(api.ownerPasscode.verify.path, isAuthenticated, isOwner, async (req, res) => {
+    const parsed = api.ownerPasscode.verify.input.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input" });
+
+    const settings = await storage.getOwnerSettings();
+    if (!settings?.passcodeHash) return res.json({ valid: false });
+
+    const valid = await bcrypt.compare(parsed.data.passcode, settings.passcodeHash);
+    res.json({ valid });
+  });
+
+  app.post(api.ownerPasscode.requestReset.path, isAuthenticated, isOwner, async (_req, res) => {
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+    await storage.setResetToken(token, expiresAt);
+
+    const settings = await storage.getOwnerSettings();
+    console.log(`[PASSCODE RESET] Token: ${token} (sent to ${settings?.ownerEmail})`);
+
+    res.json({ message: `A reset link has been sent to your email (${settings?.ownerEmail}). Check your email to reset your passcode.`, resetToken: token });
+  });
+
+  app.post(api.ownerPasscode.resetWithToken.path, async (req, res) => {
+    const parsed = api.ownerPasscode.resetWithToken.input.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid input" });
+
+    const settings = await storage.getOwnerSettings();
+    if (!settings) return res.status(400).json({ message: "Settings not found" });
+
+    const { ownerSettings: ownerSettingsTable } = await import("@shared/schema");
+    const { db } = await import("./db");
+    const storedToken = await db.select().from(ownerSettingsTable).limit(1);
+    if (!storedToken[0]?.resetToken || storedToken[0].resetToken !== parsed.data.token) {
+      return res.status(400).json({ message: "Invalid or expired reset token." });
+    }
+    if (storedToken[0].resetTokenExpiresAt && new Date() > storedToken[0].resetTokenExpiresAt) {
+      return res.status(400).json({ message: "Reset token has expired." });
+    }
+
+    if (!/^\d{6}$/.test(parsed.data.newPasscode)) {
+      return res.status(400).json({ message: "Passcode must be exactly 6 digits." });
+    }
+
+    const hash = await bcrypt.hash(parsed.data.newPasscode, 10);
+    await storage.setOwnerPasscode(hash);
+    await storage.clearResetToken();
+    res.json({ message: "Passcode has been reset successfully." });
+  });
+
+  app.post(api.ownerPasscode.updateEmail.path, isAuthenticated, isOwner, async (req, res) => {
+    const parsed = api.ownerPasscode.updateEmail.input.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+
+    const settings = await storage.getOwnerSettings();
+    if (!settings?.passcodeHash) {
+      return res.status(403).json({ message: "Please set up your 6-digit passcode first." });
+    }
+
+    const valid = await bcrypt.compare(parsed.data.passcode, settings.passcodeHash);
+    if (!valid) {
+      return res.status(403).json({ message: "Invalid passcode." });
+    }
+
+    await storage.updateOwnerEmail(parsed.data.newEmail);
+    res.json({ message: `Owner email updated to ${parsed.data.newEmail}` });
   });
 
   return httpServer;

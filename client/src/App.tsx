@@ -17,6 +17,7 @@ import AdminDisputes from "@/pages/AdminDisputes";
 import AdminLogin from "@/pages/AdminLogin";
 import AdminManagement from "@/pages/AdminManagement";
 import AdminSettings from "@/pages/AdminSettings";
+import AdminVerifications from "@/pages/AdminVerifications";
 import Notifications from "@/pages/Notifications";
 import MyJobs from "@/pages/MyJobs";
 import NotFound from "@/pages/not-found";
@@ -77,6 +78,7 @@ function Router() {
       <Route path="/admin/login" component={AdminLogin} />
       <Route path="/admin/staff" component={AdminManagement} />
       <Route path="/admin/settings" component={AdminSettings} />
+      <Route path="/admin/verifications" component={AdminVerifications} />
 
       <Route component={NotFound} />
     </Switch>

@@ -352,6 +352,96 @@ export const api = {
       },
     },
   },
+  verification: {
+    submit: {
+      method: 'POST' as const,
+      path: '/api/verification/submit' as const,
+      input: z.object({
+        idCardUrl: z.string().min(1),
+        faceScanUrl: z.string().min(1),
+      }),
+      responses: {
+        200: z.any(),
+        400: errorSchemas.validation,
+      },
+    },
+    pending: {
+      method: 'GET' as const,
+      path: '/api/admin/verifications' as const,
+      responses: {
+        200: z.array(z.any()),
+      },
+    },
+    review: {
+      method: 'POST' as const,
+      path: '/api/admin/verifications/:userId/review' as const,
+      input: z.object({
+        action: z.enum(['approve', 'decline', 'redo']),
+        note: z.string().optional(),
+      }),
+      responses: {
+        200: z.any(),
+        400: errorSchemas.validation,
+      },
+    },
+  },
+  ownerPasscode: {
+    setup: {
+      method: 'POST' as const,
+      path: '/api/owner/passcode/setup' as const,
+      input: z.object({ passcode: z.string().length(6) }),
+      responses: {
+        200: z.object({ message: z.string() }),
+        400: errorSchemas.validation,
+      },
+    },
+    verify: {
+      method: 'POST' as const,
+      path: '/api/owner/passcode/verify' as const,
+      input: z.object({ passcode: z.string().length(6) }),
+      responses: {
+        200: z.object({ valid: z.boolean() }),
+      },
+    },
+    status: {
+      method: 'GET' as const,
+      path: '/api/owner/passcode/status' as const,
+      responses: {
+        200: z.object({ hasPasscode: z.boolean(), ownerEmail: z.string() }),
+      },
+    },
+    requestReset: {
+      method: 'POST' as const,
+      path: '/api/owner/passcode/request-reset' as const,
+      responses: {
+        200: z.object({ message: z.string() }),
+      },
+    },
+    resetWithToken: {
+      method: 'POST' as const,
+      path: '/api/owner/passcode/reset' as const,
+      input: z.object({
+        token: z.string().min(1),
+        newPasscode: z.string().length(6),
+      }),
+      responses: {
+        200: z.object({ message: z.string() }),
+        400: errorSchemas.validation,
+      },
+    },
+    updateEmail: {
+      method: 'POST' as const,
+      path: '/api/owner/email' as const,
+      input: z.object({
+        passcode: z.string().length(6),
+        newEmail: z.string().email(),
+      }),
+      responses: {
+        200: z.object({ message: z.string() }),
+        400: errorSchemas.validation,
+      },
+    },
+  },
   admin: {
     earnings: {
       method: 'GET' as const,
