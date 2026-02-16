@@ -44,11 +44,15 @@ export const jobs = pgTable("jobs", {
 
 export const transactions = pgTable("transactions", {
   id: serial("id").primaryKey(),
-  userId: text("user_id").notNull(), // Who owns this transaction log
+  userId: text("user_id").notNull(),
   amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
   type: text("type").notNull(), // 'deposit', 'withdrawal', 'job_payment', 'job_earning', 'fee'
   status: text("status").default("completed").notNull(),
-  jobId: integer("job_id"), // Optional link to a job
+  jobId: integer("job_id"),
+  bankName: text("bank_name"),
+  bankCode: text("bank_code"),
+  accountNumber: text("account_number"),
+  accountName: text("account_name"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

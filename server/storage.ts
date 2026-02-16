@@ -26,7 +26,7 @@ export interface IStorage {
 
   // Wallet & Transactions
   getTransactions(userId: string): Promise<Transaction[]>;
-  createTransaction(tx: { userId: string; amount: string; type: string; jobId?: number }): Promise<Transaction>;
+  createTransaction(tx: { userId: string; amount: string; type: string; jobId?: number; bankName?: string | null; bankCode?: string | null; accountNumber?: string | null; accountName?: string | null }): Promise<Transaction>;
   updateWalletBalance(userId: string, amountChange: number): Promise<Profile>;
 }
 
@@ -126,7 +126,7 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(transactions.createdAt));
   }
 
-  async createTransaction(tx: { userId: string; amount: string; type: string; jobId?: number }): Promise<Transaction> {
+  async createTransaction(tx: { userId: string; amount: string; type: string; jobId?: number; bankName?: string | null; bankCode?: string | null; accountNumber?: string | null; accountName?: string | null }): Promise<Transaction> {
     const [newTx] = await db.insert(transactions).values(tx).returning();
     return newTx;
   }

@@ -2,6 +2,14 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
 
+export interface WalletTransactionInput {
+  amount: number;
+  bankCode: string;
+  bankName: string;
+  accountNumber: string;
+  accountName?: string;
+}
+
 export function useWallet() {
   return useQuery({
     queryKey: [api.wallet.get.path],
@@ -18,11 +26,11 @@ export function useDeposit() {
   const { toast } = useToast();
 
   return useMutation({
-    mutationFn: async (amount: number) => {
+    mutationFn: async (input: WalletTransactionInput) => {
       const res = await fetch(api.wallet.deposit.path, {
         method: api.wallet.deposit.method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount }),
+        body: JSON.stringify(input),
         credentials: "include",
       });
 
@@ -51,11 +59,11 @@ export function useWithdraw() {
   const { toast } = useToast();
 
   return useMutation({
-    mutationFn: async (amount: number) => {
+    mutationFn: async (input: WalletTransactionInput) => {
       const res = await fetch(api.wallet.withdraw.path, {
         method: api.wallet.withdraw.method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount }),
+        body: JSON.stringify(input),
         credentials: "include",
       });
 

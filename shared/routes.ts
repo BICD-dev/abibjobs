@@ -108,7 +108,13 @@ export const api = {
     deposit: {
       method: 'POST' as const,
       path: '/api/wallet/deposit' as const,
-      input: z.object({ amount: z.number().min(1) }),
+      input: z.object({
+        amount: z.number().min(1),
+        bankCode: z.string().min(1),
+        bankName: z.string().min(1),
+        accountNumber: z.string().length(10),
+        accountName: z.string().optional(),
+      }),
       responses: {
         200: z.object({ newBalance: z.string() }),
       },
@@ -116,10 +122,16 @@ export const api = {
     withdraw: {
       method: 'POST' as const,
       path: '/api/wallet/withdraw' as const,
-      input: z.object({ amount: z.number().min(1) }),
+      input: z.object({
+        amount: z.number().min(1),
+        bankCode: z.string().min(1),
+        bankName: z.string().min(1),
+        accountNumber: z.string().length(10),
+        accountName: z.string().optional(),
+      }),
       responses: {
         200: z.object({ newBalance: z.string() }),
-        400: errorSchemas.payment, // Insufficient funds
+        400: errorSchemas.payment,
       },
     },
   },

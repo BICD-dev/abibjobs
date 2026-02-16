@@ -202,15 +202,19 @@ export async function registerRoutes(
 
   app.post(api.wallet.deposit.path, isAuthenticated, async (req, res) => {
     const userId = (req.user as any).claims.sub;
-    const { amount } = req.body;
-
-    if (!amount || amount <= 0) return res.status(400).json({ message: "Invalid amount" });
+    const parsed = api.wallet.deposit.input.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+    const { amount, bankCode, bankName, accountNumber, accountName } = parsed.data;
 
     await storage.updateWalletBalance(userId, amount);
     await storage.createTransaction({
       userId,
       amount: amount.toString(),
-      type: 'deposit'
+      type: 'deposit',
+      bankName: bankName || null,
+      bankCode: bankCode || null,
+      accountNumber: accountNumber || null,
+      accountName: accountName || null,
     });
 
     const profile = await storage.getProfile(userId);
@@ -219,9 +223,9 @@ export async function registerRoutes(
 
   app.post(api.wallet.withdraw.path, isAuthenticated, async (req, res) => {
     const userId = (req.user as any).claims.sub;
-    const { amount } = req.body;
-
-    if (!amount || amount <= 0) return res.status(400).json({ message: "Invalid amount" });
+    const parsed = api.wallet.withdraw.input.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+    const { amount, bankCode, bankName, accountNumber, accountName } = parsed.data;
 
     const profile = await storage.getProfile(userId);
     if (!profile || parseFloat(profile.walletBalance) < amount) {
@@ -232,7 +236,11 @@ export async function registerRoutes(
     await storage.createTransaction({
       userId,
       amount: (-amount).toString(),
-      type: 'withdrawal'
+      type: 'withdrawal',
+      bankName: bankName || null,
+      bankCode: bankCode || null,
+      accountNumber: accountNumber || null,
+      accountName: accountName || null,
     });
 
     const updatedProfile = await storage.getProfile(userId);
