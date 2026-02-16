@@ -35,12 +35,13 @@ The project follows a monorepo pattern with three main directories:
 - **Build**: esbuild bundles server for production into `dist/index.cjs`; Vite builds client into `dist/public/`
 
 ### Database Schema
-Four main tables:
+Main tables:
 1. **users** — Managed by Replit Auth (id, email, name, profile image). Do NOT modify this table structure.
 2. **sessions** — Managed by Replit Auth for session storage. Do NOT modify this table structure.
 3. **profiles** — App-specific user data (wallet balance, bio, verification status, ID card URL, phone, location, role)
-4. **jobs** — Job listings (title, description, price, location, category, status, poster/worker references)
+4. **jobs** — Job listings (title, description, price, location, category, status, poster/worker references, workersNeeded, workersAccepted)
 5. **transactions** — Wallet transaction log (userId, amount, type, status, jobId reference)
+6. **offers** — Price negotiation offers (jobId, senderId, amount, status: pending/accepted/declined/countered, message)
 
 Schema changes use `drizzle-kit push` (not migrations). Run `npm run db:push` to sync schema to database.
 

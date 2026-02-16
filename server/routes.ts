@@ -198,9 +198,21 @@ export async function registerRoutes(
 
   // --- OFFERS ---
 
-  app.get('/api/jobs/:id/offers', async (req, res) => {
+  app.get('/api/jobs/:id/offers', isAuthenticated, async (req, res) => {
     const jobId = Number(req.params.id);
+    const userId = (req.user as any).claims.sub;
+
+    const job = await storage.getJob(jobId);
+    if (!job) return res.status(404).json({ message: "Job not found" });
+
     const offersList = await storage.getOffersByJob(jobId);
+    const isPoster = job.posterId === userId;
+    const isParticipant = isPoster || offersList.some(o => o.senderId === userId);
+
+    if (!isPoster && !isParticipant) {
+      return res.status(403).json({ message: "You don't have access to these offers" });
+    }
+
     res.json(offersList);
   });
 
@@ -240,6 +252,7 @@ export async function registerRoutes(
 
       const job = await storage.getJob(offer.jobId);
       if (!job) return res.status(404).json({ message: "Job not found" });
+      if (job.status !== 'open') return res.status(400).json({ message: "Job is no longer open for negotiation" });
 
       const isPoster = job.posterId === userId;
       const isSender = offer.senderId === userId;
@@ -313,6 +326,7 @@ export async function registerRoutes(
 
       const job = await storage.getJob(offer.jobId);
       if (!job) return res.status(404).json({ message: "Job not found" });
+      if (job.status !== 'open') return res.status(400).json({ message: "Job is no longer open for negotiation" });
 
       const isPoster = job.posterId === userId;
       const isSender = offer.senderId === userId;
@@ -343,6 +357,7 @@ export async function registerRoutes(
 
       const job = await storage.getJob(offer.jobId);
       if (!job) return res.status(404).json({ message: "Job not found" });
+      if (job.status !== 'open') return res.status(400).json({ message: "Job is no longer open for negotiation" });
 
       const isPoster = job.posterId === userId;
       const isSender = offer.senderId === userId;
