@@ -190,12 +190,20 @@ export async function registerRoutes(
 
   const isAdmin = async (req: any, res: any, next: any) => {
     const userId = (req.user as any).claims.sub;
+    console.log(`[admin-check] userId=${userId}, type=${typeof userId}`);
     const profile = await storage.getProfile(userId);
+    console.log(`[admin-check] profile found=${!!profile}, role=${profile?.role}, profileUserId=${profile?.userId}`);
     if (!profile || profile.role !== 'admin') {
-      return res.status(403).json({ message: "Admin access required" });
+      return res.status(403).json({ message: "Admin access required", debugUserId: userId });
     }
     next();
   };
+
+  app.get("/api/debug/me", isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const profile = await storage.getProfile(userId);
+    res.json({ userId, profileExists: !!profile, role: profile?.role || null });
+  });
 
   app.get(api.admin.earnings.path, isAuthenticated, isAdmin, async (_req, res) => {
     const earnings = await storage.getPlatformEarnings();
