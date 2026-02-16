@@ -534,25 +534,25 @@ export default function JobDetails() {
                                 const currentIdx = job.workerProgress ? progressOrder.indexOf(job.workerProgress) : -1;
                                 const stepIdx = progressOrder.indexOf(step.key);
                                 const isDone = stepIdx <= currentIdx;
-                                const isNext = stepIdx === currentIdx + 1;
+                                const canClick = stepIdx > currentIdx;
                                 const StepIcon = step.icon;
                                 return (
-                                  <div key={step.key} className={`flex items-center gap-3 p-3 rounded-xl border ${isDone ? 'bg-green-50 border-green-200 dark:bg-green-950/30 dark:border-green-800' : isNext ? 'bg-primary/5 border-primary/20' : 'bg-muted/30 border-border'}`} data-testid={`worker-progress-step-${step.key}`}>
-                                    <div className={`flex items-center justify-center w-10 h-10 rounded-full shrink-0 ${isDone ? 'bg-green-500 text-white' : isNext ? 'bg-primary/20 text-primary' : 'bg-muted-foreground/10 text-muted-foreground'}`}>
+                                  <div key={step.key} className={`flex items-center gap-3 p-3 rounded-xl border ${isDone ? 'bg-green-50 border-green-200 dark:bg-green-950/30 dark:border-green-800' : canClick ? 'bg-primary/5 border-primary/20' : 'bg-muted/30 border-border'}`} data-testid={`worker-progress-step-${step.key}`}>
+                                    <div className={`flex items-center justify-center w-10 h-10 rounded-full shrink-0 ${isDone ? 'bg-green-500 text-white' : canClick ? 'bg-primary/20 text-primary' : 'bg-muted-foreground/10 text-muted-foreground'}`}>
                                       {isDone ? <Check className="w-5 h-5" /> : <StepIcon className="w-5 h-5" />}
                                     </div>
                                     <div className="flex-1 min-w-0">
                                       <p className={`text-sm font-medium ${isDone ? 'text-green-700 dark:text-green-300' : 'text-foreground'}`}>{step.label}</p>
                                       <p className="text-xs text-muted-foreground">{step.description}</p>
                                     </div>
-                                    {isNext && (
+                                    {canClick && (
                                       <Button
                                         size="sm"
                                         onClick={() => updateProgress({ id: job.id, progress: step.key })}
                                         disabled={isUpdatingProgress}
                                         data-testid={`button-progress-${step.key}`}
                                       >
-                                        {isUpdatingProgress ? <Loader2 className="w-4 h-4 animate-spin" /> : step.key === 'on_the_way' ? <Navigation className="w-4 h-4 mr-1" /> : step.key === 'at_location' ? <MapPinCheck className="w-4 h-4 mr-1" /> : <Clock className="w-4 h-4 mr-1" />}
+                                        {isUpdatingProgress ? <Loader2 className="w-4 h-4 animate-spin" /> : <StepIcon className="w-4 h-4 mr-1" />}
                                         {step.label}
                                       </Button>
                                     )}
