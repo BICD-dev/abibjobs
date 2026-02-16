@@ -26,6 +26,8 @@ export const profiles = pgTable("profiles", {
   idCardUrl: text("id_card_url"),
   phoneNumber: text("phone_number"),
   location: text("location"),
+  noShowCount: integer("no_show_count").default(0).notNull(),
+  isSuspended: boolean("is_suspended").default(false).notNull(),
 });
 
 export const jobs = pgTable("jobs", {
@@ -138,6 +140,17 @@ export const adminActivity = pgTable("admin_activity", {
   lastActiveAt: timestamp("last_active_at"),
 });
 
+export const notifications = pgTable("notifications", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  title: text("title").notNull(),
+  message: text("message").notNull(),
+  type: text("type").default("info").notNull(), // 'info', 'warning', 'error', 'success'
+  isRead: boolean("is_read").default(false).notNull(),
+  jobId: integer("job_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // === SCHEMAS ===
 
 export const insertProfileSchema = createInsertSchema(profiles).omit({ id: true });
@@ -150,6 +163,7 @@ export const createOfferSchema = insertOfferSchema.omit({ senderId: true, status
 export const insertDisputeSchema = createInsertSchema(disputes).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertDisputeMessageSchema = createInsertSchema(disputeMessages).omit({ id: true, createdAt: true });
 export const insertAdminUserSchema = createInsertSchema(adminUsers).omit({ id: true, createdAt: true });
+export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, createdAt: true });
 
 // === TYPES ===
 
@@ -163,6 +177,7 @@ export type Dispute = typeof disputes.$inferSelect;
 export type DisputeMessage = typeof disputeMessages.$inferSelect;
 export type AdminUser = typeof adminUsers.$inferSelect;
 export type AdminActivity = typeof adminActivity.$inferSelect;
+export type Notification = typeof notifications.$inferSelect;
 
 export type CreateJobInput = z.infer<typeof createJobSchema>;
 export type CreateOfferInput = z.infer<typeof createOfferSchema>;
