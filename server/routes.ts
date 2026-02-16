@@ -257,11 +257,15 @@ export async function registerRoutes(
       const isPoster = job.posterId === userId;
       const isSender = offer.senderId === userId;
 
-      if (!isPoster && !isSender) {
-        return res.status(403).json({ message: "You are not part of this negotiation" });
-      }
       if (isSender) {
         return res.status(400).json({ message: "You cannot accept your own offer" });
+      }
+
+      const allOffers = await storage.getOffersByJob(job.id);
+      const isParticipant = isPoster || allOffers.some(o => o.senderId === userId);
+
+      if (!isParticipant) {
+        return res.status(403).json({ message: "You are not part of this negotiation" });
       }
 
       const newPrice = parseFloat(offer.amount);
@@ -302,8 +306,8 @@ export async function registerRoutes(
       const updatedOffer = await storage.updateOffer(offerId, { status: 'accepted' });
       const updatedJob = await storage.updateJob(job.id, { price: newPrice.toFixed(2) });
 
-      const allOffers = await storage.getOffersByJob(job.id);
-      for (const o of allOffers) {
+      const remainingOffers = await storage.getOffersByJob(job.id);
+      for (const o of remainingOffers) {
         if (o.id !== offerId && o.status === 'pending') {
           await storage.updateOffer(o.id, { status: 'declined' });
         }
@@ -330,11 +334,16 @@ export async function registerRoutes(
 
       const isPoster = job.posterId === userId;
       const isSender = offer.senderId === userId;
-      if (!isPoster && !isSender) {
-        return res.status(403).json({ message: "You are not part of this negotiation" });
-      }
+
       if (isSender) {
         return res.status(400).json({ message: "You cannot decline your own offer. Withdraw it instead." });
+      }
+
+      const allOffersDecline = await storage.getOffersByJob(job.id);
+      const isParticipantDecline = isPoster || allOffersDecline.some(o => o.senderId === userId);
+
+      if (!isParticipantDecline) {
+        return res.status(403).json({ message: "You are not part of this negotiation" });
       }
 
       const updated = await storage.updateOffer(offerId, { status: 'declined' });
@@ -361,11 +370,16 @@ export async function registerRoutes(
 
       const isPoster = job.posterId === userId;
       const isSender = offer.senderId === userId;
-      if (!isPoster && !isSender) {
-        return res.status(403).json({ message: "You are not part of this negotiation" });
-      }
+
       if (isSender) {
         return res.status(400).json({ message: "You cannot counter your own offer" });
+      }
+
+      const allOffersCounter = await storage.getOffersByJob(job.id);
+      const isParticipantCounter = isPoster || allOffersCounter.some(o => o.senderId === userId);
+
+      if (!isParticipantCounter) {
+        return res.status(403).json({ message: "You are not part of this negotiation" });
       }
 
       await storage.updateOffer(offerId, { status: 'countered' });
