@@ -3,7 +3,7 @@ import type { Server } from "http";
 import { storage } from "./storage";
 import { api, errorSchemas } from "@shared/routes";
 import { z } from "zod";
-import { setupAuth, isAuthenticated } from "./replit_integrations/auth";
+import { setupAuth, isAuthenticated, registerAuthRoutes } from "./replit_integrations/auth";
 import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
 
 export async function registerRoutes(
@@ -12,6 +12,7 @@ export async function registerRoutes(
 ): Promise<Server> {
   // Setup Auth
   await setupAuth(app);
+  registerAuthRoutes(app);
   
   // Setup Object Storage
   registerObjectStorageRoutes(app);
