@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { useAdminDisputes, useResolveDispute, useDisputeMessage, useUploadDisputeImage } from "@/hooks/use-disputes";
+import { useAdminDisputes, useDispute, useResolveDispute, useDisputeMessage, useUploadDisputeImage } from "@/hooks/use-disputes";
 import { Navbar } from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -16,8 +16,10 @@ import type { DisputeWithDetails, DisputeMessageWithSender } from "@shared/schem
 
 export default function AdminDisputes() {
   const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined);
-  const [selectedDispute, setSelectedDispute] = useState<DisputeWithDetails | null>(null);
+  const [selectedDisputeId, setSelectedDisputeId] = useState<number | null>(null);
   const { data: disputesList, isLoading, isError, refetch } = useAdminDisputes(statusFilter);
+  const { data: selectedDisputeData, refetch: refetchSelected } = useDispute(selectedDisputeId || 0);
+  const selectedDispute = selectedDisputeId ? (selectedDisputeData as DisputeWithDetails | undefined) || null : null;
   const { mutate: resolveDispute, isPending: isResolving } = useResolveDispute();
   const { mutate: sendMessage, isPending: isSendingMessage } = useDisputeMessage();
   const { mutateAsync: uploadImage, isPending: isUploading } = useUploadDisputeImage();
@@ -32,13 +34,6 @@ export default function AdminDisputes() {
   const [customWorkerAmount, setCustomWorkerAmount] = useState("");
   const [customPosterRefund, setCustomPosterRefund] = useState("");
   const [resolveNote, setResolveNote] = useState("");
-
-  useEffect(() => {
-    if (selectedDispute && disputesList) {
-      const updated = disputesList.find((d: DisputeWithDetails) => d.id === selectedDispute.id);
-      if (updated) setSelectedDispute(updated);
-    }
-  }, [disputesList]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -117,6 +112,7 @@ export default function AdminDisputes() {
       onSuccess: () => {
         setAdminReply("");
         clearImage();
+        refetchSelected();
         refetch();
       }
     });
@@ -140,6 +136,7 @@ export default function AdminDisputes() {
           setCustomWorkerAmount("");
           setCustomPosterRefund("");
           setResolveNote("");
+          refetchSelected();
           refetch();
         }
       });
@@ -151,6 +148,7 @@ export default function AdminDisputes() {
       }, {
         onSuccess: () => {
           setResolveNote("");
+          refetchSelected();
           refetch();
         }
       });
@@ -160,7 +158,14 @@ export default function AdminDisputes() {
   const escalatedCount = disputes.filter(d => d.status === 'escalated').length;
   const openCount = disputes.filter(d => d.status !== 'resolved').length;
 
-  if (selectedDispute) {
+  if (selectedDisputeId) {
+    if (!selectedDispute) {
+      return (
+        <div className="min-h-screen bg-background flex items-center justify-center">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      );
+    }
     const dispute = selectedDispute;
     const originalPrice = Number(dispute.job?.price || 0);
 
@@ -171,7 +176,7 @@ export default function AdminDisputes() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => { setSelectedDispute(null); clearImage(); }}
+            onClick={() => { setSelectedDisputeId(null); clearImage(); }}
             className="mb-4"
             data-testid="button-back-disputes"
           >
@@ -620,7 +625,7 @@ export default function AdminDisputes() {
                 <Card
                   key={dispute.id}
                   className="rounded-2xl hover-elevate cursor-pointer"
-                  onClick={() => setSelectedDispute(dispute)}
+                  onClick={() => setSelectedDisputeId(dispute.id)}
                   data-testid={`card-dispute-${dispute.id}`}
                 >
                   <CardContent className="p-5">
