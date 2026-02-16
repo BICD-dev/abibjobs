@@ -11,7 +11,7 @@ import { format } from "date-fns";
 import { NIGERIAN_BANKS } from "@/lib/nigerian-banks";
 
 export default function AdminEarnings() {
-  const { data: earnings, isLoading } = useAdminEarnings();
+  const { data: earnings, isLoading, isError, error } = useAdminEarnings();
   const { mutate: withdraw, isPending: isWithdrawing } = useAdminWithdraw();
   const { mutate: updateBank, isPending: isUpdatingBank } = useUpdateAdminBank();
 
@@ -56,6 +56,17 @@ export default function AdminEarnings() {
   };
 
   if (isLoading) return <div className="min-h-screen bg-background flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
+
+  if (isError) return (
+    <div className="min-h-screen bg-background">
+      <Navbar />
+      <div className="max-w-4xl mx-auto px-4 py-20 text-center">
+        <TrendingUp className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+        <h2 className="text-2xl font-bold mb-2 text-foreground">Access Denied</h2>
+        <p className="text-muted-foreground">You don't have admin access to view platform earnings.</p>
+      </div>
+    </div>
+  );
 
   const totalEarned = earnings?.transactions
     ?.filter((t: any) => t.type === 'fee_earned')

@@ -27,7 +27,8 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
   }
 
   if (!user) {
-    window.location.href = "/api/login";
+    const returnTo = encodeURIComponent(window.location.pathname);
+    window.location.href = `/api/login?returnTo=${returnTo}`;
     return null;
   }
 
