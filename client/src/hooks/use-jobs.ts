@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, buildUrl, type CreateJobInput } from "@shared/routes";
+import { api, buildUrl } from "@shared/routes";
+import type { CreateJobInput } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 
 export function useJobs(filters?: { category?: string; status?: 'open' | 'in_progress' | 'completed' | 'cancelled'; search?: string }) {

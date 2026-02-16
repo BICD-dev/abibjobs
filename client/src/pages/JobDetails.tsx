@@ -21,8 +21,8 @@ export default function JobDetails() {
   if (isLoading) return <div className="min-h-screen bg-background flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
   if (error || !job) return <div className="min-h-screen bg-background flex items-center justify-center text-destructive">Job not found</div>;
 
-  const isPoster = user?.sub === job.posterId;
-  const isWorker = user?.sub === job.workerId;
+  const isPoster = user?.id === job.posterId;
+  const isWorker = user?.id === job.workerId;
   const isOpen = job.status === "open";
   const isInProgress = job.status === "in_progress";
   const isCompleted = job.status === "completed";
