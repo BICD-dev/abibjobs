@@ -7,6 +7,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useAdminAuth, useAdminPing } from "@/hooks/use-admin-auth";
 import { Loader2 } from "lucide-react";
 
+import { useGlobalVisitorTracking } from "@/hooks/use-visitor-tracking";
 import Home from "@/pages/Home";
 import Jobs from "@/pages/Jobs";
 import JobDetails from "@/pages/JobDetails";
@@ -18,6 +19,7 @@ import AdminLogin from "@/pages/AdminLogin";
 import AdminManagement from "@/pages/AdminManagement";
 import AdminSettings from "@/pages/AdminSettings";
 import AdminVerifications from "@/pages/AdminVerifications";
+import AdminDashboard from "@/pages/AdminDashboard";
 import Notifications from "@/pages/Notifications";
 import MyJobs from "@/pages/MyJobs";
 import NotFound from "@/pages/not-found";
@@ -71,6 +73,9 @@ function Router() {
       <Route path="/admin/earnings">
         {() => <ProtectedRoute component={AdminEarnings} />}
       </Route>
+      <Route path="/admin/dashboard">
+        {() => <ProtectedRoute component={AdminDashboard} />}
+      </Route>
       <Route path="/notifications">
         {() => <ProtectedRoute component={Notifications} />}
       </Route>
@@ -85,12 +90,18 @@ function Router() {
   );
 }
 
+function VisitorTracker() {
+  useGlobalVisitorTracking();
+  return null;
+}
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <Toaster />
         <AdminPingTracker />
+        <VisitorTracker />
         <Router />
       </TooltipProvider>
     </QueryClientProvider>

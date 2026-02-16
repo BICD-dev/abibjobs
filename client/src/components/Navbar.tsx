@@ -16,7 +16,8 @@ import {
   ShieldCheck,
   Users,
   Bell,
-  ClipboardList
+  ClipboardList,
+  LayoutDashboard
 } from "lucide-react";
 import { useState } from "react";
 import {
@@ -45,6 +46,7 @@ export function Navbar() {
 
   const adminLinks = [];
   if (isOwner) {
+    adminLinks.push({ href: "/admin/dashboard", label: "Dashboard", icon: LayoutDashboard });
     adminLinks.push({ href: "/admin/earnings", label: "Earnings", icon: TrendingUp });
     adminLinks.push({ href: "/admin/verifications", label: "Verifications", icon: ShieldCheck });
     adminLinks.push({ href: "/admin/disputes", label: "Disputes", icon: Scale });
@@ -126,6 +128,12 @@ export function Navbar() {
                     )}
                     {isOwner && (
                       <>
+                        <Link href="/admin/dashboard">
+                          <DropdownMenuItem className="cursor-pointer">
+                            <LayoutDashboard className="mr-2 h-4 w-4" />
+                            <span>Dashboard</span>
+                          </DropdownMenuItem>
+                        </Link>
                         <Link href="/admin/earnings">
                           <DropdownMenuItem className="cursor-pointer">
                             <TrendingUp className="mr-2 h-4 w-4" />

@@ -1829,6 +1829,30 @@ export async function registerRoutes(
     res.json({ message: "Passcode has been reset successfully." });
   });
 
+  // --- VISIT TRACKING ---
+  app.post('/api/track-visit', async (req, res) => {
+    try {
+      const { visitorId, page } = req.body;
+      if (!visitorId || !page) return res.status(400).json({ message: "Missing visitorId or page" });
+      const userAgent = req.headers['user-agent'] || undefined;
+      await storage.trackVisit(visitorId, page, userAgent);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to track visit" });
+    }
+  });
+
+  // --- ADMIN DASHBOARD ANALYTICS ---
+  app.get('/api/admin/dashboard', isAuthenticated, isOwner, async (_req, res) => {
+    try {
+      const analytics = await storage.getDashboardAnalytics();
+      res.json(analytics);
+    } catch (err) {
+      console.error("Dashboard analytics error:", err);
+      res.status(500).json({ message: "Failed to fetch analytics" });
+    }
+  });
+
   app.post(api.ownerPasscode.updateEmail.path, isAuthenticated, isOwner, async (req, res) => {
     const parsed = api.ownerPasscode.updateEmail.input.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });

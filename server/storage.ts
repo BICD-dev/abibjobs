@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, desc, and, sql } from "drizzle-orm";
+import { eq, desc, and, sql, gte, count } from "drizzle-orm";
 import {
   users,
   profiles,
@@ -16,6 +16,7 @@ import {
   scheduledPayments,
   lagosAddresses,
   ownerSettings,
+  siteVisits,
   type Profile,
   type Job,
   type Transaction,
@@ -121,6 +122,19 @@ export interface IStorage {
   setResetToken(token: string, expiresAt: Date): Promise<void>;
   getResetToken(): Promise<{ resetToken: string | null; resetTokenExpiresAt: Date | null; ownerEmail: string } | undefined>;
   clearResetToken(): Promise<void>;
+
+  // Site Visits & Analytics
+  trackVisit(visitorId: string, page: string, userAgent?: string): Promise<void>;
+  getDashboardAnalytics(): Promise<{
+    totalVisitors: number;
+    totalSignUps: number;
+    totalTopUps: string;
+    totalPaidOut: string;
+    todayVisitors: number;
+    todaySignUps: number;
+    recentVisitsByDay: { date: string; count: number }[];
+    recentSignUpsByDay: { date: string; count: number }[];
+  }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -768,6 +782,74 @@ export class DatabaseStorage implements IStorage {
     if (settings) {
       await db.update(ownerSettings).set({ resetToken: null, resetTokenExpiresAt: null, updatedAt: new Date() }).where(eq(ownerSettings.id, settings.id));
     }
+  }
+
+  async trackVisit(visitorId: string, page: string, userAgent?: string): Promise<void> {
+    await db.insert(siteVisits).values({ visitorId, page, userAgent });
+  }
+
+  async getDashboardAnalytics() {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const [totalVisitorsResult] = await db
+      .select({ count: sql<number>`count(distinct ${siteVisits.visitorId})` })
+      .from(siteVisits);
+
+    const [todayVisitorsResult] = await db
+      .select({ count: sql<number>`count(distinct ${siteVisits.visitorId})` })
+      .from(siteVisits)
+      .where(gte(siteVisits.createdAt, today));
+
+    const [totalSignUpsResult] = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(users);
+
+    const [todaySignUpsResult] = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(users)
+      .where(gte(users.createdAt, today));
+
+    const [totalTopUpsResult] = await db
+      .select({ total: sql<string>`coalesce(sum(${transactions.amount}), '0')` })
+      .from(transactions)
+      .where(eq(transactions.type, 'deposit'));
+
+    const [totalPaidOutResult] = await db
+      .select({ total: sql<string>`coalesce(sum(${transactions.amount}), '0')` })
+      .from(transactions)
+      .where(sql`${transactions.type} IN ('job_earning', 'withdrawal', 'cancellation_compensation')`);
+
+    const recentVisitsByDay = await db
+      .select({
+        date: sql<string>`to_char(${siteVisits.createdAt}, 'YYYY-MM-DD')`,
+        count: sql<number>`count(distinct ${siteVisits.visitorId})`,
+      })
+      .from(siteVisits)
+      .where(gte(siteVisits.createdAt, sql`now() - interval '30 days'`))
+      .groupBy(sql`to_char(${siteVisits.createdAt}, 'YYYY-MM-DD')`)
+      .orderBy(sql`to_char(${siteVisits.createdAt}, 'YYYY-MM-DD')`);
+
+    const recentSignUpsByDay = await db
+      .select({
+        date: sql<string>`to_char(${users.createdAt}, 'YYYY-MM-DD')`,
+        count: sql<number>`count(*)`,
+      })
+      .from(users)
+      .where(gte(users.createdAt, sql`now() - interval '30 days'`))
+      .groupBy(sql`to_char(${users.createdAt}, 'YYYY-MM-DD')`)
+      .orderBy(sql`to_char(${users.createdAt}, 'YYYY-MM-DD')`);
+
+    return {
+      totalVisitors: Number(totalVisitorsResult?.count || 0),
+      totalSignUps: Number(totalSignUpsResult?.count || 0),
+      totalTopUps: totalTopUpsResult?.total || '0',
+      totalPaidOut: totalPaidOutResult?.total || '0',
+      todayVisitors: Number(todayVisitorsResult?.count || 0),
+      todaySignUps: Number(todaySignUpsResult?.count || 0),
+      recentVisitsByDay: recentVisitsByDay.map(r => ({ date: r.date, count: Number(r.count) })),
+      recentSignUpsByDay: recentSignUpsByDay.map(r => ({ date: r.date, count: Number(r.count) })),
+    };
   }
 }
 

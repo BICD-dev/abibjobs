@@ -43,6 +43,7 @@ Main tables:
 5. **transactions** — Wallet transaction log (userId, amount, type, status, jobId reference)
 6. **offers** — Price negotiation offers (jobId, senderId, amount, status: pending/accepted/declined/countered, message)
 7. **notifications** — In-app notifications (userId, title, message, type: info/warning/error/success, isRead, jobId)
+8. **site_visits** — Page visit tracking (visitorId, page, userAgent, createdAt)
 
 Schema changes use `drizzle-kit push` (not migrations). Run `npm run db:push` to sync schema to database.
 
@@ -105,6 +106,13 @@ Schema changes use `drizzle-kit push` (not migrations). Run `npm run db:push` to
 - Jobs support multiple workers (workersNeeded field); payment is split equally among all workers
 - Poster can cancel a job (open or in_progress) to get escrow refund
 - Transaction types: deposit, withdrawal, escrow_hold, escrow_refund, job_earning, fee, cancellation_compensation
+
+### Admin Dashboard Analytics
+- Owner-only dashboard at /admin/dashboard showing key platform metrics
+- Stats: total visitors (unique), total sign-ups, total user top-ups (deposits), total paid out (earnings + withdrawals)
+- Mini bar charts showing 30-day trends for visitors and sign-ups
+- Visit tracking: every page load fires POST /api/track-visit with unique visitor ID stored in localStorage
+- API: GET /api/admin/dashboard (owner-only), POST /api/track-visit (public)
 
 ### Key Environment Variables
 - `DATABASE_URL` — PostgreSQL connection string (required)

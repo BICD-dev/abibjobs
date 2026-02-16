@@ -5,11 +5,13 @@ import { Navbar } from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
 import { ArrowRight, CheckCircle2, ShieldCheck, Banknote, Clock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useVisitorTracking } from "@/hooks/use-visitor-tracking";
 
 export default function Home() {
   const { isAuthenticated } = useAuth();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  useVisitorTracking("home");
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);

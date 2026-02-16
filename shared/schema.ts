@@ -173,6 +173,14 @@ export const lagosAddresses = pgTable("lagos_addresses", {
   lga: text("lga").notNull(),
 });
 
+export const siteVisits = pgTable("site_visits", {
+  id: serial("id").primaryKey(),
+  visitorId: text("visitor_id").notNull(),
+  page: text("page").notNull(),
+  userAgent: text("user_agent"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 export const ownerSettings = pgTable("owner_settings", {
   id: serial("id").primaryKey(),
   passcodeHash: text("passcode_hash"),
@@ -212,6 +220,7 @@ export type AdminActivity = typeof adminActivity.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
 export type ScheduledPayment = typeof scheduledPayments.$inferSelect;
 export type LagosAddress = typeof lagosAddresses.$inferSelect;
+export type SiteVisit = typeof siteVisits.$inferSelect;
 export type OwnerSettings = typeof ownerSettings.$inferSelect;
 
 export type CreateJobInput = z.infer<typeof createJobSchema>;
