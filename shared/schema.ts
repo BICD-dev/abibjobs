@@ -45,6 +45,7 @@ export const jobs = pgTable("jobs", {
   workersAccepted: integer("workers_accepted").default(0).notNull(),
   workerProgress: text("worker_progress"), // null, 'getting_ready', 'on_the_way', 'at_location'
   posterConfirmedArrival: boolean("poster_confirmed_arrival").default(false),
+  acceptedAt: timestamp("accepted_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
