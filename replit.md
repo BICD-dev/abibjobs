@@ -39,9 +39,10 @@ Main tables:
 1. **users** — Managed by Replit Auth (id, email, name, profile image). Do NOT modify this table structure.
 2. **sessions** — Managed by Replit Auth for session storage. Do NOT modify this table structure.
 3. **profiles** — App-specific user data (wallet balance, bio, verification status, ID card URL, phone, location, role)
-4. **jobs** — Job listings (title, description, price, location, category, status, poster/worker references, workersNeeded, workersAccepted)
+4. **jobs** — Job listings (title, description, price, location, category, status, poster/worker references, workersNeeded, workersAccepted, priceType)
 5. **transactions** — Wallet transaction log (userId, amount, type, status, jobId reference)
 6. **offers** — Price negotiation offers (jobId, senderId, amount, status: pending/accepted/declined/countered, message)
+7. **notifications** — In-app notifications (userId, title, message, type: info/warning/error/success, isRead, jobId)
 
 Schema changes use `drizzle-kit push` (not migrations). Run `npm run db:push` to sync schema to database.
 
@@ -65,6 +66,20 @@ Schema changes use `drizzle-kit push` (not migrations). Run `npm run db:push` to
 - Progress is stored in `workerProgress` column on jobs table; poster confirmation in `posterConfirmedArrival`
 - Routes: POST /api/jobs/:id/progress (worker), POST /api/jobs/:id/confirm-arrival (poster)
 - Multi-worker jobs do not use progress tracking (only single-worker jobs)
+
+### No-Show System
+- Poster can report "Worker Didn't Show Up" on in_progress jobs (with confirmation dialog)
+- Reports increment worker's `noShowCount` in profiles; at 3 no-shows, worker is suspended (`isSuspended = true`)
+- Suspended workers cannot accept new jobs (blocked in accept route)
+- Each no-show creates an in-app notification warning the worker about remaining chances
+- No-show cancels the job and refunds escrow to poster
+- Routes: POST /api/jobs/:id/no-show (poster only)
+
+### In-App Notifications
+- Notifications stored in `notifications` table with types: info, warning, error, success
+- Bell icon in navbar shows unread count badge; links to /notifications page
+- Routes: GET /api/notifications, GET /api/notifications/unread-count, POST /api/notifications/:id/read, POST /api/notifications/read-all
+- Unread count auto-refreshes every 30 seconds
 
 ### Escrow / Wallet System
 - Users have a wallet balance stored in `profiles.walletBalance`

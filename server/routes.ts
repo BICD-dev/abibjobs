@@ -116,6 +116,11 @@ export async function registerRoutes(
       return res.status(400).json({ message: "You cannot accept your own job" });
     }
 
+    const workerProfile = await storage.getProfile(userId);
+    if (workerProfile?.isSuspended) {
+      return res.status(403).json({ message: "Your account is suspended due to multiple no-shows. You cannot accept jobs at this time." });
+    }
+
     const currentWorkers = job.workerId ? job.workerId.split(',') : [];
     if (currentWorkers.includes(userId)) {
       return res.status(400).json({ message: "You have already accepted this job" });
@@ -271,6 +276,100 @@ export async function registerRoutes(
     } catch (err) {
       res.status(500).json({ message: "Internal server error" });
     }
+  });
+
+  app.post(api.jobs.noShow.path, isAuthenticated, async (req, res) => {
+    try {
+      const jobId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+
+      const job = await storage.getJob(jobId);
+      if (!job) return res.status(404).json({ message: "Job not found" });
+
+      if (job.posterId !== userId) {
+        return res.status(403).json({ message: "Only the job poster can report a no-show" });
+      }
+
+      if (job.status !== 'in_progress' || !job.workerId) {
+        return res.status(400).json({ message: "Job must be in progress to report a no-show" });
+      }
+
+      const workerIds = job.workerId.split(',').filter(Boolean);
+      const price = parseFloat(job.price);
+      const totalEscrow = job.priceType === 'per_person' ? price * job.workersNeeded : price;
+
+      await storage.updateWalletBalance(job.posterId, totalEscrow);
+      await storage.createTransaction({
+        userId: job.posterId,
+        amount: totalEscrow.toFixed(2),
+        type: 'escrow_refund',
+        jobId: job.id
+      });
+
+      for (const wId of workerIds) {
+        const workerProfile = await storage.getProfile(wId);
+        const currentNoShows = (workerProfile?.noShowCount || 0) + 1;
+        const willBeSuspended = currentNoShows >= 3;
+
+        await storage.updateProfile(wId, {
+          noShowCount: currentNoShows,
+          isSuspended: willBeSuspended,
+        });
+
+        const remainingChances = Math.max(0, 3 - currentNoShows);
+
+        if (willBeSuspended) {
+          await storage.createNotification({
+            userId: wId,
+            title: "Account Suspended",
+            message: `You have been suspended from accepting jobs due to ${currentNoShows} no-show reports. You failed to show up for the job "${job.title}". Please contact support to resolve this.`,
+            type: "error",
+            jobId: job.id,
+          });
+        } else {
+          await storage.createNotification({
+            userId: wId,
+            title: "No-Show Warning",
+            message: `The poster of "${job.title}" reported that you didn't show up. You have ${remainingChances} chance${remainingChances === 1 ? '' : 's'} left before your account gets suspended from picking jobs.`,
+            type: "warning",
+            jobId: job.id,
+          });
+        }
+      }
+
+      const updated = await storage.updateJob(jobId, { status: 'cancelled' });
+      res.json({ message: "No-show reported. Workers have been notified and escrow has been refunded." });
+    } catch (err) {
+      console.error("No-show error:", err);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // --- NOTIFICATIONS ---
+
+  app.get(api.notifications.list.path, isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const notificationsList = await storage.getNotifications(userId);
+    res.json(notificationsList);
+  });
+
+  app.get(api.notifications.unreadCount.path, isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const count = await storage.getUnreadNotificationCount(userId);
+    res.json({ count });
+  });
+
+  app.post(api.notifications.markRead.path, isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const notificationId = Number(req.params.id);
+    await storage.markNotificationRead(notificationId, userId);
+    res.json({ message: "Notification marked as read" });
+  });
+
+  app.post(api.notifications.markAllRead.path, isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    await storage.markAllNotificationsRead(userId);
+    res.json({ message: "All notifications marked as read" });
   });
 
   // --- OFFERS ---

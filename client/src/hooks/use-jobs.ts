@@ -254,3 +254,40 @@ export function useCancelJob() {
     },
   });
 }
+
+export function useReportNoShow() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (id: number) => {
+      const url = buildUrl(api.jobs.noShow.path, { id });
+      const res = await fetch(url, {
+        method: api.jobs.noShow.method,
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || "Failed to report no-show");
+      }
+      return res.json();
+    },
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: [api.jobs.list.path] });
+      queryClient.invalidateQueries({ queryKey: [api.jobs.get.path, id] });
+      queryClient.invalidateQueries({ queryKey: [api.wallet.get.path] });
+      toast({
+        title: "No-Show Reported",
+        description: "The worker has been notified and your escrow has been refunded.",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+}

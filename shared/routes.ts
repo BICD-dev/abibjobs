@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { createJobSchema, createOfferSchema, jobs, profiles, transactions, platformEarnings, platformTransactions, offers, disputes, disputeMessages } from './schema';
+import { createJobSchema, createOfferSchema, jobs, profiles, transactions, platformEarnings, platformTransactions, offers, disputes, disputeMessages, notifications } from './schema';
 
 export const errorSchemas = {
   validation: z.object({
@@ -98,6 +98,45 @@ export const api = {
         200: z.custom<typeof jobs.$inferSelect>(),
         400: errorSchemas.validation,
         401: errorSchemas.unauthorized,
+      },
+    },
+    noShow: {
+      method: 'POST' as const,
+      path: '/api/jobs/:id/no-show' as const,
+      responses: {
+        200: z.object({ message: z.string() }),
+        400: errorSchemas.validation,
+        401: errorSchemas.unauthorized,
+      },
+    },
+  },
+  notifications: {
+    list: {
+      method: 'GET' as const,
+      path: '/api/notifications' as const,
+      responses: {
+        200: z.array(z.custom<typeof notifications.$inferSelect>()),
+      },
+    },
+    unreadCount: {
+      method: 'GET' as const,
+      path: '/api/notifications/unread-count' as const,
+      responses: {
+        200: z.object({ count: z.number() }),
+      },
+    },
+    markRead: {
+      method: 'POST' as const,
+      path: '/api/notifications/:id/read' as const,
+      responses: {
+        200: z.object({ message: z.string() }),
+      },
+    },
+    markAllRead: {
+      method: 'POST' as const,
+      path: '/api/notifications/read-all' as const,
+      responses: {
+        200: z.object({ message: z.string() }),
       },
     },
   },

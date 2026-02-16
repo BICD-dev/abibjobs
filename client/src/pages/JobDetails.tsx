@@ -1,6 +1,6 @@
 import { useState, useRef } from "react";
 import { useRoute, useLocation } from "wouter";
-import { useJob, useAcceptJob, useCompleteJob, useCancelJob, useUpdateJobProgress, useConfirmArrival } from "@/hooks/use-jobs";
+import { useJob, useAcceptJob, useCompleteJob, useCancelJob, useUpdateJobProgress, useConfirmArrival, useReportNoShow } from "@/hooks/use-jobs";
 import { useOffers, useCreateOffer, useAcceptOffer, useDeclineOffer, useCounterOffer } from "@/hooks/use-offers";
 import { useDisputeByJob, useCreateDispute, useDisputeMessage, useAcceptProposal, useEscalateDispute, useUploadDisputeImage } from "@/hooks/use-disputes";
 import { useAuth } from "@/hooks/use-auth";
@@ -14,7 +14,7 @@ import { Card } from "@/components/ui/card";
 import {
   Loader2, MapPin, Calendar, ArrowLeft, CheckCircle, Shield, Users, XCircle,
   MessageSquare, ArrowUpDown, Send, Check, X, AlertTriangle, Wallet,
-  Flag, Scale, ArrowUpCircle, Image as ImageIcon, Navigation, Clock, MapPinCheck
+  Flag, Scale, ArrowUpCircle, Image as ImageIcon, Navigation, Clock, MapPinCheck, UserX, Lock
 } from "lucide-react";
 import { format } from "date-fns";
 import type { OfferWithSender, DisputeMessageWithSender } from "@shared/schema";
@@ -33,6 +33,7 @@ export default function JobDetails() {
   const { mutate: cancelJob, isPending: isCancelling } = useCancelJob();
   const { mutate: updateProgress, isPending: isUpdatingProgress } = useUpdateJobProgress();
   const { mutate: confirmArrival, isPending: isConfirmingArrival } = useConfirmArrival();
+  const { mutate: reportNoShow, isPending: isReportingNoShow } = useReportNoShow();
 
   const { mutate: createOffer, isPending: isCreatingOffer } = useCreateOffer();
   const { mutate: acceptOffer, isPending: isAcceptingOffer } = useAcceptOffer();
@@ -53,6 +54,7 @@ export default function JobDetails() {
   const [counteringOfferId, setCounteringOfferId] = useState<number | null>(null);
   const [showInsufficientFunds, setShowInsufficientFunds] = useState(false);
   const [shortfallAmount, setShortfallAmount] = useState(0);
+  const [confirmingNoShow, setConfirmingNoShow] = useState(false);
 
   const [showDisputeForm, setShowDisputeForm] = useState(false);
   const [disputeMessage, setDisputeMessage] = useState("");
@@ -364,6 +366,43 @@ export default function JobDetails() {
                               {isCompleting ? <Loader2 className="animate-spin mr-2" /> : <CheckCircle className="mr-2 h-5 w-5" />}
                               Mark as Completed & Release Funds
                             </Button>
+                            {!confirmingNoShow ? (
+                              <Button
+                                variant="destructive"
+                                className="w-full rounded-xl"
+                                onClick={() => setConfirmingNoShow(true)}
+                                data-testid="button-no-show"
+                              >
+                                <UserX className="mr-2 h-4 w-4" />
+                                Worker Didn't Show Up
+                              </Button>
+                            ) : (
+                              <div className="p-4 bg-red-50 dark:bg-red-950/30 rounded-xl border border-red-200 dark:border-red-800 space-y-3" data-testid="section-confirm-no-show">
+                                <p className="text-sm font-medium text-red-700 dark:text-red-300">
+                                  Are you sure? This will cancel the job, refund your escrow, and the worker will receive a warning.
+                                </p>
+                                <div className="flex gap-2">
+                                  <Button
+                                    variant="destructive"
+                                    className="flex-1 rounded-xl"
+                                    onClick={() => { reportNoShow(job.id); setConfirmingNoShow(false); }}
+                                    disabled={isReportingNoShow}
+                                    data-testid="button-confirm-no-show"
+                                  >
+                                    {isReportingNoShow ? <Loader2 className="animate-spin mr-2" /> : <UserX className="mr-2 h-4 w-4" />}
+                                    Yes, Report No-Show
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    className="rounded-xl"
+                                    onClick={() => setConfirmingNoShow(false)}
+                                    data-testid="button-cancel-no-show"
+                                  >
+                                    Cancel
+                                  </Button>
+                                </div>
+                              </div>
+                            )}
                             <Button
                               variant="outline"
                               className="w-full rounded-xl text-amber-600 border-amber-200 dark:border-amber-800"
@@ -480,8 +519,14 @@ export default function JobDetails() {
                             You are working on this job. Waiting for client to confirm completion.
                           </div>
                         ) : !isOpen && !isWorker ? (
-                          <div className="text-center p-4 bg-muted text-muted-foreground rounded-xl">
-                            This job is already taken.
+                          <div className="p-4 bg-blue-50 dark:bg-blue-950/30 rounded-xl border border-blue-100 dark:border-blue-900" data-testid="text-job-taken">
+                            <div className="flex items-center gap-2 mb-2">
+                              <Lock className="w-5 h-5 text-blue-600" />
+                              <span className="font-semibold text-blue-700 dark:text-blue-300">This job has been accepted</span>
+                            </div>
+                            <p className="text-sm text-blue-600 dark:text-blue-400">
+                              This job is no longer available for new workers. Browse other open jobs to find work.
+                            </p>
                           </div>
                         ) : null}
                       </div>

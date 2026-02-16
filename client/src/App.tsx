@@ -17,6 +17,7 @@ import AdminDisputes from "@/pages/AdminDisputes";
 import AdminLogin from "@/pages/AdminLogin";
 import AdminManagement from "@/pages/AdminManagement";
 import AdminSettings from "@/pages/AdminSettings";
+import Notifications from "@/pages/Notifications";
 import NotFound from "@/pages/not-found";
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
@@ -64,6 +65,9 @@ function Router() {
       </Route>
       <Route path="/admin/earnings">
         {() => <ProtectedRoute component={AdminEarnings} />}
+      </Route>
+      <Route path="/notifications">
+        {() => <ProtectedRoute component={Notifications} />}
       </Route>
       <Route path="/admin/disputes" component={AdminDisputes} />
       <Route path="/admin/login" component={AdminLogin} />
