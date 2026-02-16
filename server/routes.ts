@@ -164,7 +164,10 @@ export async function registerRoutes(
 
   app.get(api.profile.get.path, isAuthenticated, async (req, res) => {
     const userId = (req.user as any).claims.sub;
-    const profile = await storage.getProfile(userId);
+    let profile = await storage.getProfile(userId);
+    if (!profile) {
+      profile = await storage.createProfile(userId);
+    }
     res.json(profile);
   });
 

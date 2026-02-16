@@ -99,6 +99,14 @@ export function Navbar() {
                         <span>Profile</span>
                       </DropdownMenuItem>
                     </Link>
+                    {isAdmin && (
+                      <Link href="/admin/earnings">
+                        <DropdownMenuItem className="cursor-pointer">
+                          <TrendingUp className="mr-2 h-4 w-4" />
+                          <span>Platform Earnings</span>
+                        </DropdownMenuItem>
+                      </Link>
+                    )}
                     <DropdownMenuItem className="cursor-pointer text-destructive focus:text-destructive" onClick={() => logout()}>
                       <LogOut className="mr-2 h-4 w-4" />
                       <span>Log out</span>
