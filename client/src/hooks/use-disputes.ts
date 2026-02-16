@@ -73,11 +73,11 @@ export function useDisputeMessage() {
   const { toast } = useToast();
 
   return useMutation({
-    mutationFn: async ({ disputeId, jobId, message, type, amount }: { disputeId: number; jobId: number; message: string; type?: string; amount?: number }) => {
+    mutationFn: async ({ disputeId, jobId, message, type, amount, imageUrl }: { disputeId: number; jobId: number; message: string; type?: string; amount?: number; imageUrl?: string }) => {
       const res = await fetch(`/api/disputes/${disputeId}/message`, {
         method: 'POST',
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, type: type || 'message', amount }),
+        body: JSON.stringify({ message, type: type || 'message', amount, imageUrl }),
         credentials: "include",
       });
       if (!res.ok) {
@@ -158,11 +158,17 @@ export function useResolveDispute() {
   const { toast } = useToast();
 
   return useMutation({
-    mutationFn: async ({ disputeId, resolvedAmount, message }: { disputeId: number; resolvedAmount: number; message?: string }) => {
+    mutationFn: async ({ disputeId, action, workerAmount, posterRefund, message }: {
+      disputeId: number;
+      action: 'refund_poster' | 'release_worker' | 'custom';
+      workerAmount?: number;
+      posterRefund?: number;
+      message?: string;
+    }) => {
       const res = await fetch(`/api/disputes/${disputeId}/resolve`, {
         method: 'POST',
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ resolvedAmount, message }),
+        body: JSON.stringify({ action, workerAmount, posterRefund, message }),
         credentials: "include",
       });
       if (!res.ok) {
@@ -178,6 +184,35 @@ export function useResolveDispute() {
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+}
+
+export function useUploadDisputeImage() {
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (file: File): Promise<string> => {
+      const metaRes = await fetch('/api/uploads/request-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: file.name, size: file.size, contentType: file.type }),
+        credentials: 'include',
+      });
+      if (!metaRes.ok) throw new Error("Failed to get upload URL");
+      const { uploadURL, objectPath } = await metaRes.json();
+
+      const uploadRes = await fetch(uploadURL, {
+        method: 'PUT',
+        headers: { 'Content-Type': file.type },
+        body: file,
+      });
+      if (!uploadRes.ok) throw new Error("Failed to upload image");
+
+      return objectPath;
+    },
+    onError: (error: Error) => {
+      toast({ title: "Upload Failed", description: error.message, variant: "destructive" });
     },
   });
 }

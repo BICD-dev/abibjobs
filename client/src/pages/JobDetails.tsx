@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useRoute, useLocation } from "wouter";
 import { useJob, useAcceptJob, useCompleteJob, useCancelJob } from "@/hooks/use-jobs";
 import { useOffers, useCreateOffer, useAcceptOffer, useDeclineOffer, useCounterOffer } from "@/hooks/use-offers";
-import { useDisputeByJob, useCreateDispute, useDisputeMessage, useAcceptProposal, useEscalateDispute } from "@/hooks/use-disputes";
+import { useDisputeByJob, useCreateDispute, useDisputeMessage, useAcceptProposal, useEscalateDispute, useUploadDisputeImage } from "@/hooks/use-disputes";
 import { useAuth } from "@/hooks/use-auth";
 import { Navbar } from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,7 @@ import { Card } from "@/components/ui/card";
 import {
   Loader2, MapPin, Calendar, ArrowLeft, CheckCircle, Shield, Users, XCircle,
   MessageSquare, ArrowUpDown, Send, Check, X, AlertTriangle, Wallet,
-  Flag, Scale, ArrowUpCircle
+  Flag, Scale, ArrowUpCircle, Image as ImageIcon
 } from "lucide-react";
 import { format } from "date-fns";
 import type { OfferWithSender, DisputeMessageWithSender } from "@shared/schema";
@@ -39,6 +39,7 @@ export default function JobDetails() {
 
   const { mutate: createDispute, isPending: isCreatingDispute } = useCreateDispute();
   const { mutate: sendDisputeMessage, isPending: isSendingMessage } = useDisputeMessage();
+  const { mutateAsync: uploadDisputeImage, isPending: isUploadingImage } = useUploadDisputeImage();
   const { mutate: acceptProposal, isPending: isAcceptingProposal } = useAcceptProposal();
   const { mutate: escalateDispute, isPending: isEscalating } = useEscalateDispute();
 
@@ -58,6 +59,8 @@ export default function JobDetails() {
   const [showProposalForm, setShowProposalForm] = useState(false);
   const [proposalAmount, setProposalAmount] = useState("");
   const [proposalMessage, setProposalMessage] = useState("");
+  const [disputeImage, setDisputeImage] = useState<File | null>(null);
+  const [disputeImagePreview, setDisputeImagePreview] = useState<string | null>(null);
 
   if (isLoading) return <div className="min-h-screen bg-background flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
   if (error || !job) return <div className="min-h-screen bg-background flex items-center justify-center text-destructive">Job not found</div>;
@@ -142,16 +145,29 @@ export default function JobDetails() {
     });
   };
 
-  const handleSendDisputeReply = () => {
-    if (!disputeReplyMessage.trim() || !dispute) return;
+  const handleSendDisputeReply = async () => {
+    if ((!disputeReplyMessage.trim() && !disputeImage) || !dispute) return;
+
+    let imageUrl: string | undefined;
+    if (disputeImage) {
+      try {
+        imageUrl = await uploadDisputeImage(disputeImage);
+      } catch {
+        return;
+      }
+    }
+
     sendDisputeMessage({
       disputeId: dispute.id,
       jobId: job.id,
-      message: disputeReplyMessage,
+      message: disputeReplyMessage.trim() || (imageUrl ? "Attached image" : ""),
       type: 'message',
+      imageUrl,
     }, {
       onSuccess: () => {
         setDisputeReplyMessage("");
+        setDisputeImage(null);
+        setDisputeImagePreview(null);
       }
     });
   };
@@ -464,6 +480,13 @@ export default function JobDetails() {
                             {msg.amount && (
                               <p className="text-lg font-bold text-primary mt-1">{"\u20A6"}{Number(msg.amount).toLocaleString()}</p>
                             )}
+                            {msg.imageUrl && (
+                              <div className="mt-2">
+                                <a href={msg.imageUrl} target="_blank" rel="noopener noreferrer">
+                                  <img src={msg.imageUrl} alt="Attached" className="max-w-xs max-h-48 rounded-lg border border-border object-cover cursor-pointer" />
+                                </a>
+                              </div>
+                            )}
                             <p className="text-xs text-muted-foreground mt-1">
                               {msg.createdAt ? format(new Date(msg.createdAt), "PP p") : ""}
                             </p>
@@ -511,21 +534,54 @@ export default function JobDetails() {
                         </Card>
                       )}
 
+                      {disputeImagePreview && (
+                        <div className="relative inline-block">
+                          <img src={disputeImagePreview} alt="Preview" className="h-16 rounded-lg border border-border" />
+                          <button
+                            onClick={() => { setDisputeImage(null); setDisputeImagePreview(null); }}
+                            className="absolute -top-2 -right-2 bg-destructive text-destructive-foreground rounded-full w-5 h-5 flex items-center justify-center text-xs"
+                          >
+                            x
+                          </button>
+                        </div>
+                      )}
                       <div className="flex gap-2">
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          id="dispute-file-input"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file && file.type.startsWith('image/')) {
+                              setDisputeImage(file);
+                              setDisputeImagePreview(URL.createObjectURL(file));
+                            }
+                          }}
+                        />
+                        <Button
+                          size="icon"
+                          variant="outline"
+                          onClick={() => document.getElementById('dispute-file-input')?.click()}
+                          disabled={isUploadingImage}
+                          data-testid="button-attach-dispute-image"
+                        >
+                          {isUploadingImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImageIcon className="h-4 w-4" />}
+                        </Button>
                         <Input
                           placeholder="Type your message..."
                           value={disputeReplyMessage}
                           onChange={(e) => setDisputeReplyMessage(e.target.value)}
-                          onKeyDown={(e) => e.key === 'Enter' && handleSendDisputeReply()}
+                          onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendDisputeReply()}
                           data-testid="input-dispute-reply"
                         />
                         <Button
                           size="icon"
                           onClick={handleSendDisputeReply}
-                          disabled={isSendingMessage || !disputeReplyMessage.trim()}
+                          disabled={isSendingMessage || isUploadingImage || (!disputeReplyMessage.trim() && !disputeImage)}
                           data-testid="button-send-dispute-reply"
                         >
-                          {isSendingMessage ? <Loader2 className="animate-spin h-4 w-4" /> : <Send className="h-4 w-4" />}
+                          {(isSendingMessage || isUploadingImage) ? <Loader2 className="animate-spin h-4 w-4" /> : <Send className="h-4 w-4" />}
                         </Button>
                       </div>
 

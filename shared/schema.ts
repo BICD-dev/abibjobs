@@ -110,6 +110,7 @@ export const disputeMessages = pgTable("dispute_messages", {
   message: text("message").notNull(),
   type: text("type").default("message").notNull(),
   amount: numeric("amount", { precision: 10, scale: 2 }),
+  imageUrl: text("image_url"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

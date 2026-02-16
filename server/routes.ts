@@ -599,6 +599,7 @@ export async function registerRoutes(
         message: parsed.data.message,
         type: parsed.data.type,
         amount: parsed.data.amount?.toFixed(2),
+        imageUrl: parsed.data.imageUrl,
       });
 
       if (parsed.data.type === 'proposal') {
@@ -751,36 +752,61 @@ export async function registerRoutes(
       const job = await storage.getJob(dispute.jobId);
       if (!job) return res.status(404).json({ message: "Job not found" });
 
-      const resolvedAmount = parsed.data.resolvedAmount;
       const originalPrice = parseFloat(job.price);
-      const fee = resolvedAmount * 0.22;
-      const workerPayout = resolvedAmount - fee;
-      const refundToPoster = originalPrice - resolvedAmount;
-
       const workerIds = job.workerId ? job.workerId.split(',').filter(Boolean) : [];
-      const payoutPerWorker = workerPayout / workerIds.length;
+      const { action } = parsed.data;
 
-      for (const wId of workerIds) {
-        await storage.updateWalletBalance(wId, payoutPerWorker);
-        await storage.createTransaction({
-          userId: wId,
-          amount: payoutPerWorker.toFixed(2),
-          type: 'job_earning',
-          jobId: job.id,
-        });
+      let workerTotal = 0;
+      let posterRefund = 0;
+      let platformFee = 0;
+      let summaryMsg = '';
+
+      if (action === 'refund_poster') {
+        posterRefund = originalPrice;
+        workerTotal = 0;
+        platformFee = 0;
+        summaryMsg = `Admin refunded full amount (\u20A6${originalPrice.toLocaleString()}) to job poster.`;
+      } else if (action === 'release_worker') {
+        platformFee = originalPrice * 0.22;
+        workerTotal = originalPrice - platformFee;
+        posterRefund = 0;
+        summaryMsg = `Admin released funds to worker(s). Worker receives \u20A6${workerTotal.toLocaleString()}, platform fee \u20A6${platformFee.toLocaleString()}.`;
+      } else if (action === 'custom') {
+        workerTotal = parsed.data.workerAmount ?? 0;
+        posterRefund = parsed.data.posterRefund ?? 0;
+        if (workerTotal + posterRefund > originalPrice) {
+          return res.status(400).json({ message: `Total distribution (\u20A6${(workerTotal + posterRefund).toLocaleString()}) exceeds escrowed amount (\u20A6${originalPrice.toLocaleString()})` });
+        }
+        platformFee = originalPrice - workerTotal - posterRefund;
+        summaryMsg = `Admin resolved with custom split: Worker \u20A6${workerTotal.toLocaleString()}, Poster refund \u20A6${posterRefund.toLocaleString()}, Platform \u20A6${platformFee.toLocaleString()}.`;
       }
 
-      if (refundToPoster > 0) {
-        await storage.updateWalletBalance(dispute.posterId, refundToPoster);
+      if (workerTotal > 0 && workerIds.length > 0) {
+        const payoutPerWorker = workerTotal / workerIds.length;
+        for (const wId of workerIds) {
+          await storage.updateWalletBalance(wId, payoutPerWorker);
+          await storage.createTransaction({
+            userId: wId,
+            amount: payoutPerWorker.toFixed(2),
+            type: 'job_earning',
+            jobId: job.id,
+          });
+        }
+      }
+
+      if (posterRefund > 0) {
+        await storage.updateWalletBalance(dispute.posterId, posterRefund);
         await storage.createTransaction({
           userId: dispute.posterId,
-          amount: refundToPoster.toFixed(2),
+          amount: posterRefund.toFixed(2),
           type: 'escrow_refund',
           jobId: job.id,
         });
       }
 
-      await storage.addPlatformEarning(fee, job.id, job.title);
+      if (platformFee > 0) {
+        await storage.addPlatformEarning(platformFee, job.id, job.title);
+      }
 
       if (parsed.data.message) {
         await storage.createDisputeMessage({
@@ -794,22 +820,23 @@ export async function registerRoutes(
       await storage.createDisputeMessage({
         disputeId,
         senderId: userId,
-        message: `Admin resolved dispute. Final amount: \u20A6${resolvedAmount.toLocaleString()}`,
+        message: summaryMsg,
         type: 'acceptance',
-        amount: resolvedAmount.toFixed(2),
+        amount: (action === 'refund_poster' ? posterRefund : workerTotal).toFixed(2),
       });
 
       await storage.updateDispute(disputeId, {
         status: 'resolved',
-        resolvedAmount: resolvedAmount.toFixed(2),
+        resolvedAmount: (action === 'refund_poster' ? posterRefund : workerTotal).toFixed(2),
         resolvedBy: 'admin',
       });
 
-      await storage.updateJob(dispute.jobId, { status: 'completed' });
+      await storage.updateJob(dispute.jobId, { status: action === 'refund_poster' ? 'cancelled' : 'completed' });
 
       const full = await storage.getDispute(disputeId);
       res.json(full);
     } catch (err) {
+      console.error("Error resolving dispute:", err);
       res.status(500).json({ message: "Internal server error" });
     }
   });

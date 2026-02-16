@@ -54,7 +54,7 @@ export interface IStorage {
   getDisputeByJob(jobId: number): Promise<Dispute | undefined>;
   getDisputes(filters?: { status?: string }): Promise<DisputeWithDetails[]>;
   updateDispute(id: number, data: Partial<Dispute>): Promise<Dispute>;
-  createDisputeMessage(data: { disputeId: number; senderId: string; message: string; type: string; amount?: string }): Promise<DisputeMessage>;
+  createDisputeMessage(data: { disputeId: number; senderId: string; message: string; type: string; amount?: string; imageUrl?: string }): Promise<DisputeMessage>;
   getDisputeMessages(disputeId: number): Promise<DisputeMessageWithSender[]>;
 
   // Platform Earnings (Admin)
@@ -311,7 +311,7 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async createDisputeMessage(data: { disputeId: number; senderId: string; message: string; type: string; amount?: string }): Promise<DisputeMessage> {
+  async createDisputeMessage(data: { disputeId: number; senderId: string; message: string; type: string; amount?: string; imageUrl?: string }): Promise<DisputeMessage> {
     const [msg] = await db.insert(disputeMessages).values(data).returning();
     return msg;
   }

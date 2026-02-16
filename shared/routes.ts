@@ -240,6 +240,7 @@ export const api = {
         message: z.string().min(1),
         type: z.enum(['message', 'proposal', 'acceptance']).default('message'),
         amount: z.number().optional(),
+        imageUrl: z.string().optional(),
       }),
       responses: {
         201: z.any(),
@@ -257,7 +258,9 @@ export const api = {
       method: 'POST' as const,
       path: '/api/disputes/:id/resolve' as const,
       input: z.object({
-        resolvedAmount: z.number().min(0),
+        action: z.enum(['refund_poster', 'release_worker', 'custom']),
+        workerAmount: z.number().min(0).optional(),
+        posterRefund: z.number().min(0).optional(),
         message: z.string().optional(),
       }),
       responses: {
