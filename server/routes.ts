@@ -130,11 +130,16 @@ export async function registerRoutes(
     const newAccepted = newWorkers.length;
     const newStatus = newAccepted >= job.workersNeeded ? 'in_progress' : 'open';
 
-    const updated = await storage.updateJob(jobId, { 
+    const updateData: any = { 
       workerId: newWorkers.join(','), 
       workersAccepted: newAccepted,
       status: newStatus,
-    });
+    };
+    if (!job.acceptedAt) {
+      updateData.acceptedAt = new Date();
+    }
+
+    const updated = await storage.updateJob(jobId, updateData);
     res.json(updated);
   });
 
@@ -282,6 +287,10 @@ export async function registerRoutes(
     try {
       const jobId = Number(req.params.id);
       const userId = (req.user as any).claims.sub;
+      const action = req.body?.action as string | undefined;
+      if (!action || !['repost', 'delete'].includes(action)) {
+        return res.status(400).json({ message: "Please choose to repost or delete the job" });
+      }
 
       const job = await storage.getJob(jobId);
       if (!job) return res.status(404).json({ message: "Job not found" });
@@ -292,6 +301,18 @@ export async function registerRoutes(
 
       if (job.status !== 'in_progress' || !job.workerId) {
         return res.status(400).json({ message: "Job must be in progress to report a no-show" });
+      }
+
+      const acceptedAt = job.acceptedAt ? new Date(job.acceptedAt).getTime() : null;
+      const now = Date.now();
+      const twelveHours = 12 * 60 * 60 * 1000;
+      if (acceptedAt && (now - acceptedAt) < twelveHours) {
+        const remainingMs = twelveHours - (now - acceptedAt);
+        const remainingHours = Math.ceil(remainingMs / (60 * 60 * 1000));
+        return res.status(400).json({ 
+          message: `You can report a no-show after 12 hours from when the job was accepted. About ${remainingHours} hour${remainingHours === 1 ? '' : 's'} remaining.`,
+          remainingMs,
+        });
       }
 
       const workerIds = job.workerId.split(',').filter(Boolean);
@@ -337,8 +358,20 @@ export async function registerRoutes(
         }
       }
 
-      const updated = await storage.updateJob(jobId, { status: 'cancelled' });
-      res.json({ message: "No-show reported. Workers have been notified and escrow has been refunded." });
+      if (action === 'repost') {
+        await storage.updateJob(jobId, { 
+          status: 'open', 
+          workerId: null, 
+          workersAccepted: 0, 
+          workerProgress: null, 
+          posterConfirmedArrival: false,
+          acceptedAt: null,
+        });
+        res.json({ message: "No-show reported. Job has been reposted for new workers.", reposted: true });
+      } else {
+        await storage.updateJob(jobId, { status: 'cancelled' });
+        res.json({ message: "No-show reported. Job has been deleted and escrow refunded.", reposted: false });
+      }
     } catch (err) {
       console.error("No-show error:", err);
       res.status(500).json({ message: "Internal server error" });

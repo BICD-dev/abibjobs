@@ -260,10 +260,12 @@ export function useReportNoShow() {
   const { toast } = useToast();
 
   return useMutation({
-    mutationFn: async (id: number) => {
+    mutationFn: async ({ id, action }: { id: number; action: 'repost' | 'delete' }) => {
       const url = buildUrl(api.jobs.noShow.path, { id });
       const res = await fetch(url, {
         method: api.jobs.noShow.method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
         credentials: "include",
       });
 
@@ -273,13 +275,15 @@ export function useReportNoShow() {
       }
       return res.json();
     },
-    onSuccess: (_, id) => {
+    onSuccess: (data, { id }) => {
       queryClient.invalidateQueries({ queryKey: [api.jobs.list.path] });
       queryClient.invalidateQueries({ queryKey: [api.jobs.get.path, id] });
       queryClient.invalidateQueries({ queryKey: [api.wallet.get.path] });
       toast({
         title: "No-Show Reported",
-        description: "The worker has been notified and your escrow has been refunded.",
+        description: data.reposted 
+          ? "The job has been reposted for new workers. Escrow refunded."
+          : "The job has been removed and your escrow has been refunded.",
       });
     },
     onError: (error: Error) => {

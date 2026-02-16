@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
 import { useRoute, useLocation } from "wouter";
 import { useJob, useAcceptJob, useCompleteJob, useCancelJob, useUpdateJobProgress, useConfirmArrival, useReportNoShow } from "@/hooks/use-jobs";
 import { useOffers, useCreateOffer, useAcceptOffer, useDeclineOffer, useCounterOffer } from "@/hooks/use-offers";
@@ -14,7 +14,8 @@ import { Card } from "@/components/ui/card";
 import {
   Loader2, MapPin, Calendar, ArrowLeft, CheckCircle, Shield, Users, XCircle,
   MessageSquare, ArrowUpDown, Send, Check, X, AlertTriangle, Wallet,
-  Flag, Scale, ArrowUpCircle, Image as ImageIcon, Navigation, Clock, MapPinCheck, UserX, Lock
+  Flag, Scale, ArrowUpCircle, Image as ImageIcon, Navigation, Clock, MapPinCheck, UserX, Lock,
+  RefreshCw, Trash2
 } from "lucide-react";
 import { format } from "date-fns";
 import type { OfferWithSender, DisputeMessageWithSender } from "@shared/schema";
@@ -55,6 +56,7 @@ export default function JobDetails() {
   const [showInsufficientFunds, setShowInsufficientFunds] = useState(false);
   const [shortfallAmount, setShortfallAmount] = useState(0);
   const [confirmingNoShow, setConfirmingNoShow] = useState(false);
+  const [noShowStep, setNoShowStep] = useState<'confirm' | 'choose'>('confirm');
 
   const [showDisputeForm, setShowDisputeForm] = useState(false);
   const [disputeMessage, setDisputeMessage] = useState("");
@@ -65,6 +67,19 @@ export default function JobDetails() {
   const [proposalMessage, setProposalMessage] = useState("");
   const [disputeImage, setDisputeImage] = useState<File | null>(null);
   const [disputeImagePreview, setDisputeImagePreview] = useState<string | null>(null);
+
+  const noShowAvailability = useMemo(() => {
+    if (!job?.acceptedAt) return { canReport: true, remainingText: '' };
+    const acceptedTime = new Date(job.acceptedAt).getTime();
+    const now = Date.now();
+    const twelveHours = 12 * 60 * 60 * 1000;
+    const elapsed = now - acceptedTime;
+    if (elapsed >= twelveHours) return { canReport: true, remainingText: '' };
+    const remainingMs = twelveHours - elapsed;
+    const hours = Math.floor(remainingMs / (60 * 60 * 1000));
+    const minutes = Math.ceil((remainingMs % (60 * 60 * 1000)) / (60 * 1000));
+    return { canReport: false, remainingText: `${hours}h ${minutes}m remaining` };
+  }, [job?.acceptedAt]);
 
   if (isLoading) return <div className="min-h-screen bg-background flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
   if (error || !job) return <div className="min-h-screen bg-background flex items-center justify-center text-destructive">Job not found</div>;
@@ -367,29 +382,37 @@ export default function JobDetails() {
                               Mark as Completed & Release Funds
                             </Button>
                             {!confirmingNoShow ? (
-                              <Button
-                                variant="destructive"
-                                className="w-full rounded-xl"
-                                onClick={() => setConfirmingNoShow(true)}
-                                data-testid="button-no-show"
-                              >
-                                <UserX className="mr-2 h-4 w-4" />
-                                Worker Didn't Show Up
-                              </Button>
-                            ) : (
+                              noShowAvailability.canReport ? (
+                                <Button
+                                  variant="destructive"
+                                  className="w-full rounded-xl"
+                                  onClick={() => { setConfirmingNoShow(true); setNoShowStep('confirm'); }}
+                                  data-testid="button-no-show"
+                                >
+                                  <UserX className="mr-2 h-4 w-4" />
+                                  Worker Didn't Show Up
+                                </Button>
+                              ) : (
+                                <div className="p-3 bg-muted rounded-xl text-center space-y-1" data-testid="section-no-show-timer">
+                                  <p className="text-sm text-muted-foreground">You can report a no-show after 12 hours</p>
+                                  <p className="text-sm font-medium flex items-center justify-center gap-1">
+                                    <Clock className="h-4 w-4" /> {noShowAvailability.remainingText}
+                                  </p>
+                                </div>
+                              )
+                            ) : noShowStep === 'confirm' ? (
                               <div className="p-4 bg-red-50 dark:bg-red-950/30 rounded-xl border border-red-200 dark:border-red-800 space-y-3" data-testid="section-confirm-no-show">
                                 <p className="text-sm font-medium text-red-700 dark:text-red-300">
-                                  Are you sure? This will cancel the job, refund your escrow, and the worker will receive a warning.
+                                  Are you sure the worker didn't show up? This will refund your escrow and the worker will receive a warning.
                                 </p>
                                 <div className="flex gap-2">
                                   <Button
                                     variant="destructive"
                                     className="flex-1 rounded-xl"
-                                    onClick={() => { reportNoShow(job.id); setConfirmingNoShow(false); }}
-                                    disabled={isReportingNoShow}
+                                    onClick={() => setNoShowStep('choose')}
                                     data-testid="button-confirm-no-show"
                                   >
-                                    {isReportingNoShow ? <Loader2 className="animate-spin mr-2" /> : <UserX className="mr-2 h-4 w-4" />}
+                                    <UserX className="mr-2 h-4 w-4" />
                                     Yes, Report No-Show
                                   </Button>
                                   <Button
@@ -402,7 +425,43 @@ export default function JobDetails() {
                                   </Button>
                                 </div>
                               </div>
-                            )}
+                            ) : noShowStep === 'choose' ? (
+                              <div className="p-4 bg-amber-50 dark:bg-amber-950/30 rounded-xl border border-amber-200 dark:border-amber-800 space-y-3" data-testid="section-noshow-choose">
+                                <p className="text-sm font-medium text-amber-700 dark:text-amber-300">
+                                  What would you like to do with this job?
+                                </p>
+                                <div className="flex flex-col gap-2">
+                                  <Button
+                                    variant="default"
+                                    className="w-full rounded-xl"
+                                    onClick={() => { reportNoShow({ id: job.id, action: 'repost' }); setConfirmingNoShow(false); }}
+                                    disabled={isReportingNoShow}
+                                    data-testid="button-noshow-repost"
+                                  >
+                                    {isReportingNoShow ? <Loader2 className="animate-spin mr-2" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                                    Repost Job for New Workers
+                                  </Button>
+                                  <Button
+                                    variant="destructive"
+                                    className="w-full rounded-xl"
+                                    onClick={() => { reportNoShow({ id: job.id, action: 'delete' }); setConfirmingNoShow(false); }}
+                                    disabled={isReportingNoShow}
+                                    data-testid="button-noshow-delete"
+                                  >
+                                    {isReportingNoShow ? <Loader2 className="animate-spin mr-2" /> : <Trash2 className="mr-2 h-4 w-4" />}
+                                    Delete Job
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    className="w-full rounded-xl"
+                                    onClick={() => { setConfirmingNoShow(false); setNoShowStep('confirm'); }}
+                                    data-testid="button-back-no-show"
+                                  >
+                                    Go Back
+                                  </Button>
+                                </div>
+                              </div>
+                            ) : null}
                             <Button
                               variant="outline"
                               className="w-full rounded-xl text-amber-600 border-amber-200 dark:border-amber-800"
