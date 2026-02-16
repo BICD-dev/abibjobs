@@ -56,10 +56,11 @@ export function CreateJobDialog() {
   });
 
   const onSubmit = (data: FormValues) => {
-    // Convert back to format API expects (number -> string/number as defined by schema)
-    // The shared schema expects number or numeric string. 
-    // Drizzle-zod schema for numeric columns usually expects string or number.
-    createJob(data as unknown as CreateJobInput, {
+    createJob({
+      ...data,
+      price: String(data.price),
+      workersNeeded: Number(data.workersNeeded),
+    } as unknown as CreateJobInput, {
       onSuccess: () => {
         setOpen(false);
         form.reset();
