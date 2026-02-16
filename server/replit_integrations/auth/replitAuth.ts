@@ -124,12 +124,12 @@ export async function setupAuth(app: Express) {
     passport.authenticate(`replitauth:${req.hostname}`, (err: any, user: any, info: any) => {
       if (err || !user) {
         console.error("Auth callback error:", err?.message || info);
-        return res.redirect("/api/login");
+        return res.redirect("/?login_error=1");
       }
       req.logIn(user, (loginErr) => {
         if (loginErr) {
           console.error("Login error:", loginErr.message);
-          return res.redirect("/api/login");
+          return res.redirect("/?login_error=1");
         }
         return res.redirect(returnTo);
       });

@@ -1,12 +1,27 @@
+import { useEffect } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { Link, useLocation } from "wouter";
 import { Navbar } from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
 import { ArrowRight, CheckCircle2, ShieldCheck, Banknote, Clock } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 export default function Home() {
   const { isAuthenticated } = useAuth();
   const [, setLocation] = useLocation();
+  const { toast } = useToast();
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("login_error") === "1") {
+      window.history.replaceState({}, "", "/");
+      toast({
+        title: "Login failed",
+        description: "Something went wrong. Please try again by clicking Get Started.",
+        variant: "destructive",
+      });
+    }
+  }, []);
 
   if (isAuthenticated) {
     setLocation("/jobs");
