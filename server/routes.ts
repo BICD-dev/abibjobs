@@ -136,7 +136,7 @@ export async function registerRoutes(
 
     // Payout Logic
     const price = parseFloat(job.price);
-    const fee = price * 0.10; // 10% fee
+    const fee = price * 0.22; // 22% fee
     const payout = price - fee;
 
     // Credit worker

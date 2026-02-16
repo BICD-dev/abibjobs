@@ -35,7 +35,7 @@ export default function Home() {
                 <svg className="absolute w-full h-3 -bottom-1 left-0 text-accent/30 -z-10" viewBox="0 0 100 10" preserveAspectRatio="none">
                   <path d="M0 5 Q 50 10 100 5" stroke="currentColor" strokeWidth="8" fill="none" />
                 </svg>
-              </span> Today
+              </span> Today with <span className="text-primary">ABIB JOBS</span>
             </h1>
             
             <p className="text-xl text-muted-foreground max-w-2xl mx-auto leading-relaxed animate-in fade-in slide-in-from-bottom-8 duration-1000 delay-200">
@@ -101,7 +101,7 @@ export default function Home() {
                 Ready to get started?
               </h2>
               <p className="text-primary-foreground/80 text-xl">
-                Join thousands of Nigerians using SwiftWork to simplify their lives.
+                Join thousands of Nigerians using ABIB JOBS to simplify their lives.
               </p>
               <Button asChild size="lg" className="h-14 px-10 bg-white text-primary hover:bg-white/90 text-lg font-bold rounded-2xl shadow-lg border-2 border-transparent hover:border-white/50 transition-all">
                 <a href="/api/login">
@@ -116,15 +116,13 @@ export default function Home() {
       {/* Footer */}
       <footer className="bg-background border-t border-border py-12">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row justify-between items-center gap-6">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-              <Banknote className="w-5 h-5 text-white" />
-            </div>
-            <span className="font-display font-bold text-xl">SwiftWork</span>
-          </div>
-          <p className="text-muted-foreground text-sm">
-            © {new Date().getFullYear()} SwiftWork Nigeria. All rights reserved.
-          </p>
+              <div className="flex items-center gap-2">
+                <img src="/logo.png" alt="ABIB JOBS Logo" className="w-8 h-8 rounded-lg" />
+                <span className="font-display font-bold text-xl">ABIB JOBS</span>
+              </div>
+            <span className="text-muted-foreground text-sm">
+              © {new Date().getFullYear()} ABIB JOBS Nigeria. All rights reserved.
+            </span>
         </div>
       </footer>
     </div>
