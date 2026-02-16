@@ -38,6 +38,7 @@ export const jobs = pgTable("jobs", {
   status: text("status").default("open").notNull(), // 'open', 'in_progress', 'completed', 'cancelled'
   posterId: text("poster_id").notNull(),
   workerId: text("worker_id"),
+  priceType: text("price_type").default("total").notNull(), // 'total' or 'per_person'
   workersNeeded: integer("workers_needed").default(1).notNull(),
   workersAccepted: integer("workers_accepted").default(0).notNull(),
   workerProgress: text("worker_progress"), // null, 'getting_ready', 'on_the_way', 'at_location'
