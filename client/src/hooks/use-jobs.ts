@@ -37,6 +37,20 @@ export function useMyJobs(enabled = true) {
   });
 }
 
+export function useJobHistory(role?: 'posted' | 'accepted', enabled = true) {
+  return useQuery({
+    queryKey: [api.jobs.history.path, role],
+    queryFn: async () => {
+      const url = new URL(window.location.origin + api.jobs.history.path);
+      if (role) url.searchParams.append("role", role);
+      const res = await fetch(url.toString(), { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch job history");
+      return res.json();
+    },
+    enabled,
+  });
+}
+
 export function useJob(id: number) {
   return useQuery({
     queryKey: [api.jobs.get.path, id],

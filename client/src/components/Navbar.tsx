@@ -14,7 +14,8 @@ import {
   Scale,
   Shield,
   Users,
-  Bell
+  Bell,
+  ClipboardList
 } from "lucide-react";
 import { useState } from "react";
 import {
@@ -37,6 +38,7 @@ export function Navbar() {
 
   const navLinks = [
     { href: "/jobs", label: "Find Jobs", icon: Briefcase },
+    { href: "/my-jobs", label: "My Jobs", icon: ClipboardList },
     { href: "/wallet", label: "Wallet", icon: Wallet },
   ];
 

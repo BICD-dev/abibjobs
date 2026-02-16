@@ -53,6 +53,13 @@ export async function registerRoutes(
     res.json(myJobs);
   });
 
+  app.get(api.jobs.history.path, isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const role = req.query.role as 'posted' | 'accepted' | undefined;
+    const history = await storage.getJobHistory(userId, role);
+    res.json(history);
+  });
+
   app.get(api.jobs.get.path, async (req, res) => {
     const job = await storage.getJob(Number(req.params.id));
     if (!job) {

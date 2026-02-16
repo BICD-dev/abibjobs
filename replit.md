@@ -75,6 +75,13 @@ Schema changes use `drizzle-kit push` (not migrations). Run `npm run db:push` to
 - No-show cancels the job and refunds escrow to poster
 - Routes: POST /api/jobs/:id/no-show (poster only)
 
+### Job History
+- Dedicated /my-jobs page shows user's complete job history across all statuses
+- Three tabs: "All Jobs", "Jobs I Posted", "Jobs I Accepted"
+- API: GET /api/jobs/history?role=posted|accepted (optional filter)
+- Worker ID matching uses exact comma-delimited matching to avoid false positives
+- Nav link "My Jobs" added between "Find Jobs" and "Wallet"
+
 ### In-App Notifications
 - Notifications stored in `notifications` table with types: info, warning, error, success
 - Bell icon in navbar shows unread count badge; links to /notifications page

@@ -107,6 +107,16 @@ export const api = {
         200: z.array(z.any()),
       },
     },
+    history: {
+      method: 'GET' as const,
+      path: '/api/jobs/history' as const,
+      input: z.object({
+        role: z.enum(['posted', 'accepted']).optional(),
+      }).optional(),
+      responses: {
+        200: z.array(z.any()),
+      },
+    },
     noShow: {
       method: 'POST' as const,
       path: '/api/jobs/:id/no-show' as const,

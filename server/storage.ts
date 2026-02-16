@@ -49,6 +49,7 @@ export interface IStorage {
 
   // My Jobs
   getMyJobs(userId: string): Promise<JobWithDetails[]>;
+  getJobHistory(userId: string, role?: 'posted' | 'accepted'): Promise<JobWithDetails[]>;
 
   // Wallet & Transactions
   getTransactions(userId: string): Promise<Transaction[]>;
@@ -191,6 +192,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getMyJobs(userId: string): Promise<JobWithDetails[]> {
+    const workerMatch = sql`(${jobs.workerId} = ${userId} OR ${jobs.workerId} LIKE ${userId + ',%'} OR ${jobs.workerId} LIKE ${'%,' + userId + ',%'} OR ${jobs.workerId} LIKE ${'%,' + userId})`;
     const results = await db.select({
       job: jobs,
       poster: {
@@ -202,8 +204,38 @@ export class DatabaseStorage implements IStorage {
     .from(jobs)
     .leftJoin(users, eq(jobs.posterId, users.id))
     .where(
-      sql`(${jobs.posterId} = ${userId} OR ${jobs.workerId} LIKE '%' || ${userId} || '%') AND ${jobs.status} IN ('open', 'in_progress')`
+      sql`(${jobs.posterId} = ${userId} OR ${workerMatch}) AND ${jobs.status} IN ('open', 'in_progress')`
     )
+    .orderBy(desc(jobs.updatedAt));
+
+    return results.map(r => ({
+      ...r.job,
+      poster: r.poster || { firstName: 'Unknown', lastName: '', profileImageUrl: null }
+    }));
+  }
+
+  async getJobHistory(userId: string, role?: 'posted' | 'accepted'): Promise<JobWithDetails[]> {
+    const workerMatch = sql`(${jobs.workerId} = ${userId} OR ${jobs.workerId} LIKE ${userId + ',%'} OR ${jobs.workerId} LIKE ${'%,' + userId + ',%'} OR ${jobs.workerId} LIKE ${'%,' + userId})`;
+    let condition;
+    if (role === 'posted') {
+      condition = sql`${jobs.posterId} = ${userId}`;
+    } else if (role === 'accepted') {
+      condition = workerMatch;
+    } else {
+      condition = sql`(${jobs.posterId} = ${userId} OR ${workerMatch})`;
+    }
+
+    const results = await db.select({
+      job: jobs,
+      poster: {
+        firstName: users.firstName,
+        lastName: users.lastName,
+        profileImageUrl: users.profileImageUrl,
+      }
+    })
+    .from(jobs)
+    .leftJoin(users, eq(jobs.posterId, users.id))
+    .where(condition)
     .orderBy(desc(jobs.updatedAt));
 
     return results.map(r => ({

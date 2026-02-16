@@ -18,6 +18,7 @@ import AdminLogin from "@/pages/AdminLogin";
 import AdminManagement from "@/pages/AdminManagement";
 import AdminSettings from "@/pages/AdminSettings";
 import Notifications from "@/pages/Notifications";
+import MyJobs from "@/pages/MyJobs";
 import NotFound from "@/pages/not-found";
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
@@ -56,6 +57,9 @@ function Router() {
       </Route>
       <Route path="/jobs/:id">
         {() => <ProtectedRoute component={JobDetails} />}
+      </Route>
+      <Route path="/my-jobs">
+        {() => <ProtectedRoute component={MyJobs} />}
       </Route>
       <Route path="/wallet">
         {() => <ProtectedRoute component={Wallet} />}
