@@ -90,6 +90,29 @@ export const offers = pgTable("offers", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const disputes = pgTable("disputes", {
+  id: serial("id").primaryKey(),
+  jobId: integer("job_id").notNull(),
+  posterId: text("poster_id").notNull(),
+  workerId: text("worker_id").notNull(),
+  status: text("status").default("open").notNull(),
+  proposedAmount: numeric("proposed_amount", { precision: 10, scale: 2 }),
+  resolvedAmount: numeric("resolved_amount", { precision: 10, scale: 2 }),
+  resolvedBy: text("resolved_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const disputeMessages = pgTable("dispute_messages", {
+  id: serial("id").primaryKey(),
+  disputeId: integer("dispute_id").notNull(),
+  senderId: text("sender_id").notNull(),
+  message: text("message").notNull(),
+  type: text("type").default("message").notNull(),
+  amount: numeric("amount", { precision: 10, scale: 2 }),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // === SCHEMAS ===
 
 export const insertProfileSchema = createInsertSchema(profiles).omit({ id: true });
@@ -99,6 +122,8 @@ export const createJobSchema = insertJobSchema.omit({ posterId: true });
 export const insertTransactionSchema = createInsertSchema(transactions).omit({ id: true, createdAt: true });
 export const insertOfferSchema = createInsertSchema(offers).omit({ id: true, createdAt: true });
 export const createOfferSchema = insertOfferSchema.omit({ senderId: true, status: true });
+export const insertDisputeSchema = createInsertSchema(disputes).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertDisputeMessageSchema = createInsertSchema(disputeMessages).omit({ id: true, createdAt: true });
 
 // === TYPES ===
 
@@ -108,12 +133,15 @@ export type Transaction = typeof transactions.$inferSelect;
 export type PlatformEarning = typeof platformEarnings.$inferSelect;
 export type PlatformTransaction = typeof platformTransactions.$inferSelect;
 export type Offer = typeof offers.$inferSelect;
+export type Dispute = typeof disputes.$inferSelect;
+export type DisputeMessage = typeof disputeMessages.$inferSelect;
 
 export type CreateJobInput = z.infer<typeof createJobSchema>;
 export type CreateOfferInput = z.infer<typeof createOfferSchema>;
 
 export type UserRole = "user" | "admin";
-export type JobStatus = "open" | "in_progress" | "completed" | "cancelled";
+export type JobStatus = "open" | "in_progress" | "completed" | "cancelled" | "disputed";
+export type DisputeStatus = "open" | "negotiating" | "escalated" | "resolved";
 
 // === API CONTRACT TYPES ===
 
@@ -126,6 +154,32 @@ export interface JobWithDetails extends Job {
 }
 
 export interface OfferWithSender extends Offer {
+  sender?: {
+    firstName: string | null;
+    lastName: string | null;
+    profileImageUrl: string | null;
+  };
+}
+
+export interface DisputeWithDetails extends Dispute {
+  poster?: {
+    firstName: string | null;
+    lastName: string | null;
+    profileImageUrl: string | null;
+  };
+  worker?: {
+    firstName: string | null;
+    lastName: string | null;
+    profileImageUrl: string | null;
+  };
+  job?: {
+    title: string;
+    price: string;
+  };
+  messages?: DisputeMessageWithSender[];
+}
+
+export interface DisputeMessageWithSender extends DisputeMessage {
   sender?: {
     firstName: string | null;
     lastName: string | null;
