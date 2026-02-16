@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { useAdminDisputes, useDispute, useResolveDispute, useDisputeMessage, useUploadDisputeImage } from "@/hooks/use-disputes";
+import { useAdminAuth } from "@/hooks/use-admin-auth";
 import { Navbar } from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -9,12 +10,13 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   Loader2, Scale, CheckCircle, Send, Gavel, MessageSquare,
-  Image as ImageIcon, ArrowLeft, RefreshCw, Undo2, ArrowRight, Sliders
+  Image as ImageIcon, ArrowLeft, RefreshCw, Undo2, ArrowRight, Sliders, Shield
 } from "lucide-react";
 import { format } from "date-fns";
 import type { DisputeWithDetails, DisputeMessageWithSender } from "@shared/schema";
 
 export default function AdminDisputes() {
+  const { isAdmin, isLoading: adminLoading } = useAdminAuth();
   const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined);
   const [selectedDisputeId, setSelectedDisputeId] = useState<number | null>(null);
   const { data: disputesList, isLoading, isError, refetch } = useAdminDisputes(statusFilter);
@@ -41,19 +43,22 @@ export default function AdminDisputes() {
 
   const disputes: DisputeWithDetails[] = disputesList || [];
 
-  if (isLoading) return (
+  if (adminLoading || isLoading) return (
     <div className="min-h-screen bg-background flex items-center justify-center">
       <Loader2 className="w-8 h-8 animate-spin text-primary" />
     </div>
   );
 
-  if (isError) return (
+  if (!isAdmin || isError) return (
     <div className="min-h-screen bg-background">
       <Navbar />
       <div className="max-w-4xl mx-auto px-4 py-20 text-center">
-        <Scale className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+        <Shield className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
         <h2 className="text-2xl font-bold mb-2 text-foreground">Access Denied</h2>
-        <p className="text-muted-foreground">You don't have admin access to manage disputes.</p>
+        <p className="text-muted-foreground">You need admin access to manage disputes.</p>
+        <Button asChild variant="outline" className="mt-4">
+          <a href="/admin/login">Admin Login</a>
+        </Button>
       </div>
     </div>
   );

@@ -3,6 +3,8 @@ import type { Server } from "http";
 import { storage } from "./storage";
 import { api, errorSchemas } from "@shared/routes";
 import { z } from "zod";
+import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import { setupAuth, isAuthenticated, registerAuthRoutes } from "./replit_integrations/auth";
 import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
 
@@ -427,17 +429,217 @@ export async function registerRoutes(
 
   // --- ADMIN ---
 
-  const ADMIN_EMAILS = ['abeebakeem265@gmail.com'];
+  const OWNER_EMAIL = 'abeebakeem265@gmail.com';
 
-  const isAdmin = async (req: any, res: any, next: any) => {
-    const email = (req.user as any).claims.email;
-    if (!email || !ADMIN_EMAILS.includes(email.toLowerCase())) {
-      return res.status(403).json({ message: "Admin access required" });
+  const isOwner = async (req: any, res: any, next: any) => {
+    const email = (req.user as any)?.claims?.email;
+    if (email && email.toLowerCase() === OWNER_EMAIL) {
+      (req as any).adminRole = 'owner';
+      return next();
     }
-    next();
+    return res.status(403).json({ message: "Owner access required" });
   };
 
-  app.get(api.admin.earnings.path, isAuthenticated, isAdmin, async (_req, res) => {
+  const isAdminOrOwner = async (req: any, res: any, next: any) => {
+    // Check if owner via Replit Auth
+    const email = (req.user as any)?.claims?.email;
+    if (email && email.toLowerCase() === OWNER_EMAIL) {
+      (req as any).adminRole = 'owner';
+      return next();
+    }
+    // Check if staff admin via session
+    const adminId = (req.session as any)?.adminId;
+    if (adminId) {
+      const admin = await storage.getAdminUser(adminId);
+      if (admin && admin.isActive) {
+        (req as any).adminRole = 'staff';
+        (req as any).adminUser = admin;
+        return next();
+      }
+    }
+    return res.status(403).json({ message: "Admin access required" });
+  };
+
+  // Staff admin auth routes
+  app.post('/api/admin/login', async (req, res) => {
+    try {
+      const { email, password } = req.body;
+      if (!email || !password) return res.status(400).json({ message: "Email and password required" });
+
+      const admin = await storage.getAdminUserByEmail(email);
+      if (!admin || !admin.isActive) return res.status(401).json({ message: "Invalid credentials" });
+
+      const valid = await bcrypt.compare(password, admin.passwordHash);
+      if (!valid) return res.status(401).json({ message: "Invalid credentials" });
+
+      (req.session as any).adminId = admin.id;
+      (req.session as any).adminRole = admin.role;
+
+      res.json({ id: admin.id, email: admin.email, name: admin.name, role: admin.role });
+    } catch (err) {
+      res.status(500).json({ message: "Login failed" });
+    }
+  });
+
+  app.post('/api/admin/logout', (req, res) => {
+    (req.session as any).adminId = null;
+    (req.session as any).adminRole = null;
+    res.json({ message: "Logged out" });
+  });
+
+  app.get('/api/admin/me', async (req, res) => {
+    // Check owner via Replit Auth
+    if (req.isAuthenticated && req.isAuthenticated()) {
+      const email = (req.user as any)?.claims?.email;
+      if (email && email.toLowerCase() === OWNER_EMAIL) {
+        return res.json({ id: 0, email: OWNER_EMAIL, name: "Owner", role: "owner", isActive: true });
+      }
+    }
+    // Check staff admin via session
+    const adminId = (req.session as any)?.adminId;
+    if (adminId) {
+      const admin = await storage.getAdminUser(adminId);
+      if (admin && admin.isActive) {
+        return res.json({ id: admin.id, email: admin.email, name: admin.name, role: admin.role, isActive: admin.isActive });
+      }
+    }
+    return res.status(401).json({ message: "Not authenticated as admin" });
+  });
+
+  // Staff admin password change
+  app.post('/api/admin/change-password', async (req, res) => {
+    try {
+      const adminId = (req.session as any)?.adminId;
+      if (!adminId) return res.status(401).json({ message: "Not authenticated" });
+
+      const { currentPassword, newPassword } = req.body;
+      if (!currentPassword || !newPassword) return res.status(400).json({ message: "Current and new password required" });
+      if (newPassword.length < 6) return res.status(400).json({ message: "Password must be at least 6 characters" });
+
+      const admin = await storage.getAdminUser(adminId);
+      if (!admin) return res.status(404).json({ message: "Admin not found" });
+
+      const valid = await bcrypt.compare(currentPassword, admin.passwordHash);
+      if (!valid) return res.status(401).json({ message: "Current password is incorrect" });
+
+      const hash = await bcrypt.hash(newPassword, 10);
+      await storage.updateAdminUser(adminId, { passwordHash: hash });
+      res.json({ message: "Password updated" });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to change password" });
+    }
+  });
+
+  // Owner-only: manage admin staff
+  app.get('/api/admin/staff', isAuthenticated, isOwner, async (_req, res) => {
+    const admins = await storage.getAdminUsers();
+    res.json(admins.map(a => ({ id: a.id, email: a.email, name: a.name, role: a.role, isActive: a.isActive, createdAt: a.createdAt })));
+  });
+
+  app.post('/api/admin/staff', isAuthenticated, isOwner, async (req, res) => {
+    try {
+      const { email, name } = req.body;
+      if (!email || !name) return res.status(400).json({ message: "Email and name required" });
+
+      const existing = await storage.getAdminUserByEmail(email);
+      if (existing) return res.status(400).json({ message: "An admin with this email already exists" });
+
+      const generatedPassword = crypto.randomBytes(4).toString('hex');
+      const hash = await bcrypt.hash(generatedPassword, 10);
+
+      const admin = await storage.createAdminUser({ email, passwordHash: hash, name, role: 'staff' });
+      res.status(201).json({ id: admin.id, email: admin.email, name: admin.name, generatedPassword });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to create admin" });
+    }
+  });
+
+  app.delete('/api/admin/staff/:id', isAuthenticated, isOwner, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const admin = await storage.getAdminUser(id);
+      if (!admin) return res.status(404).json({ message: "Admin not found" });
+      if (admin.role === 'owner') return res.status(403).json({ message: "Cannot remove owner" });
+
+      await storage.deleteAdminUser(id);
+      res.json({ message: "Admin removed" });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to remove admin" });
+    }
+  });
+
+  app.post('/api/admin/staff/:id/reset-password', isAuthenticated, isOwner, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const admin = await storage.getAdminUser(id);
+      if (!admin) return res.status(404).json({ message: "Admin not found" });
+
+      const generatedPassword = crypto.randomBytes(4).toString('hex');
+      const hash = await bcrypt.hash(generatedPassword, 10);
+      await storage.updateAdminUser(id, { passwordHash: hash });
+
+      res.json({ generatedPassword });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to reset password" });
+    }
+  });
+
+  app.post('/api/admin/staff/:id/toggle', isAuthenticated, isOwner, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const admin = await storage.getAdminUser(id);
+      if (!admin) return res.status(404).json({ message: "Admin not found" });
+      if (admin.role === 'owner') return res.status(403).json({ message: "Cannot deactivate owner" });
+
+      await storage.updateAdminUser(id, { isActive: !admin.isActive });
+      res.json({ isActive: !admin.isActive });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to toggle admin status" });
+    }
+  });
+
+  // Activity tracking
+  app.post('/api/admin/ping', async (req, res) => {
+    try {
+      let adminId: number | null = null;
+
+      // Check owner via Replit Auth
+      if (req.isAuthenticated && req.isAuthenticated()) {
+        const email = (req.user as any)?.claims?.email;
+        if (email && email.toLowerCase() === OWNER_EMAIL) {
+          return res.json({ ok: true });
+        }
+      }
+
+      adminId = (req.session as any)?.adminId;
+      if (!adminId) return res.status(401).json({ message: "Not authenticated" });
+
+      const admin = await storage.getAdminUser(adminId);
+      if (!admin || !admin.isActive) return res.status(401).json({ message: "Not authenticated" });
+
+      const today = new Date().toISOString().split('T')[0];
+      const PING_INTERVAL = 60; // 60 seconds between pings
+      await storage.upsertAdminActivity(adminId, today, PING_INTERVAL);
+
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ message: "Ping failed" });
+    }
+  });
+
+  // Owner-only: view admin hours
+  app.get('/api/admin/hours', isAuthenticated, isOwner, async (req, res) => {
+    try {
+      const date = req.query.date as string | undefined;
+      const hours = await storage.getAdminHours(date);
+      res.json(hours);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch hours" });
+    }
+  });
+
+  // Owner-only: Platform earnings
+  app.get(api.admin.earnings.path, isAuthenticated, isOwner, async (_req, res) => {
     const earnings = await storage.getPlatformEarnings();
     const txns = await storage.getPlatformTransactions();
     res.json({
@@ -450,7 +652,7 @@ export async function registerRoutes(
     });
   });
 
-  app.post(api.admin.withdraw.path, isAuthenticated, isAdmin, async (_req, res) => {
+  app.post(api.admin.withdraw.path, isAuthenticated, isOwner, async (_req, res) => {
     const parsed = api.admin.withdraw.input.safeParse(_req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
     const { amount, bankCode, bankName, accountNumber, accountName } = parsed.data;
@@ -463,7 +665,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post(api.admin.updateBank.path, isAuthenticated, isAdmin, async (_req, res) => {
+  app.post(api.admin.updateBank.path, isAuthenticated, isOwner, async (_req, res) => {
     const parsed = api.admin.updateBank.input.safeParse(_req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
     const { bankCode, bankName, accountNumber, accountName } = parsed.data;
@@ -534,8 +736,8 @@ export async function registerRoutes(
 
       const job = await storage.getJob(jobId);
       const workerIds = job?.workerId ? job.workerId.split(',') : [];
-      const email = (req.user as any).claims.email;
-      const isAdminUser = email && ADMIN_EMAILS.includes(email.toLowerCase());
+      const email = (req.user as any)?.claims?.email;
+      const isAdminUser = (email && email.toLowerCase() === OWNER_EMAIL) || !!(req.session as any)?.adminId;
 
       if (dispute.posterId !== userId && !workerIds.includes(userId) && !isAdminUser) {
         return res.status(403).json({ message: "You don't have access to this dispute" });
@@ -548,17 +750,17 @@ export async function registerRoutes(
     }
   });
 
-  app.get('/api/disputes/:id', isAuthenticated, async (req, res) => {
+  app.get('/api/disputes/:id', async (req, res) => {
     try {
       const disputeId = Number(req.params.id);
-      const userId = (req.user as any).claims.sub;
-      const email = (req.user as any).claims.email;
-      const isAdminUser = email && ADMIN_EMAILS.includes(email.toLowerCase());
+      const userId = (req.user as any)?.claims?.sub;
+      const email = (req.user as any)?.claims?.email;
+      const isAdminUser = (email && email.toLowerCase() === OWNER_EMAIL) || !!(req.session as any)?.adminId;
 
       const dispute = await storage.getDispute(disputeId);
       if (!dispute) return res.status(404).json({ message: "Dispute not found" });
 
-      if (dispute.posterId !== userId && dispute.workerId !== userId && !isAdminUser) {
+      if (!isAdminUser && dispute.posterId !== userId && dispute.workerId !== userId) {
         return res.status(403).json({ message: "You don't have access to this dispute" });
       }
 
@@ -568,10 +770,14 @@ export async function registerRoutes(
     }
   });
 
-  app.post('/api/disputes/:id/message', isAuthenticated, async (req, res) => {
+  app.post('/api/disputes/:id/message', async (req, res) => {
     try {
       const disputeId = Number(req.params.id);
-      const userId = (req.user as any).claims.sub;
+      const userId = (req.user as any)?.claims?.sub;
+      const adminId = (req.session as any)?.adminId;
+      const senderId = userId || (adminId ? `admin_${adminId}` : null);
+      if (!senderId) return res.status(401).json({ message: "Not authenticated" });
+
       const parsed = api.disputes.message.input.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
 
@@ -582,10 +788,10 @@ export async function registerRoutes(
         return res.status(400).json({ message: "This dispute has already been resolved" });
       }
 
-      const email = (req.user as any).claims.email;
-      const isAdminUser = email && ADMIN_EMAILS.includes(email.toLowerCase());
+      const email = (req.user as any)?.claims?.email;
+      const isAdminUser = (email && email.toLowerCase() === OWNER_EMAIL) || !!adminId;
 
-      if (dispute.posterId !== userId && dispute.workerId !== userId && !isAdminUser) {
+      if (!isAdminUser && dispute.posterId !== userId && dispute.workerId !== userId) {
         return res.status(403).json({ message: "You are not part of this dispute" });
       }
 
@@ -595,7 +801,7 @@ export async function registerRoutes(
 
       const msg = await storage.createDisputeMessage({
         disputeId,
-        senderId: userId,
+        senderId: senderId,
         message: parsed.data.message,
         type: parsed.data.type,
         amount: parsed.data.amount?.toFixed(2),
@@ -725,7 +931,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get('/api/admin/disputes', isAuthenticated, isAdmin, async (req, res) => {
+  app.get('/api/admin/disputes', isAdminOrOwner, async (req, res) => {
     try {
       const status = req.query.status as string | undefined;
       const allDisputes = await storage.getDisputes(status ? { status } : undefined);
@@ -735,10 +941,10 @@ export async function registerRoutes(
     }
   });
 
-  app.post('/api/disputes/:id/resolve', isAuthenticated, isAdmin, async (req, res) => {
+  app.post('/api/disputes/:id/resolve', isAdminOrOwner, async (req, res) => {
     try {
       const disputeId = Number(req.params.id);
-      const userId = (req.user as any).claims.sub;
+      const userId = (req.user as any)?.claims?.sub || `admin_${(req as any).adminUser?.id || 'owner'}`;
       const parsed = api.disputes.resolve.input.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
 

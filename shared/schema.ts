@@ -114,6 +114,24 @@ export const disputeMessages = pgTable("dispute_messages", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const adminUsers = pgTable("admin_users", {
+  id: serial("id").primaryKey(),
+  email: text("email").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  name: text("name").notNull(),
+  role: text("role").default("staff").notNull(), // 'owner' | 'staff'
+  isActive: boolean("is_active").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const adminActivity = pgTable("admin_activity", {
+  id: serial("id").primaryKey(),
+  adminId: integer("admin_id").notNull(),
+  date: text("date").notNull(), // YYYY-MM-DD
+  secondsWorked: integer("seconds_worked").default(0).notNull(),
+  lastActiveAt: timestamp("last_active_at"),
+});
+
 // === SCHEMAS ===
 
 export const insertProfileSchema = createInsertSchema(profiles).omit({ id: true });
@@ -125,6 +143,7 @@ export const insertOfferSchema = createInsertSchema(offers).omit({ id: true, cre
 export const createOfferSchema = insertOfferSchema.omit({ senderId: true, status: true });
 export const insertDisputeSchema = createInsertSchema(disputes).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertDisputeMessageSchema = createInsertSchema(disputeMessages).omit({ id: true, createdAt: true });
+export const insertAdminUserSchema = createInsertSchema(adminUsers).omit({ id: true, createdAt: true });
 
 // === TYPES ===
 
@@ -136,6 +155,8 @@ export type PlatformTransaction = typeof platformTransactions.$inferSelect;
 export type Offer = typeof offers.$inferSelect;
 export type Dispute = typeof disputes.$inferSelect;
 export type DisputeMessage = typeof disputeMessages.$inferSelect;
+export type AdminUser = typeof adminUsers.$inferSelect;
+export type AdminActivity = typeof adminActivity.$inferSelect;
 
 export type CreateJobInput = z.infer<typeof createJobSchema>;
 export type CreateOfferInput = z.infer<typeof createOfferSchema>;

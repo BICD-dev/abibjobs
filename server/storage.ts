@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, sql } from "drizzle-orm";
 import {
   users,
   profiles,
@@ -10,12 +10,16 @@ import {
   offers,
   disputes,
   disputeMessages,
+  adminUsers,
+  adminActivity,
   type Profile,
   type Job,
   type Transaction,
   type Offer,
   type Dispute,
   type DisputeMessage,
+  type AdminUser,
+  type AdminActivity,
   type CreateJobInput,
   type JobWithDetails,
   type OfferWithSender,
@@ -63,6 +67,19 @@ export interface IStorage {
   addPlatformEarning(amount: number, jobId: number, jobTitle: string): Promise<void>;
   withdrawPlatformEarnings(amount: number, bankInfo: { bankName: string; bankCode: string; accountNumber: string; accountName?: string }): Promise<PlatformEarning>;
   updatePlatformBankInfo(bankInfo: { bankName: string; bankCode: string; accountNumber: string; accountName?: string }): Promise<PlatformEarning>;
+
+  // Admin Users
+  getAdminUser(id: number): Promise<AdminUser | undefined>;
+  getAdminUserByEmail(email: string): Promise<AdminUser | undefined>;
+  getAdminUsers(): Promise<AdminUser[]>;
+  createAdminUser(data: { email: string; passwordHash: string; name: string; role?: string }): Promise<AdminUser>;
+  updateAdminUser(id: number, data: Partial<AdminUser>): Promise<AdminUser>;
+  deleteAdminUser(id: number): Promise<void>;
+
+  // Admin Activity
+  getAdminActivity(adminId: number, date: string): Promise<AdminActivity | undefined>;
+  upsertAdminActivity(adminId: number, date: string, secondsToAdd: number): Promise<AdminActivity>;
+  getAdminHours(date?: string): Promise<{ adminId: number; name: string; email: string; date: string; secondsWorked: number }[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -396,6 +413,86 @@ export class DatabaseStorage implements IStorage {
       .where(eq(platformEarnings.id, earnings.id))
       .returning();
     return updated;
+  }
+
+  async getAdminUser(id: number): Promise<AdminUser | undefined> {
+    const [admin] = await db.select().from(adminUsers).where(eq(adminUsers.id, id));
+    return admin;
+  }
+
+  async getAdminUserByEmail(email: string): Promise<AdminUser | undefined> {
+    const [admin] = await db.select().from(adminUsers).where(eq(adminUsers.email, email.toLowerCase()));
+    return admin;
+  }
+
+  async getAdminUsers(): Promise<AdminUser[]> {
+    return await db.select().from(adminUsers).orderBy(desc(adminUsers.createdAt));
+  }
+
+  async createAdminUser(data: { email: string; passwordHash: string; name: string; role?: string }): Promise<AdminUser> {
+    const [admin] = await db.insert(adminUsers).values({
+      email: data.email.toLowerCase(),
+      passwordHash: data.passwordHash,
+      name: data.name,
+      role: data.role || 'staff',
+    }).returning();
+    return admin;
+  }
+
+  async updateAdminUser(id: number, data: Partial<AdminUser>): Promise<AdminUser> {
+    const [updated] = await db.update(adminUsers).set(data).where(eq(adminUsers.id, id)).returning();
+    return updated;
+  }
+
+  async deleteAdminUser(id: number): Promise<void> {
+    await db.delete(adminUsers).where(eq(adminUsers.id, id));
+  }
+
+  async getAdminActivity(adminId: number, date: string): Promise<AdminActivity | undefined> {
+    const [activity] = await db.select().from(adminActivity)
+      .where(and(eq(adminActivity.adminId, adminId), eq(adminActivity.date, date)));
+    return activity;
+  }
+
+  async upsertAdminActivity(adminId: number, date: string, secondsToAdd: number): Promise<AdminActivity> {
+    const existing = await this.getAdminActivity(adminId, date);
+    if (existing) {
+      const [updated] = await db.update(adminActivity)
+        .set({
+          secondsWorked: existing.secondsWorked + secondsToAdd,
+          lastActiveAt: new Date(),
+        })
+        .where(eq(adminActivity.id, existing.id))
+        .returning();
+      return updated;
+    } else {
+      const [created] = await db.insert(adminActivity).values({
+        adminId,
+        date,
+        secondsWorked: secondsToAdd,
+        lastActiveAt: new Date(),
+      }).returning();
+      return created;
+    }
+  }
+
+  async getAdminHours(date?: string): Promise<{ adminId: number; name: string; email: string; date: string; secondsWorked: number }[]> {
+    let query = db.select({
+      adminId: adminActivity.adminId,
+      name: adminUsers.name,
+      email: adminUsers.email,
+      date: adminActivity.date,
+      secondsWorked: adminActivity.secondsWorked,
+    })
+    .from(adminActivity)
+    .innerJoin(adminUsers, eq(adminActivity.adminId, adminUsers.id))
+    .orderBy(desc(adminActivity.date));
+
+    const results = await query;
+    if (date) {
+      return results.filter(r => r.date === date);
+    }
+    return results;
   }
 }
 
