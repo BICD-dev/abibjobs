@@ -69,7 +69,12 @@ export async function registerRoutes(
       }
 
       // Deduct funds (Escrow)
-      await storage.updateWalletBalance(userId, -price);
+      try {
+        await storage.updateWalletBalance(userId, -price);
+      } catch (err) {
+        return res.status(400).json({ message: "Payment failed. Please check your balance." });
+      }
+
       await storage.createTransaction({
         userId,
         amount: (-price).toString(),
