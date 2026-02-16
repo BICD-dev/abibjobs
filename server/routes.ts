@@ -196,19 +196,56 @@ export async function registerRoutes(
       return res.status(400).json({ message: "Job is already " + job.status });
     }
 
-    if (job.workerProgress === 'on_the_way' || job.workerProgress === 'at_location') {
-      return res.status(400).json({ message: "Cannot cancel this job. The worker is already on the way." });
-    }
-
     const price = parseFloat(job.price);
     const escrowAmount = job.priceType === 'per_person' ? price * job.workersNeeded : price;
-    await storage.updateWalletBalance(userId, escrowAmount);
-    await storage.createTransaction({
-      userId,
-      amount: escrowAmount.toString(),
-      type: 'escrow_refund',
-      jobId: job.id,
-    });
+    const workerIsEnRoute = job.workerProgress === 'on_the_way' || job.workerProgress === 'at_location';
+
+    if (workerIsEnRoute && job.workerId) {
+      const penalty = Math.round(escrowAmount * 0.1 * 100) / 100;
+      const posterRefund = escrowAmount - penalty;
+
+      await storage.updateWalletBalance(userId, posterRefund);
+      await storage.createTransaction({
+        userId,
+        amount: posterRefund.toString(),
+        type: 'escrow_refund',
+        jobId: job.id,
+      });
+
+      const paymentTime = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+      const workerIds = job.workerId.includes(',') ? job.workerId.split(',').map(id => id.trim()) : [job.workerId];
+      let remaining = penalty;
+      for (let i = 0; i < workerIds.length; i++) {
+        const isLast = i === workerIds.length - 1;
+        const share = isLast ? remaining : Math.floor((penalty / workerIds.length) * 100) / 100;
+        remaining = Math.round((remaining - share) * 100) / 100;
+
+        await storage.createScheduledPayment({
+          userId: workerIds[i],
+          amount: share.toString(),
+          jobId: job.id,
+          reason: 'cancellation_compensation',
+          scheduledFor: paymentTime,
+        });
+
+        await storage.createNotification({
+          userId: workerIds[i],
+          title: "Job Cancelled - Compensation Pending",
+          message: `The poster cancelled "${job.title}" while you were en route. You will receive ₦${share.toLocaleString()} compensation within 24 hours.`,
+          type: "warning",
+          jobId: job.id,
+        });
+      }
+    } else {
+      await storage.updateWalletBalance(userId, escrowAmount);
+      await storage.createTransaction({
+        userId,
+        amount: escrowAmount.toString(),
+        type: 'escrow_refund',
+        jobId: job.id,
+      });
+    }
 
     const updated = await storage.updateJob(jobId, { status: 'cancelled' });
     res.json(updated);

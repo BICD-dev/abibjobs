@@ -2,6 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { storage } from "./storage";
 
 const app = express();
 const httpServer = createServer(app);
@@ -98,6 +99,18 @@ app.use((req, res, next) => {
     },
     () => {
       log(`serving on port ${port}`);
+
+      setInterval(async () => {
+        try {
+          const pending = await storage.getPendingScheduledPayments();
+          for (const payment of pending) {
+            await storage.processScheduledPayment(payment.id);
+            log(`Processed scheduled payment #${payment.id} for user ${payment.userId}`);
+          }
+        } catch (err) {
+          console.error("Error processing scheduled payments:", err);
+        }
+      }, 60 * 60 * 1000);
     },
   );
 })();

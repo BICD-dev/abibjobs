@@ -13,6 +13,7 @@ import {
   adminUsers,
   adminActivity,
   notifications,
+  scheduledPayments,
   lagosAddresses,
   type Profile,
   type Job,
@@ -23,6 +24,7 @@ import {
   type AdminUser,
   type AdminActivity,
   type Notification,
+  type ScheduledPayment,
   type LagosAddress,
   type CreateJobInput,
   type JobWithDetails,
@@ -91,6 +93,11 @@ export interface IStorage {
   markNotificationRead(id: number, userId: string): Promise<void>;
   markAllNotificationsRead(userId: string): Promise<void>;
   getUnreadNotificationCount(userId: string): Promise<number>;
+
+  // Scheduled Payments
+  createScheduledPayment(data: { userId: string; amount: string; jobId?: number; reason: string; scheduledFor: Date }): Promise<ScheduledPayment>;
+  getPendingScheduledPayments(): Promise<ScheduledPayment[]>;
+  processScheduledPayment(id: number): Promise<void>;
 
   // Lagos Addresses
   searchAddresses(query: string): Promise<LagosAddress[]>;
@@ -556,6 +563,45 @@ export class DatabaseStorage implements IStorage {
       const batch = addresses.slice(i, i + batchSize);
       await db.insert(lagosAddresses).values(batch);
     }
+  }
+
+  async createScheduledPayment(data: { userId: string; amount: string; jobId?: number; reason: string; scheduledFor: Date }): Promise<ScheduledPayment> {
+    const [payment] = await db.insert(scheduledPayments).values(data).returning();
+    return payment;
+  }
+
+  async getPendingScheduledPayments(): Promise<ScheduledPayment[]> {
+    return await db.select().from(scheduledPayments)
+      .where(and(
+        eq(scheduledPayments.status, "pending"),
+        sql`${scheduledPayments.scheduledFor} <= NOW()`
+      ));
+  }
+
+  async processScheduledPayment(id: number): Promise<void> {
+    const [payment] = await db.select().from(scheduledPayments).where(eq(scheduledPayments.id, id));
+    if (!payment || payment.status !== "pending") return;
+
+    const amount = parseFloat(payment.amount);
+    await this.updateWalletBalance(payment.userId, amount);
+    await this.createTransaction({
+      userId: payment.userId,
+      amount: payment.amount,
+      type: "cancellation_compensation",
+      jobId: payment.jobId ?? undefined,
+    });
+
+    await db.update(scheduledPayments)
+      .set({ status: "completed", processedAt: new Date() })
+      .where(eq(scheduledPayments.id, id));
+
+    await this.createNotification({
+      userId: payment.userId,
+      title: "Compensation Received",
+      message: `You received ₦${amount.toLocaleString()} compensation for a cancelled job.`,
+      type: "success",
+      jobId: payment.jobId ?? undefined,
+    });
   }
 }
 

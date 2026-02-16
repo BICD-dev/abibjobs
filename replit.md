@@ -81,12 +81,23 @@ Schema changes use `drizzle-kit push` (not migrations). Run `npm run db:push` to
 - Routes: GET /api/notifications, GET /api/notifications/unread-count, POST /api/notifications/:id/read, POST /api/notifications/read-all
 - Unread count auto-refreshes every 30 seconds
 
+### Cancellation Penalty System
+- Poster can cancel a job at any stage (open, in_progress, even when worker is en route)
+- If worker has NOT started traveling (no progress or only getting_ready): full escrow refund to poster
+- If worker IS en route (on_the_way or at_location): 10% cancellation penalty applies
+  - Poster receives 90% refund immediately
+  - Worker receives 10% compensation within 24 hours via scheduled_payments table
+  - Worker gets notification about pending compensation
+- Scheduled payment processor runs hourly to process due payments
+- For multi-worker jobs, penalty is split equally among workers (with remainder to last worker)
+- Transaction type: cancellation_compensation
+
 ### Escrow / Wallet System
 - Users have a wallet balance stored in `profiles.walletBalance`
 - Job payments go through escrow: poster's funds are held when posting, released to worker(s) on completion
 - Jobs support multiple workers (workersNeeded field); payment is split equally among all workers
 - Poster can cancel a job (open or in_progress) to get escrow refund
-- Transaction types: deposit, withdrawal, escrow_hold, escrow_refund, job_earning, fee
+- Transaction types: deposit, withdrawal, escrow_hold, escrow_refund, job_earning, fee, cancellation_compensation
 
 ### Key Environment Variables
 - `DATABASE_URL` — PostgreSQL connection string (required)

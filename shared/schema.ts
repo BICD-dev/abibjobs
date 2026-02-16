@@ -152,6 +152,18 @@ export const notifications = pgTable("notifications", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const scheduledPayments = pgTable("scheduled_payments", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
+  jobId: integer("job_id"),
+  reason: text("reason").notNull(),
+  status: text("status").default("pending").notNull(),
+  scheduledFor: timestamp("scheduled_for").notNull(),
+  processedAt: timestamp("processed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 export const lagosAddresses = pgTable("lagos_addresses", {
   id: serial("id").primaryKey(),
   area: text("area").notNull(),
@@ -171,6 +183,7 @@ export const insertDisputeSchema = createInsertSchema(disputes).omit({ id: true,
 export const insertDisputeMessageSchema = createInsertSchema(disputeMessages).omit({ id: true, createdAt: true });
 export const insertAdminUserSchema = createInsertSchema(adminUsers).omit({ id: true, createdAt: true });
 export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, createdAt: true });
+export const insertScheduledPaymentSchema = createInsertSchema(scheduledPayments).omit({ id: true, createdAt: true, processedAt: true });
 
 // === TYPES ===
 
@@ -185,6 +198,7 @@ export type DisputeMessage = typeof disputeMessages.$inferSelect;
 export type AdminUser = typeof adminUsers.$inferSelect;
 export type AdminActivity = typeof adminActivity.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
+export type ScheduledPayment = typeof scheduledPayments.$inferSelect;
 export type LagosAddress = typeof lagosAddresses.$inferSelect;
 
 export type CreateJobInput = z.infer<typeof createJobSchema>;

@@ -57,6 +57,7 @@ export default function JobDetails() {
   const [shortfallAmount, setShortfallAmount] = useState(0);
   const [confirmingNoShow, setConfirmingNoShow] = useState(false);
   const [noShowStep, setNoShowStep] = useState<'confirm' | 'choose'>('confirm');
+  const [showPenaltyConfirm, setShowPenaltyConfirm] = useState(false);
 
   const [showDisputeForm, setShowDisputeForm] = useState(false);
   const [disputeMessage, setDisputeMessage] = useState("");
@@ -478,18 +479,59 @@ export default function JobDetails() {
                           </p>
                         ) : null}
 
-                        {(isOpen || (isInProgress && !(job.workerProgress === 'on_the_way' || job.workerProgress === 'at_location'))) && (
-                          <Button
-                            variant="destructive"
-                            className="w-full rounded-xl"
-                            onClick={() => cancelJob(job.id)}
-                            disabled={isCancelling}
-                            data-testid="button-cancel-job"
-                          >
-                            {isCancelling ? <Loader2 className="animate-spin mr-2" /> : <XCircle className="mr-2 h-4 w-4" />}
-                            Cancel Job & Get Refund
-                          </Button>
-                        )}
+                        {(isOpen || isInProgress) && (() => {
+                          const workerEnRoute = job.workerProgress === 'on_the_way' || job.workerProgress === 'at_location';
+                          const price = parseFloat(job.price);
+                          const escrowAmount = job.priceType === 'per_person' ? price * job.workersNeeded : price;
+                          const penalty = Math.round(escrowAmount * 0.1 * 100) / 100;
+                          const refundAmount = escrowAmount - penalty;
+
+                          if (workerEnRoute && showPenaltyConfirm) {
+                            return (
+                              <div className="space-y-3 p-4 rounded-xl border border-destructive/30 bg-destructive/5" data-testid="section-penalty-confirm">
+                                <p className="text-sm font-medium text-destructive">Cancellation Penalty</p>
+                                <p className="text-sm text-muted-foreground">
+                                  The worker is already on the way. If you cancel now, 10% of the job price
+                                  (₦{penalty.toLocaleString()}) will be sent to the worker as compensation within 24 hours.
+                                  You will receive ₦{refundAmount.toLocaleString()} back immediately.
+                                </p>
+                                <div className="flex gap-2">
+                                  <Button
+                                    variant="destructive"
+                                    className="flex-1 rounded-xl"
+                                    onClick={() => { setShowPenaltyConfirm(false); cancelJob(job.id); }}
+                                    disabled={isCancelling}
+                                    data-testid="button-confirm-penalty-cancel"
+                                  >
+                                    {isCancelling ? <Loader2 className="animate-spin mr-2" /> : <XCircle className="mr-2 h-4 w-4" />}
+                                    Yes, Cancel & Pay Penalty
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    className="rounded-xl"
+                                    onClick={() => setShowPenaltyConfirm(false)}
+                                    data-testid="button-cancel-penalty-dialog"
+                                  >
+                                    Go Back
+                                  </Button>
+                                </div>
+                              </div>
+                            );
+                          }
+
+                          return (
+                            <Button
+                              variant="destructive"
+                              className="w-full rounded-xl"
+                              onClick={() => workerEnRoute ? setShowPenaltyConfirm(true) : cancelJob(job.id)}
+                              disabled={isCancelling}
+                              data-testid="button-cancel-job"
+                            >
+                              {isCancelling ? <Loader2 className="animate-spin mr-2" /> : <XCircle className="mr-2 h-4 w-4" />}
+                              {workerEnRoute ? "Cancel Job (10% Penalty)" : "Cancel Job & Get Refund"}
+                            </Button>
+                          );
+                        })()}
                       </div>
                     )}
 
@@ -560,10 +602,10 @@ export default function JobDetails() {
                                 );
                               })}
                             </div>
-                            {job.workerProgress === 'on_the_way' && (
+                            {(job.workerProgress === 'on_the_way' || job.workerProgress === 'at_location') && (
                               <div className="flex items-center text-amber-600 bg-amber-50 dark:bg-amber-950/30 p-3 rounded-xl border border-amber-100 dark:border-amber-900 text-sm">
                                 <AlertTriangle className="w-4 h-4 mr-2 shrink-0" />
-                                The job poster can no longer cancel this job.
+                                If the poster cancels now, you will receive 10% compensation within 24 hours.
                               </div>
                             )}
                             {job.workerProgress === 'at_location' && (
