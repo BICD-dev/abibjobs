@@ -20,10 +20,19 @@ export function useDispute(disputeId: number) {
     queryKey: ['/api/disputes', disputeId],
     queryFn: async () => {
       const res = await fetch(`/api/disputes/${disputeId}`, { credentials: "include" });
+      if (res.status === 423) {
+        const data = await res.json();
+        const err = new Error(data.message || "This dispute is locked") as any;
+        err.status = 423;
+        err.lockedBy = data.lockedBy;
+        err.daysRemaining = data.daysRemaining;
+        throw err;
+      }
       if (!res.ok) throw new Error("Failed to fetch dispute");
       return res.json();
     },
     enabled: !!disputeId,
+    retry: false,
   });
 }
 

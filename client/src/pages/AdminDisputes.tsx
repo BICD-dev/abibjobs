@@ -10,7 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   Loader2, Scale, CheckCircle, Send, Gavel, MessageSquare,
-  Image as ImageIcon, ArrowLeft, RefreshCw, Undo2, ArrowRight, Sliders, Shield
+  Image as ImageIcon, ArrowLeft, RefreshCw, Undo2, ArrowRight, Sliders, Shield, Lock, User
 } from "lucide-react";
 import { format } from "date-fns";
 import type { DisputeWithDetails, DisputeMessageWithSender } from "@shared/schema";
@@ -20,7 +20,7 @@ export default function AdminDisputes() {
   const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined);
   const [selectedDisputeId, setSelectedDisputeId] = useState<number | null>(null);
   const { data: disputesList, isLoading, isError, refetch } = useAdminDisputes(statusFilter);
-  const { data: selectedDisputeData, refetch: refetchSelected } = useDispute(selectedDisputeId || 0);
+  const { data: selectedDisputeData, refetch: refetchSelected, error: disputeFetchError } = useDispute(selectedDisputeId || 0);
   const selectedDispute = selectedDisputeId ? (selectedDisputeData as DisputeWithDetails | undefined) || null : null;
   const { mutate: resolveDispute, isPending: isResolving } = useResolveDispute();
   const { mutate: sendMessage, isPending: isSendingMessage } = useDisputeMessage();
@@ -163,6 +163,43 @@ export default function AdminDisputes() {
   const escalatedCount = disputes.filter(d => d.status === 'escalated').length;
   const openCount = disputes.filter(d => d.status !== 'resolved').length;
 
+  const isLockedError = (disputeFetchError as any)?.status === 423;
+
+  if (selectedDisputeId && isLockedError) {
+    const lockErr = disputeFetchError as any;
+    return (
+      <div className="min-h-screen bg-background pb-20">
+        <Navbar />
+        <main className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => { setSelectedDisputeId(null); }}
+            className="mb-4"
+          >
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Back to Disputes
+          </Button>
+          <Card className="rounded-2xl">
+            <CardContent className="p-8 text-center">
+              <Lock className="w-12 h-12 text-amber-500 mx-auto mb-4" />
+              <h2 className="text-xl font-bold text-foreground mb-2">Dispute Locked</h2>
+              <p className="text-muted-foreground mb-2">{lockErr.message}</p>
+              {lockErr.daysRemaining && (
+                <p className="text-sm text-muted-foreground">
+                  This dispute will become available in <span className="font-bold text-foreground">{lockErr.daysRemaining} day(s)</span> if still unresolved.
+                </p>
+              )}
+              <Button variant="outline" className="mt-6" onClick={() => setSelectedDisputeId(null)}>
+                Return to Dispute List
+              </Button>
+            </CardContent>
+          </Card>
+        </main>
+      </div>
+    );
+  }
+
   if (selectedDisputeId) {
     if (!selectedDispute) {
       return (
@@ -205,6 +242,13 @@ export default function AdminDisputes() {
                   <p className="text-xs text-muted-foreground mt-1">
                     {dispute.createdAt ? format(new Date(dispute.createdAt), "PPP 'at' p") : ""}
                   </p>
+                  {dispute.assignedAdminName && dispute.status !== 'resolved' && (
+                    <p className="text-xs text-primary mt-1 flex items-center gap-1">
+                      <User className="w-3 h-3" />
+                      Assigned to: {dispute.assignedAdminName}
+                      {dispute.assignedAt && ` (since ${format(new Date(dispute.assignedAt), "PP")})`}
+                    </p>
+                  )}
                 </div>
                 <Button size="sm" variant="outline" onClick={() => refetch()} data-testid="button-refresh-dispute">
                   <RefreshCw className="w-4 h-4" />
@@ -623,14 +667,15 @@ export default function AdminDisputes() {
           </div>
         ) : (
           <div className="space-y-3">
-            {disputes.map((dispute) => {
+            {disputes.map((dispute: any) => {
               const msgCount = dispute.messages?.length || 0;
               const lastMsg = dispute.messages?.[msgCount - 1];
+              const isLocked = dispute.isLockedByOther;
               return (
                 <Card
                   key={dispute.id}
-                  className="rounded-2xl hover-elevate cursor-pointer"
-                  onClick={() => setSelectedDisputeId(dispute.id)}
+                  className={`rounded-2xl ${isLocked ? 'opacity-60' : 'hover-elevate cursor-pointer'}`}
+                  onClick={() => { if (!isLocked) setSelectedDisputeId(dispute.id); }}
                   data-testid={`card-dispute-${dispute.id}`}
                 >
                   <CardContent className="p-5">
@@ -641,6 +686,18 @@ export default function AdminDisputes() {
                           <Badge variant="outline" className={getStatusColor(dispute.status)}>
                             {dispute.status.charAt(0).toUpperCase() + dispute.status.slice(1)}
                           </Badge>
+                          {isLocked && (
+                            <Badge variant="secondary" className="text-xs">
+                              <Lock className="w-3 h-3 mr-1" />
+                              Assigned
+                            </Badge>
+                          )}
+                          {dispute.assignedAdminName && !isLocked && dispute.status !== 'resolved' && (
+                            <Badge variant="outline" className="text-xs">
+                              <User className="w-3 h-3 mr-1" />
+                              {dispute.assignedAdminName}
+                            </Badge>
+                          )}
                         </div>
                         <p className="text-sm text-muted-foreground">
                           {"\u20A6"}{Number(dispute.job?.price || 0).toLocaleString()} &middot; {msgCount} messages
@@ -649,7 +706,13 @@ export default function AdminDisputes() {
                           <span>Poster: <span className="text-foreground font-medium">{dispute.poster?.firstName}</span></span>
                           <span>Worker: <span className="text-foreground font-medium">{dispute.worker?.firstName}</span></span>
                         </div>
-                        {lastMsg && (
+                        {isLocked && (
+                          <p className="text-xs text-amber-600 dark:text-amber-400 mt-2 flex items-center gap-1">
+                            <Lock className="w-3 h-3" />
+                            Being handled by {dispute.lockedByName}. Available in {dispute.daysRemaining} day(s).
+                          </p>
+                        )}
+                        {!isLocked && lastMsg && (
                           <p className="text-xs text-muted-foreground mt-2 truncate max-w-md">
                             Last: {lastMsg.message}
                           </p>
@@ -659,9 +722,16 @@ export default function AdminDisputes() {
                         <p className="text-xs text-muted-foreground">
                           {dispute.createdAt ? format(new Date(dispute.createdAt), "PP") : ""}
                         </p>
-                        <Button size="sm" variant="outline" className="mt-2" data-testid={`button-view-dispute-${dispute.id}`}>
-                          View
-                        </Button>
+                        {isLocked ? (
+                          <Badge variant="secondary" className="mt-2 text-xs">
+                            <Lock className="w-3 h-3 mr-1" />
+                            Locked
+                          </Badge>
+                        ) : (
+                          <Button size="sm" variant="outline" className="mt-2" data-testid={`button-view-dispute-${dispute.id}`}>
+                            View
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </CardContent>
