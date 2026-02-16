@@ -80,6 +80,16 @@ export const platformTransactions = pgTable("platform_transactions", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const offers = pgTable("offers", {
+  id: serial("id").primaryKey(),
+  jobId: integer("job_id").notNull(),
+  senderId: text("sender_id").notNull(),
+  amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
+  status: text("status").default("pending").notNull(), // 'pending', 'accepted', 'declined', 'countered'
+  message: text("message"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // === SCHEMAS ===
 
 export const insertProfileSchema = createInsertSchema(profiles).omit({ id: true });
@@ -87,6 +97,8 @@ export const insertJobSchema = createInsertSchema(jobs).omit({ id: true, created
 export const createJobSchema = insertJobSchema.omit({ posterId: true });
 
 export const insertTransactionSchema = createInsertSchema(transactions).omit({ id: true, createdAt: true });
+export const insertOfferSchema = createInsertSchema(offers).omit({ id: true, createdAt: true });
+export const createOfferSchema = insertOfferSchema.omit({ senderId: true, status: true });
 
 // === TYPES ===
 
@@ -95,8 +107,10 @@ export type Job = typeof jobs.$inferSelect;
 export type Transaction = typeof transactions.$inferSelect;
 export type PlatformEarning = typeof platformEarnings.$inferSelect;
 export type PlatformTransaction = typeof platformTransactions.$inferSelect;
+export type Offer = typeof offers.$inferSelect;
 
 export type CreateJobInput = z.infer<typeof createJobSchema>;
+export type CreateOfferInput = z.infer<typeof createOfferSchema>;
 
 export type UserRole = "user" | "admin";
 export type JobStatus = "open" | "in_progress" | "completed" | "cancelled";
@@ -111,8 +125,16 @@ export interface JobWithDetails extends Job {
   };
 }
 
+export interface OfferWithSender extends Offer {
+  sender?: {
+    firstName: string | null;
+    lastName: string | null;
+    profileImageUrl: string | null;
+  };
+}
+
 export interface WalletState {
-  balance: string; // Numeric returns string from DB usually
+  balance: string;
   transactions: Transaction[];
 }
 

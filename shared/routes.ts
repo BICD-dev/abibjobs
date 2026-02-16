@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { createJobSchema, jobs, profiles, transactions, platformEarnings, platformTransactions } from './schema';
+import { createJobSchema, createOfferSchema, jobs, profiles, transactions, platformEarnings, platformTransactions, offers } from './schema';
 
 export const errorSchemas = {
   validation: z.object({
@@ -141,6 +141,59 @@ export const api = {
       responses: {
         200: z.object({ newBalance: z.string() }),
         400: errorSchemas.payment,
+      },
+    },
+  },
+  offers: {
+    list: {
+      method: 'GET' as const,
+      path: '/api/jobs/:id/offers' as const,
+      responses: {
+        200: z.array(z.any()),
+      },
+    },
+    create: {
+      method: 'POST' as const,
+      path: '/api/jobs/:id/offers' as const,
+      input: z.object({
+        amount: z.number().min(1),
+        message: z.string().optional(),
+      }),
+      responses: {
+        201: z.custom<typeof offers.$inferSelect>(),
+        400: errorSchemas.validation,
+        401: errorSchemas.unauthorized,
+      },
+    },
+    accept: {
+      method: 'POST' as const,
+      path: '/api/offers/:id/accept' as const,
+      responses: {
+        200: z.object({ offer: z.any(), job: z.any(), insufficientFunds: z.boolean().optional(), shortfall: z.number().optional() }),
+        400: errorSchemas.validation,
+        401: errorSchemas.unauthorized,
+      },
+    },
+    decline: {
+      method: 'POST' as const,
+      path: '/api/offers/:id/decline' as const,
+      responses: {
+        200: z.custom<typeof offers.$inferSelect>(),
+        400: errorSchemas.validation,
+        401: errorSchemas.unauthorized,
+      },
+    },
+    counter: {
+      method: 'POST' as const,
+      path: '/api/offers/:id/counter' as const,
+      input: z.object({
+        amount: z.number().min(1),
+        message: z.string().optional(),
+      }),
+      responses: {
+        200: z.custom<typeof offers.$inferSelect>(),
+        400: errorSchemas.validation,
+        401: errorSchemas.unauthorized,
       },
     },
   },

@@ -196,6 +196,178 @@ export async function registerRoutes(
     res.json(updated);
   });
 
+  // --- OFFERS ---
+
+  app.get('/api/jobs/:id/offers', async (req, res) => {
+    const jobId = Number(req.params.id);
+    const offersList = await storage.getOffersByJob(jobId);
+    res.json(offersList);
+  });
+
+  app.post('/api/jobs/:id/offers', isAuthenticated, async (req, res) => {
+    try {
+      const jobId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      const parsed = api.offers.create.input.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+
+      const job = await storage.getJob(jobId);
+      if (!job) return res.status(404).json({ message: "Job not found" });
+      if (job.status !== 'open') return res.status(400).json({ message: "Job is not open for offers" });
+      if (job.posterId === userId) return res.status(400).json({ message: "You cannot make an offer on your own job" });
+
+      const offer = await storage.createOffer({
+        jobId,
+        senderId: userId,
+        amount: parsed.data.amount.toFixed(2),
+        message: parsed.data.message,
+      });
+
+      res.status(201).json(offer);
+    } catch (err) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post('/api/offers/:id/accept', isAuthenticated, async (req, res) => {
+    try {
+      const offerId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+
+      const offer = await storage.getOffer(offerId);
+      if (!offer) return res.status(404).json({ message: "Offer not found" });
+      if (offer.status !== 'pending') return res.status(400).json({ message: "Offer is no longer pending" });
+
+      const job = await storage.getJob(offer.jobId);
+      if (!job) return res.status(404).json({ message: "Job not found" });
+
+      const isPoster = job.posterId === userId;
+      const isSender = offer.senderId === userId;
+
+      if (!isPoster && !isSender) {
+        return res.status(403).json({ message: "You are not part of this negotiation" });
+      }
+      if (isSender) {
+        return res.status(400).json({ message: "You cannot accept your own offer" });
+      }
+
+      const newPrice = parseFloat(offer.amount);
+      const oldPrice = parseFloat(job.price);
+      const priceDiff = newPrice - oldPrice;
+
+      if (isPoster && priceDiff > 0) {
+        const profile = await storage.getProfile(userId);
+        if (!profile) return res.status(404).json({ message: "Profile not found" });
+        const balance = parseFloat(profile.walletBalance);
+
+        if (balance < priceDiff) {
+          return res.json({
+            offer,
+            job,
+            insufficientFunds: true,
+            shortfall: priceDiff - balance,
+          });
+        }
+
+        await storage.updateWalletBalance(userId, -priceDiff);
+        await storage.createTransaction({
+          userId,
+          amount: (-priceDiff).toString(),
+          type: 'escrow_hold',
+          jobId: job.id,
+        });
+      } else if (isPoster && priceDiff < 0) {
+        await storage.updateWalletBalance(userId, Math.abs(priceDiff));
+        await storage.createTransaction({
+          userId,
+          amount: Math.abs(priceDiff).toString(),
+          type: 'escrow_refund',
+          jobId: job.id,
+        });
+      }
+
+      const updatedOffer = await storage.updateOffer(offerId, { status: 'accepted' });
+      const updatedJob = await storage.updateJob(job.id, { price: newPrice.toFixed(2) });
+
+      const allOffers = await storage.getOffersByJob(job.id);
+      for (const o of allOffers) {
+        if (o.id !== offerId && o.status === 'pending') {
+          await storage.updateOffer(o.id, { status: 'declined' });
+        }
+      }
+
+      res.json({ offer: updatedOffer, job: updatedJob });
+    } catch (err) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post('/api/offers/:id/decline', isAuthenticated, async (req, res) => {
+    try {
+      const offerId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+
+      const offer = await storage.getOffer(offerId);
+      if (!offer) return res.status(404).json({ message: "Offer not found" });
+      if (offer.status !== 'pending') return res.status(400).json({ message: "Offer is no longer pending" });
+
+      const job = await storage.getJob(offer.jobId);
+      if (!job) return res.status(404).json({ message: "Job not found" });
+
+      const isPoster = job.posterId === userId;
+      const isSender = offer.senderId === userId;
+      if (!isPoster && !isSender) {
+        return res.status(403).json({ message: "You are not part of this negotiation" });
+      }
+      if (isSender) {
+        return res.status(400).json({ message: "You cannot decline your own offer. Withdraw it instead." });
+      }
+
+      const updated = await storage.updateOffer(offerId, { status: 'declined' });
+      res.json(updated);
+    } catch (err) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post('/api/offers/:id/counter', isAuthenticated, async (req, res) => {
+    try {
+      const offerId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      const parsed = api.offers.counter.input.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+
+      const offer = await storage.getOffer(offerId);
+      if (!offer) return res.status(404).json({ message: "Offer not found" });
+      if (offer.status !== 'pending') return res.status(400).json({ message: "Offer is no longer pending" });
+
+      const job = await storage.getJob(offer.jobId);
+      if (!job) return res.status(404).json({ message: "Job not found" });
+
+      const isPoster = job.posterId === userId;
+      const isSender = offer.senderId === userId;
+      if (!isPoster && !isSender) {
+        return res.status(403).json({ message: "You are not part of this negotiation" });
+      }
+      if (isSender) {
+        return res.status(400).json({ message: "You cannot counter your own offer" });
+      }
+
+      await storage.updateOffer(offerId, { status: 'countered' });
+
+      const counterOffer = await storage.createOffer({
+        jobId: job.id,
+        senderId: userId,
+        amount: parsed.data.amount.toFixed(2),
+        message: parsed.data.message,
+      });
+
+      res.json(counterOffer);
+    } catch (err) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   // --- PROFILE ---
 
   app.get(api.profile.get.path, isAuthenticated, async (req, res) => {

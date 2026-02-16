@@ -7,11 +7,14 @@ import {
   transactions,
   platformEarnings,
   platformTransactions,
+  offers,
   type Profile,
   type Job,
   type Transaction,
+  type Offer,
   type CreateJobInput,
   type JobWithDetails,
+  type OfferWithSender,
   type PlatformEarning,
   type PlatformTransaction,
 } from "@shared/schema";
@@ -32,6 +35,12 @@ export interface IStorage {
   getTransactions(userId: string): Promise<Transaction[]>;
   createTransaction(tx: { userId: string; amount: string; type: string; jobId?: number; bankName?: string | null; bankCode?: string | null; accountNumber?: string | null; accountName?: string | null }): Promise<Transaction>;
   updateWalletBalance(userId: string, amountChange: number): Promise<Profile>;
+
+  // Offers
+  getOffersByJob(jobId: number): Promise<OfferWithSender[]>;
+  getOffer(id: number): Promise<Offer | undefined>;
+  createOffer(data: { jobId: number; senderId: string; amount: string; message?: string }): Promise<Offer>;
+  updateOffer(id: number, data: Partial<Offer>): Promise<Offer>;
 
   // Platform Earnings (Admin)
   getPlatformEarnings(): Promise<PlatformEarning>;
@@ -156,6 +165,41 @@ export class DatabaseStorage implements IStorage {
       .where(eq(profiles.userId, userId))
       .returning();
     
+    return updated;
+  }
+
+  async getOffersByJob(jobId: number): Promise<OfferWithSender[]> {
+    const results = await db.select({
+      offer: offers,
+      sender: {
+        firstName: users.firstName,
+        lastName: users.lastName,
+        profileImageUrl: users.profileImageUrl,
+      }
+    })
+    .from(offers)
+    .leftJoin(users, eq(offers.senderId, users.id))
+    .where(eq(offers.jobId, jobId))
+    .orderBy(desc(offers.createdAt));
+
+    return results.map(r => ({
+      ...r.offer,
+      sender: r.sender || { firstName: 'Unknown', lastName: '', profileImageUrl: null }
+    }));
+  }
+
+  async getOffer(id: number): Promise<Offer | undefined> {
+    const [offer] = await db.select().from(offers).where(eq(offers.id, id));
+    return offer;
+  }
+
+  async createOffer(data: { jobId: number; senderId: string; amount: string; message?: string }): Promise<Offer> {
+    const [offer] = await db.insert(offers).values(data).returning();
+    return offer;
+  }
+
+  async updateOffer(id: number, data: Partial<Offer>): Promise<Offer> {
+    const [updated] = await db.update(offers).set(data).where(eq(offers.id, id)).returning();
     return updated;
   }
 
