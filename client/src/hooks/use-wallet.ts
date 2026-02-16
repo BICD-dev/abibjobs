@@ -10,6 +10,25 @@ export interface WalletTransactionInput {
   accountName?: string;
 }
 
+export interface CardDepositInput {
+  amount: number;
+  paymentMethod: 'card' | 'bank_account';
+  cardNumber?: string;
+  cardExpiry?: string;
+  cardCvv?: string;
+  bankCode?: string;
+  accountNumber?: string;
+}
+
+export interface VerifyOtpInput {
+  sessionId: string;
+  otp: string;
+}
+
+export interface ResendOtpInput {
+  sessionId: string;
+}
+
 export function useWallet() {
   return useQuery({
     queryKey: [api.wallet.get.path],
@@ -42,6 +61,104 @@ export function useDeposit() {
       toast({
         title: "Deposit Successful",
         description: "Funds have been added to your wallet.",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+}
+
+export function useCardDeposit() {
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (input: CardDepositInput) => {
+      const res = await fetch(api.wallet.cardDeposit.path, {
+        method: api.wallet.cardDeposit.method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || "Failed to initiate payment");
+      }
+      return res.json() as Promise<{ sessionId: string; message: string; otpSentTo: string }>;
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+}
+
+export function useVerifyOtp() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (input: VerifyOtpInput) => {
+      const res = await fetch(api.wallet.verifyOtp.path, {
+        method: api.wallet.verifyOtp.method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || "OTP verification failed");
+      }
+      return res.json() as Promise<{ newBalance: string; message: string }>;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: [api.wallet.get.path] });
+      toast({
+        title: "Deposit Successful",
+        description: data.message,
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Verification Failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+}
+
+export function useResendOtp() {
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (input: ResendOtpInput) => {
+      const res = await fetch(api.wallet.resendOtp.path, {
+        method: api.wallet.resendOtp.method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || "Failed to resend OTP");
+      }
+      return res.json() as Promise<{ message: string; otpSentTo: string }>;
+    },
+    onSuccess: () => {
+      toast({
+        title: "OTP Resent",
+        description: "A new OTP has been sent to your phone/email.",
       });
     },
     onError: (error: Error) => {

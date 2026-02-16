@@ -205,6 +205,46 @@ export const api = {
         200: z.object({ newBalance: z.string() }),
       },
     },
+    cardDeposit: {
+      method: 'POST' as const,
+      path: '/api/wallet/card-deposit' as const,
+      input: z.object({
+        amount: z.number().min(100),
+        paymentMethod: z.enum(['card', 'bank_account']),
+        cardNumber: z.string().optional(),
+        cardExpiry: z.string().optional(),
+        cardCvv: z.string().optional(),
+        bankCode: z.string().optional(),
+        accountNumber: z.string().optional(),
+      }),
+      responses: {
+        200: z.object({ sessionId: z.string(), message: z.string(), otpSentTo: z.string() }),
+        400: errorSchemas.payment,
+      },
+    },
+    verifyOtp: {
+      method: 'POST' as const,
+      path: '/api/wallet/verify-otp' as const,
+      input: z.object({
+        sessionId: z.string().min(1),
+        otp: z.string().length(6),
+      }),
+      responses: {
+        200: z.object({ newBalance: z.string(), message: z.string() }),
+        400: errorSchemas.payment,
+      },
+    },
+    resendOtp: {
+      method: 'POST' as const,
+      path: '/api/wallet/resend-otp' as const,
+      input: z.object({
+        sessionId: z.string().min(1),
+      }),
+      responses: {
+        200: z.object({ message: z.string(), otpSentTo: z.string() }),
+        400: errorSchemas.payment,
+      },
+    },
     withdraw: {
       method: 'POST' as const,
       path: '/api/wallet/withdraw' as const,

@@ -8,6 +8,36 @@ import crypto from "crypto";
 import { setupAuth, isAuthenticated, registerAuthRoutes } from "./replit_integrations/auth";
 import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
 
+interface OtpSession {
+  userId: string;
+  amount: number;
+  paymentMethod: 'card' | 'bank_account';
+  otp: string;
+  maskedInfo: string;
+  attempts: number;
+  expiresAt: number;
+  createdAt: number;
+}
+
+const otpSessions = new Map<string, OtpSession>();
+
+function generateOtp(): string {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+function cleanExpiredSessions() {
+  const now = Date.now();
+  const keys = Array.from(otpSessions.keys());
+  for (const key of keys) {
+    const session = otpSessions.get(key);
+    if (session && session.expiresAt < now) {
+      otpSessions.delete(key);
+    }
+  }
+}
+
+setInterval(cleanExpiredSessions, 60000);
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -1648,6 +1678,132 @@ export async function registerRoutes(
 
     const profile = await storage.getProfile(userId);
     res.json({ newBalance: profile?.walletBalance || "0" });
+  });
+
+  app.post(api.wallet.cardDeposit.path, isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const parsed = api.wallet.cardDeposit.input.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+
+    const { amount, paymentMethod, cardNumber, cardExpiry, cardCvv, bankCode, accountNumber } = parsed.data;
+
+    if (paymentMethod === 'card') {
+      if (!cardNumber || !cardExpiry || !cardCvv) {
+        return res.status(400).json({ message: "Card number, expiry and CVV are required" });
+      }
+      if (cardNumber.replace(/\s/g, '').length < 13) {
+        return res.status(400).json({ message: "Invalid card number" });
+      }
+    } else {
+      if (!bankCode || !accountNumber) {
+        return res.status(400).json({ message: "Bank and account number are required" });
+      }
+    }
+
+    const sessionId = crypto.randomUUID();
+    const otp = generateOtp();
+
+    let maskedInfo = '';
+    if (paymentMethod === 'card') {
+      const cleanCard = cardNumber!.replace(/\s/g, '');
+      maskedInfo = `****${cleanCard.slice(-4)}`;
+    } else {
+      maskedInfo = `****${accountNumber!.slice(-4)}`;
+    }
+
+    otpSessions.set(sessionId, {
+      userId,
+      amount,
+      paymentMethod,
+      otp,
+      maskedInfo,
+      attempts: 0,
+      expiresAt: Date.now() + 10 * 60 * 1000,
+      createdAt: Date.now(),
+    });
+
+    console.log(`[OTP] Session ${sessionId} for user ${userId}: OTP is ${otp}`);
+
+    res.json({
+      sessionId,
+      message: `OTP sent to your registered phone/email`,
+      otpSentTo: maskedInfo,
+    });
+  });
+
+  app.post(api.wallet.verifyOtp.path, isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const parsed = api.wallet.verifyOtp.input.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+
+    const { sessionId, otp } = parsed.data;
+    const session = otpSessions.get(sessionId);
+
+    if (!session) {
+      return res.status(400).json({ message: "Session expired or invalid. Please try again." });
+    }
+
+    if (session.userId !== userId) {
+      return res.status(400).json({ message: "Unauthorized session" });
+    }
+
+    if (session.expiresAt < Date.now()) {
+      otpSessions.delete(sessionId);
+      return res.status(400).json({ message: "OTP has expired. Please initiate a new deposit." });
+    }
+
+    if (session.otp !== otp) {
+      session.attempts += 1;
+      if (session.attempts >= 3) {
+        otpSessions.delete(sessionId);
+        return res.status(400).json({ message: "Too many incorrect attempts. Please initiate a new deposit." });
+      }
+      return res.status(400).json({ message: `Incorrect OTP. ${3 - session.attempts} attempt(s) remaining.` });
+    }
+
+    await storage.updateWalletBalance(userId, session.amount);
+    await storage.createTransaction({
+      userId,
+      amount: session.amount.toString(),
+      type: 'deposit',
+      bankName: session.paymentMethod === 'card' ? 'Card Payment' : 'Bank Transfer',
+      bankCode: null,
+      accountNumber: session.maskedInfo,
+      accountName: session.paymentMethod === 'card' ? 'Debit Card' : 'Bank Account',
+    });
+
+    otpSessions.delete(sessionId);
+
+    const profile = await storage.getProfile(userId);
+    res.json({
+      newBalance: profile?.walletBalance || "0",
+      message: "Deposit successful!",
+    });
+  });
+
+  app.post(api.wallet.resendOtp.path, isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const parsed = api.wallet.resendOtp.input.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+
+    const { sessionId } = parsed.data;
+    const session = otpSessions.get(sessionId);
+
+    if (!session || session.userId !== userId) {
+      return res.status(400).json({ message: "Session expired or invalid. Please try again." });
+    }
+
+    const newOtp = generateOtp();
+    session.otp = newOtp;
+    session.attempts = 0;
+    session.expiresAt = Date.now() + 10 * 60 * 1000;
+
+    console.log(`[OTP] Resend for session ${sessionId}: OTP is ${newOtp}`);
+
+    res.json({
+      message: "New OTP sent successfully",
+      otpSentTo: session.maskedInfo,
+    });
   });
 
   app.post(api.wallet.withdraw.path, isAuthenticated, async (req, res) => {
