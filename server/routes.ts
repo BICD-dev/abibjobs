@@ -2153,6 +2153,19 @@ export async function registerRoutes(
     }
 
     const updated = await storage.submitVerification(userId, parsed.data.idCardUrl, parsed.data.faceScanUrl);
+
+    const userName = profile.bio ? profile.bio.split('\n')[0] : userId;
+    const userProfile = req.user as any;
+    const displayName = userProfile?.claims?.first_name
+      ? `${userProfile.claims.first_name} ${userProfile.claims.last_name || ''}`.trim()
+      : userName;
+
+    await storage.createAdminNotificationForAll({
+      title: 'New Verification Submission',
+      message: `${displayName} has submitted their ID/passport and selfie for identity verification. Please review in the Verifications section.`,
+      type: 'warning',
+    });
+
     res.json(updated);
   });
 
