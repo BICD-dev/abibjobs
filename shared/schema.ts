@@ -218,6 +218,19 @@ export const insertProfileSchema = createInsertSchema(profiles).omit({ id: true 
 export const insertJobSchema = createInsertSchema(jobs).omit({ id: true, createdAt: true, updatedAt: true, workerId: true, status: true, workersAccepted: true, workerProgress: true, posterConfirmedArrival: true, completedAt: true });
 export const createJobSchema = insertJobSchema.omit({ posterId: true });
 
+export const adminNotifications = pgTable("admin_notifications", {
+  id: serial("id").primaryKey(),
+  adminId: integer("admin_id").notNull(),
+  title: text("title").notNull(),
+  message: text("message").notNull(),
+  type: text("type").default("info").notNull(),
+  isRead: boolean("is_read").default(false).notNull(),
+  disputeId: integer("dispute_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAdminNotificationSchema = createInsertSchema(adminNotifications).omit({ id: true, createdAt: true });
+
 export const insertTransactionSchema = createInsertSchema(transactions).omit({ id: true, createdAt: true });
 export const insertOfferSchema = createInsertSchema(offers).omit({ id: true, createdAt: true });
 export const createOfferSchema = insertOfferSchema.omit({ senderId: true, status: true });
@@ -242,6 +255,7 @@ export type AdminUser = typeof adminUsers.$inferSelect;
 export type AdminActivity = typeof adminActivity.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
 export type AdminPayment = typeof adminPayments.$inferSelect;
+export type AdminNotification = typeof adminNotifications.$inferSelect;
 export type ScheduledPayment = typeof scheduledPayments.$inferSelect;
 export type LagosAddress = typeof lagosAddresses.$inferSelect;
 export type SiteVisit = typeof siteVisits.$inferSelect;

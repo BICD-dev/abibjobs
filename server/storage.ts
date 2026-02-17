@@ -13,6 +13,7 @@ import {
   adminUsers,
   adminActivity,
   adminPayments,
+  adminNotifications,
   notifications,
   scheduledPayments,
   lagosAddresses,
@@ -27,6 +28,7 @@ import {
   type AdminUser,
   type AdminActivity,
   type AdminPayment,
+  type AdminNotification,
   type Notification,
   type ScheduledPayment,
   type LagosAddress,
@@ -111,6 +113,14 @@ export interface IStorage {
   markNotificationRead(id: number, userId: string): Promise<void>;
   markAllNotificationsRead(userId: string): Promise<void>;
   getUnreadNotificationCount(userId: string): Promise<number>;
+
+  // Admin Notifications
+  createAdminNotification(data: { adminId: number; title: string; message: string; type: string; disputeId?: number }): Promise<AdminNotification>;
+  createAdminNotificationForAll(data: { title: string; message: string; type: string; disputeId?: number }): Promise<void>;
+  getAdminNotifications(adminId: number): Promise<AdminNotification[]>;
+  markAdminNotificationRead(id: number, adminId: number): Promise<void>;
+  markAllAdminNotificationsRead(adminId: number): Promise<void>;
+  getUnreadAdminNotificationCount(adminId: number): Promise<number>;
 
   // Scheduled Payments
   createScheduledPayment(data: { userId: string; amount: string; jobId?: number; reason: string; scheduledFor: Date }): Promise<ScheduledPayment>;
@@ -764,6 +774,35 @@ export class DatabaseStorage implements IStorage {
 
   async getUnreadNotificationCount(userId: string): Promise<number> {
     const result = await db.select({ count: sql<number>`count(*)` }).from(notifications).where(and(eq(notifications.userId, userId), eq(notifications.isRead, false)));
+    return Number(result[0]?.count || 0);
+  }
+
+  async createAdminNotification(data: { adminId: number; title: string; message: string; type: string; disputeId?: number }): Promise<AdminNotification> {
+    const [notif] = await db.insert(adminNotifications).values(data).returning();
+    return notif;
+  }
+
+  async createAdminNotificationForAll(data: { title: string; message: string; type: string; disputeId?: number }): Promise<void> {
+    const allAdmins = await db.select({ id: adminUsers.id }).from(adminUsers).where(eq(adminUsers.isActive, true));
+    for (const admin of allAdmins) {
+      await db.insert(adminNotifications).values({ ...data, adminId: admin.id });
+    }
+  }
+
+  async getAdminNotifications(adminId: number): Promise<AdminNotification[]> {
+    return await db.select().from(adminNotifications).where(eq(adminNotifications.adminId, adminId)).orderBy(desc(adminNotifications.createdAt));
+  }
+
+  async markAdminNotificationRead(id: number, adminId: number): Promise<void> {
+    await db.update(adminNotifications).set({ isRead: true }).where(and(eq(adminNotifications.id, id), eq(adminNotifications.adminId, adminId)));
+  }
+
+  async markAllAdminNotificationsRead(adminId: number): Promise<void> {
+    await db.update(adminNotifications).set({ isRead: true }).where(eq(adminNotifications.adminId, adminId));
+  }
+
+  async getUnreadAdminNotificationCount(adminId: number): Promise<number> {
+    const result = await db.select({ count: sql<number>`count(*)` }).from(adminNotifications).where(and(eq(adminNotifications.adminId, adminId), eq(adminNotifications.isRead, false)));
     return Number(result[0]?.count || 0);
   }
 
