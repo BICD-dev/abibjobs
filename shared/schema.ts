@@ -29,6 +29,7 @@ export const profiles = pgTable("profiles", {
   verificationNote: text("verification_note"),
   phoneNumber: text("phone_number"),
   location: text("location"),
+  profilePictureUrl: text("profile_picture_url"),
   noShowCount: integer("no_show_count").default(0).notNull(),
   isSuspended: boolean("is_suspended").default(false).notNull(),
 });
