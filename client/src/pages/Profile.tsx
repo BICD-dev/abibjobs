@@ -56,12 +56,15 @@ export default function Profile() {
           <div className="md:col-span-1 space-y-6">
             <Card className="rounded-3xl border-border shadow-sm overflow-hidden text-center">
               <div className="bg-primary/10 h-32 relative">
-                <Avatar className="h-24 w-24 absolute -bottom-12 left-1/2 -translate-x-1/2 border-4 border-background shadow-lg">
-                  <AvatarImage src={user?.profileImageUrl || undefined} />
-                  <AvatarFallback className="text-2xl font-bold bg-primary text-white">
-                    {user?.firstName?.[0]}
-                  </AvatarFallback>
-                </Avatar>
+                <div className="absolute -bottom-12 left-1/2 -translate-x-1/2 group">
+                  <Avatar className="h-24 w-24 border-4 border-background shadow-lg">
+                    <AvatarImage src={(profile as any)?.profilePictureUrl || user?.profileImageUrl || undefined} />
+                    <AvatarFallback className="text-2xl font-bold bg-primary text-white">
+                      {user?.firstName?.[0]}
+                    </AvatarFallback>
+                  </Avatar>
+                  <ProfilePictureUploader currentUrl={(profile as any)?.profilePictureUrl || user?.profileImageUrl} />
+                </div>
               </div>
               <div className="pt-16 pb-6 px-4">
                 <h2 className="text-xl font-bold font-display">{user?.firstName} {user?.lastName}</h2>
@@ -350,6 +353,74 @@ function VerificationCard({ profile }: { profile: any }) {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function ProfilePictureUploader({ currentUrl }: { currentUrl?: string | null }) {
+  const { uploadFile, isUploading, progress } = useUpload({
+    onSuccess: (res) => {
+      updatePicture.mutate({ profilePictureUrl: res.objectPath });
+    },
+  });
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const updatePicture = useMutation({
+    mutationFn: async (data: { profilePictureUrl: string }) => {
+      const res = await fetch('/api/profile/me', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error('Failed to update profile picture');
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/profile/me'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/auth/user'] });
+      toast({ title: "Profile picture updated" });
+    },
+    onError: () => {
+      toast({ title: "Failed to update picture", variant: "destructive" });
+    },
+  });
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  return (
+    <>
+      <input
+        ref={fileInputRef}
+        type="file"
+        className="hidden"
+        accept="image/*"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) {
+            if (file.size > 5 * 1024 * 1024) {
+              toast({ title: "File too large", description: "Please select an image under 5MB", variant: "destructive" });
+              return;
+            }
+            uploadFile(file);
+          }
+        }}
+        data-testid="input-profile-picture"
+      />
+      <Button
+        size="icon"
+        className="absolute bottom-0 right-0 h-7 w-7 rounded-full shadow-md"
+        onClick={() => fileInputRef.current?.click()}
+        disabled={isUploading || updatePicture.isPending}
+        data-testid="button-change-profile-picture"
+      >
+        {isUploading || updatePicture.isPending ? (
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        ) : (
+          <Camera className="w-3.5 h-3.5" />
+        )}
+      </Button>
+    </>
   );
 }
 

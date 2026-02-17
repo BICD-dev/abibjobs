@@ -40,6 +40,17 @@ export function Navbar() {
   const { data: unreadData } = useUnreadNotificationCount(isAuthenticated);
   const unreadCount = unreadData?.count || 0;
 
+  const { data: profileData } = useQuery<any>({
+    queryKey: ["/api/profile/me"],
+    queryFn: async () => {
+      const res = await fetch("/api/profile/me", { credentials: "include" });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: isAuthenticated,
+  });
+  const avatarUrl = profileData?.profilePictureUrl || user?.profileImageUrl || undefined;
+
   const { data: adminUnreadData } = useQuery<{ count: number }>({
     queryKey: ["/api/admin/notifications/unread-count"],
     queryFn: async () => {
@@ -156,7 +167,7 @@ export function Navbar() {
                   <DropdownMenuTrigger asChild>
                     <Button variant="ghost" className="relative h-10 w-10 rounded-full ring-2 ring-transparent hover:ring-primary/20 transition-all">
                       <Avatar className="h-10 w-10">
-                        <AvatarImage src={user?.profileImageUrl || undefined} />
+                        <AvatarImage src={avatarUrl} />
                         <AvatarFallback className="bg-primary/10 text-primary font-bold">
                           {isStaff && !isAuthenticated ? (adminUser?.name?.[0] || 'A') : (user?.firstName?.[0] || 'U')}
                         </AvatarFallback>
@@ -291,7 +302,7 @@ export function Navbar() {
               <>
                 <div className="flex items-center space-x-3 px-2 mb-6">
                   <Avatar className="h-12 w-12 border-2 border-primary/20">
-                    <AvatarImage src={user?.profileImageUrl || undefined} />
+                    <AvatarImage src={avatarUrl} />
                     <AvatarFallback>{isStaff && !isAuthenticated ? (adminUser?.name?.[0] || 'A') : (user?.firstName?.[0] || 'U')}</AvatarFallback>
                   </Avatar>
                   <div>

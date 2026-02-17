@@ -215,20 +215,25 @@ export class DatabaseStorage implements IStorage {
         firstName: users.firstName,
         lastName: users.lastName,
         profileImageUrl: users.profileImageUrl,
+      },
+      posterProfile: {
+        profilePictureUrl: profiles.profilePictureUrl,
       }
     })
     .from(jobs)
     .leftJoin(users, eq(jobs.posterId, users.id))
+    .leftJoin(profiles, eq(jobs.posterId, profiles.userId))
     .orderBy(desc(jobs.createdAt));
 
-    // Simple in-memory filtering for now or basic where clauses
-    // Ideally use dynamic where building
     const results = await query;
     
-    // Map to JobWithDetails
     let mapped = results.map(r => ({
       ...r.job,
-      poster: r.poster || { firstName: 'Unknown', lastName: '', profileImageUrl: null }
+      poster: {
+        firstName: r.poster?.firstName || 'Unknown',
+        lastName: r.poster?.lastName || '',
+        profileImageUrl: r.posterProfile?.profilePictureUrl || r.poster?.profileImageUrl || null,
+      }
     }));
 
     if (filters) {
@@ -254,17 +259,25 @@ export class DatabaseStorage implements IStorage {
         firstName: users.firstName,
         lastName: users.lastName,
         profileImageUrl: users.profileImageUrl,
+      },
+      posterProfile: {
+        profilePictureUrl: profiles.profilePictureUrl,
       }
     })
     .from(jobs)
     .leftJoin(users, eq(jobs.posterId, users.id))
+    .leftJoin(profiles, eq(jobs.posterId, profiles.userId))
     .where(eq(jobs.id, id));
 
     if (!result) return undefined;
 
     return {
       ...result.job,
-      poster: result.poster || { firstName: 'Unknown', lastName: '', profileImageUrl: null }
+      poster: {
+        firstName: result.poster?.firstName || 'Unknown',
+        lastName: result.poster?.lastName || '',
+        profileImageUrl: result.posterProfile?.profilePictureUrl || result.poster?.profileImageUrl || null,
+      }
     };
   }
 
@@ -276,10 +289,14 @@ export class DatabaseStorage implements IStorage {
         firstName: users.firstName,
         lastName: users.lastName,
         profileImageUrl: users.profileImageUrl,
+      },
+      posterProfile: {
+        profilePictureUrl: profiles.profilePictureUrl,
       }
     })
     .from(jobs)
     .leftJoin(users, eq(jobs.posterId, users.id))
+    .leftJoin(profiles, eq(jobs.posterId, profiles.userId))
     .where(
       sql`(${jobs.posterId} = ${userId} OR ${workerMatch}) AND ${jobs.status} IN ('open', 'in_progress')`
     )
@@ -287,7 +304,11 @@ export class DatabaseStorage implements IStorage {
 
     return results.map(r => ({
       ...r.job,
-      poster: r.poster || { firstName: 'Unknown', lastName: '', profileImageUrl: null }
+      poster: {
+        firstName: r.poster?.firstName || 'Unknown',
+        lastName: r.poster?.lastName || '',
+        profileImageUrl: r.posterProfile?.profilePictureUrl || r.poster?.profileImageUrl || null,
+      }
     }));
   }
 
@@ -308,16 +329,24 @@ export class DatabaseStorage implements IStorage {
         firstName: users.firstName,
         lastName: users.lastName,
         profileImageUrl: users.profileImageUrl,
+      },
+      posterProfile: {
+        profilePictureUrl: profiles.profilePictureUrl,
       }
     })
     .from(jobs)
     .leftJoin(users, eq(jobs.posterId, users.id))
+    .leftJoin(profiles, eq(jobs.posterId, profiles.userId))
     .where(condition)
     .orderBy(desc(jobs.updatedAt));
 
     return results.map(r => ({
       ...r.job,
-      poster: r.poster || { firstName: 'Unknown', lastName: '', profileImageUrl: null }
+      poster: {
+        firstName: r.poster?.firstName || 'Unknown',
+        lastName: r.poster?.lastName || '',
+        profileImageUrl: r.posterProfile?.profilePictureUrl || r.poster?.profileImageUrl || null,
+      }
     }));
   }
 
@@ -364,16 +393,24 @@ export class DatabaseStorage implements IStorage {
         firstName: users.firstName,
         lastName: users.lastName,
         profileImageUrl: users.profileImageUrl,
+      },
+      senderProfile: {
+        profilePictureUrl: profiles.profilePictureUrl,
       }
     })
     .from(offers)
     .leftJoin(users, eq(offers.senderId, users.id))
+    .leftJoin(profiles, eq(offers.senderId, profiles.userId))
     .where(eq(offers.jobId, jobId))
     .orderBy(desc(offers.createdAt));
 
     return results.map(r => ({
       ...r.offer,
-      sender: r.sender || { firstName: 'Unknown', lastName: '', profileImageUrl: null }
+      sender: {
+        firstName: r.sender?.firstName || 'Unknown',
+        lastName: r.sender?.lastName || '',
+        profileImageUrl: r.senderProfile?.profilePictureUrl || r.sender?.profileImageUrl || null,
+      }
     }));
   }
 
