@@ -214,6 +214,30 @@ export const ownerSettings = pgTable("owner_settings", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+export const supportTickets = pgTable("support_tickets", {
+  id: serial("id").primaryKey(),
+  ticketNumber: text("ticket_number").notNull().unique(),
+  userId: text("user_id").notNull(),
+  userName: text("user_name").notNull(),
+  subject: text("subject").notNull(),
+  status: text("status").default("waiting").notNull(),
+  assignedAdminId: integer("assigned_admin_id"),
+  assignedAdminName: text("assigned_admin_name"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  closedAt: timestamp("closed_at"),
+});
+
+export const supportMessages = pgTable("support_messages", {
+  id: serial("id").primaryKey(),
+  ticketId: integer("ticket_id").notNull(),
+  senderId: text("sender_id").notNull(),
+  senderName: text("sender_name").notNull(),
+  senderType: text("sender_type").notNull(),
+  message: text("message").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // === SCHEMAS ===
 
 export const insertProfileSchema = createInsertSchema(profiles).omit({ id: true });
@@ -244,6 +268,8 @@ export const insertAdminUserSchema = createInsertSchema(adminUsers).omit({ id: t
 export const insertAdminPaymentSchema = createInsertSchema(adminPayments).omit({ id: true, createdAt: true });
 export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, createdAt: true });
 export const insertScheduledPaymentSchema = createInsertSchema(scheduledPayments).omit({ id: true, createdAt: true, processedAt: true });
+export const insertSupportTicketSchema = createInsertSchema(supportTickets).omit({ id: true, createdAt: true, updatedAt: true, closedAt: true });
+export const insertSupportMessageSchema = createInsertSchema(supportMessages).omit({ id: true, createdAt: true });
 
 // === TYPES ===
 
@@ -264,6 +290,8 @@ export type ScheduledPayment = typeof scheduledPayments.$inferSelect;
 export type LagosAddress = typeof lagosAddresses.$inferSelect;
 export type SiteVisit = typeof siteVisits.$inferSelect;
 export type OwnerSettings = typeof ownerSettings.$inferSelect;
+export type SupportTicket = typeof supportTickets.$inferSelect;
+export type SupportMessage = typeof supportMessages.$inferSelect;
 
 export type CreateJobInput = z.infer<typeof createJobSchema>;
 export type VerificationStatus = 'unverified' | 'pending' | 'verified' | 'declined' | 'redo_requested';
