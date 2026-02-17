@@ -216,7 +216,9 @@ export const ownerSettings = pgTable("owner_settings", {
 // === SCHEMAS ===
 
 export const insertProfileSchema = createInsertSchema(profiles).omit({ id: true });
-export const insertJobSchema = createInsertSchema(jobs).omit({ id: true, createdAt: true, updatedAt: true, workerId: true, status: true, workersAccepted: true, workerProgress: true, posterConfirmedArrival: true, completedAt: true });
+export const insertJobSchema = createInsertSchema(jobs).omit({ id: true, createdAt: true, updatedAt: true, workerId: true, status: true, workersAccepted: true, workerProgress: true, posterConfirmedArrival: true, completedAt: true }).extend({
+  scheduledDate: z.union([z.string(), z.date()]).optional().nullable(),
+});
 export const createJobSchema = insertJobSchema.omit({ posterId: true });
 
 export const adminNotifications = pgTable("admin_notifications", {
