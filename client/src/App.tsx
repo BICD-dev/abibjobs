@@ -22,6 +22,7 @@ import AdminVerifications from "@/pages/AdminVerifications";
 import AdminDashboard from "@/pages/AdminDashboard";
 import AdminProfile from "@/pages/AdminProfile";
 import AdminPayroll from "@/pages/AdminPayroll";
+import AdminNotifications from "@/pages/AdminNotifications";
 import Notifications from "@/pages/Notifications";
 import MyJobs from "@/pages/MyJobs";
 import NotFound from "@/pages/not-found";
@@ -87,6 +88,7 @@ function Router() {
       <Route path="/admin/settings" component={AdminSettings} />
       <Route path="/admin/profile" component={AdminProfile} />
       <Route path="/admin/payroll" component={AdminPayroll} />
+      <Route path="/admin/notifications" component={AdminNotifications} />
       <Route path="/admin/verifications" component={AdminVerifications} />
 
       <Route component={NotFound} />

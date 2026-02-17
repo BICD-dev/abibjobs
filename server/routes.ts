@@ -1152,6 +1152,16 @@ export async function registerRoutes(
       }
 
       const updated = await storage.updateAdminBankInfo(adminId, { bankName, bankCode: bankCode || '', accountNumber, accountName });
+
+      try {
+        await storage.createAdminNotification({
+          adminId,
+          title: "Bank Account Updated",
+          message: `Your salary account has been updated to ${bankName} - ${accountNumber} (${accountName}).`,
+          type: "info",
+        });
+      } catch (e) {}
+
       res.json({ bankName: updated.bankName, bankCode: updated.bankCode, accountNumber: updated.accountNumber, accountName: updated.accountName });
     } catch (err) {
       res.status(500).json({ message: "Failed to update bank info" });
@@ -1234,6 +1244,19 @@ export async function registerRoutes(
         await storage.deductPlatformSalary(paidTotal, `Salary payment to ${results.length} admin(s)`);
       }
 
+      for (const p of payments) {
+        try {
+          const amt = parseFloat(p.amount);
+          if (isNaN(amt) || amt <= 0) continue;
+          await storage.createAdminNotification({
+            adminId: p.adminId,
+            title: "Salary Payment Received",
+            message: `You have received a salary payment of \u20A6${amt.toLocaleString()}${p.note ? ` - ${p.note}` : ''}. Source: ${paymentSource === 'platform_earnings' ? 'Platform Earnings' : 'External Bank'}.`,
+            type: "success",
+          });
+        } catch (e) {}
+      }
+
       res.json({ paid: results.length, payments: results });
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to process payments" });
@@ -1299,6 +1322,101 @@ export async function registerRoutes(
     res.json({ message: "Bank info updated" });
   });
 
+  // --- ADMIN NOTIFICATIONS ---
+
+  app.get('/api/admin/notifications', async (req, res) => {
+    try {
+      const adminId = (req.session as any)?.adminId;
+      const email = (req.user as any)?.claims?.email;
+      const isOwnerUser = email && email.toLowerCase() === OWNER_EMAIL;
+
+      if (!adminId && !isOwnerUser) return res.status(401).json({ message: "Not authenticated" });
+
+      if (isOwnerUser) {
+        const ownerAdmin = await storage.getAdminUserByEmail(OWNER_EMAIL);
+        if (ownerAdmin) {
+          const notifs = await storage.getAdminNotifications(ownerAdmin.id);
+          return res.json(notifs);
+        }
+        return res.json([]);
+      }
+
+      const notifs = await storage.getAdminNotifications(adminId);
+      res.json(notifs);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch notifications" });
+    }
+  });
+
+  app.get('/api/admin/notifications/unread-count', async (req, res) => {
+    try {
+      const adminId = (req.session as any)?.adminId;
+      const email = (req.user as any)?.claims?.email;
+      const isOwnerUser = email && email.toLowerCase() === OWNER_EMAIL;
+
+      if (!adminId && !isOwnerUser) return res.status(401).json({ message: "Not authenticated" });
+
+      if (isOwnerUser) {
+        const ownerAdmin = await storage.getAdminUserByEmail(OWNER_EMAIL);
+        if (ownerAdmin) {
+          const count = await storage.getUnreadAdminNotificationCount(ownerAdmin.id);
+          return res.json({ count });
+        }
+        return res.json({ count: 0 });
+      }
+
+      const count = await storage.getUnreadAdminNotificationCount(adminId);
+      res.json({ count });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch unread count" });
+    }
+  });
+
+  app.post('/api/admin/notifications/:id/read', async (req, res) => {
+    try {
+      const adminId = (req.session as any)?.adminId;
+      const email = (req.user as any)?.claims?.email;
+      const isOwnerUser = email && email.toLowerCase() === OWNER_EMAIL;
+
+      if (!adminId && !isOwnerUser) return res.status(401).json({ message: "Not authenticated" });
+
+      const notifId = Number(req.params.id);
+      let effectiveAdminId = adminId;
+      if (isOwnerUser) {
+        const ownerAdmin = await storage.getAdminUserByEmail(OWNER_EMAIL);
+        if (ownerAdmin) effectiveAdminId = ownerAdmin.id;
+      }
+      if (effectiveAdminId) {
+        await storage.markAdminNotificationRead(notifId, effectiveAdminId);
+      }
+      res.json({ message: "Marked as read" });
+    } catch (err) {
+      res.status(500).json({ message: "Failed" });
+    }
+  });
+
+  app.post('/api/admin/notifications/read-all', async (req, res) => {
+    try {
+      const adminId = (req.session as any)?.adminId;
+      const email = (req.user as any)?.claims?.email;
+      const isOwnerUser = email && email.toLowerCase() === OWNER_EMAIL;
+
+      if (!adminId && !isOwnerUser) return res.status(401).json({ message: "Not authenticated" });
+
+      let effectiveAdminId = adminId;
+      if (isOwnerUser) {
+        const ownerAdmin = await storage.getAdminUserByEmail(OWNER_EMAIL);
+        if (ownerAdmin) effectiveAdminId = ownerAdmin.id;
+      }
+      if (effectiveAdminId) {
+        await storage.markAllAdminNotificationsRead(effectiveAdminId);
+      }
+      res.json({ message: "All marked as read" });
+    } catch (err) {
+      res.status(500).json({ message: "Failed" });
+    }
+  });
+
   // --- DISPUTES ---
 
   app.post('/api/jobs/:id/dispute', isAuthenticated, async (req, res) => {
@@ -1343,6 +1461,15 @@ export async function registerRoutes(
       });
 
       await storage.updateJob(jobId, { status: 'disputed' });
+
+      try {
+        await storage.createAdminNotificationForAll({
+          title: "New Dispute Filed",
+          message: `A new dispute has been filed for job "${job.title}". Review and resolve it in the Disputes section.`,
+          type: "warning",
+          disputeId: dispute.id,
+        });
+      } catch (e) {}
 
       const full = await storage.getDispute(dispute.id);
       res.status(201).json(full);
@@ -1770,6 +1897,15 @@ export async function registerRoutes(
         status: newStatus,
         ...(newStatus === 'completed' ? { completedAt: new Date() } : {}),
       });
+
+      try {
+        await storage.createAdminNotificationForAll({
+          title: "Dispute Resolved",
+          message: `Dispute #${disputeId} for job "${job.title}" has been resolved. ${summaryMsg}`,
+          type: "success",
+          disputeId,
+        });
+      } catch (e) {}
 
       const full = await storage.getDispute(disputeId);
       res.json(full);
