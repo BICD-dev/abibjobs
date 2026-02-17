@@ -10,6 +10,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Loader2, Eye, UserPlus, ArrowUpCircle, ArrowDownCircle, TrendingUp, CalendarIcon, Clock, Briefcase, Users, Megaphone, Send } from "lucide-react";
 import { useAdminAuth } from "@/hooks/use-admin-auth";
 import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
 import { format, subDays } from "date-fns";
 import type { DateRange } from "react-day-picker";
 import { cn } from "@/lib/utils";
@@ -454,16 +455,7 @@ function BroadcastSection() {
 
   const broadcastMutation = useMutation({
     mutationFn: async (data: { title: string; message: string }) => {
-      const res = await fetch('/api/admin/broadcast', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-        credentials: 'include',
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.message || 'Failed to send');
-      }
+      const res = await apiRequest('POST', '/api/admin/broadcast', data);
       return res.json();
     },
     onSuccess: () => {
@@ -494,7 +486,7 @@ function BroadcastSection() {
           placeholder="Describe the update or announcement..."
           value={message}
           onChange={(e) => setMessage(e.target.value)}
-          className="rounded-xl resize-none h-24"
+          className="resize-none min-h-[6rem]"
           data-testid="input-broadcast-message"
         />
         <Button

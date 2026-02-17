@@ -2283,10 +2283,17 @@ export async function registerRoutes(
   // --- ADMIN BROADCAST ---
   app.post('/api/admin/broadcast', isAuthenticated, isOwner, async (req, res) => {
     const { title, message } = req.body;
-    if (!title || !message) return res.status(400).json({ message: "Title and message are required" });
+    if (!title || typeof title !== 'string' || !message || typeof message !== 'string') {
+      return res.status(400).json({ message: "Title and message are required" });
+    }
+    const trimmedTitle = title.trim().slice(0, 200);
+    const trimmedMessage = message.trim().slice(0, 1000);
+    if (!trimmedTitle || !trimmedMessage) {
+      return res.status(400).json({ message: "Title and message cannot be empty" });
+    }
     await storage.broadcastNotificationToAll({
-      title,
-      message,
+      title: trimmedTitle,
+      message: trimmedMessage,
       type: 'info',
     });
     res.json({ success: true, message: "Announcement sent to all users" });
