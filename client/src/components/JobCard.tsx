@@ -1,6 +1,6 @@
 import { Link } from "wouter";
-import { formatDistanceToNow } from "date-fns";
-import { MapPin, Briefcase, CheckCircle2, Clock, XCircle, Users, Lock } from "lucide-react";
+import { formatDistanceToNow, format } from "date-fns";
+import { MapPin, Briefcase, CheckCircle2, Clock, XCircle, Users, Lock, CalendarDays } from "lucide-react";
 import type { JobWithDetails } from "@shared/schema";
 import { Badge } from "@/components/ui/badge";
 
@@ -71,6 +71,12 @@ export function JobCard({ job }: JobCardProps) {
               <div className="flex items-center" data-testid={`text-workers-${job.id}`}>
                 <Users className="w-4 h-4 mr-1 text-primary/70" />
                 <span>{job.workersAccepted}/{job.workersNeeded} workers</span>
+              </div>
+            )}
+            {job.scheduledDate && (
+              <div className="flex items-center" data-testid={`text-scheduled-${job.id}`}>
+                <CalendarDays className="w-4 h-4 mr-1 text-primary/70" />
+                <span>{format(new Date(job.scheduledDate), "PP p")}</span>
               </div>
             )}
           </div>

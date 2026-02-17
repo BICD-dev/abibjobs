@@ -30,13 +30,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Plus } from "lucide-react";
+import { Loader2, Plus, CalendarDays } from "lucide-react";
 import { z } from "zod";
 
 const formSchema = createJobSchema.extend({
   price: z.coerce.number().min(100, "Minimum price is ₦100"),
   priceType: z.enum(["total", "per_person"]).default("total"),
   workersNeeded: z.coerce.number().min(1, "At least 1 worker required").max(50, "Maximum 50 workers"),
+  scheduledDate: z.string().optional(),
+  scheduledTime: z.string().optional(),
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -55,6 +57,8 @@ export function CreateJobDialog() {
       location: "",
       category: "other",
       workersNeeded: 1,
+      scheduledDate: "",
+      scheduledTime: "",
     },
   });
 
@@ -67,11 +71,19 @@ export function CreateJobDialog() {
     : watchedPrice || 0;
 
   const onSubmit = (data: FormValues) => {
+    let scheduledDate: string | undefined;
+    if (data.scheduledDate) {
+      const dateStr = data.scheduledDate;
+      const timeStr = data.scheduledTime || "09:00";
+      scheduledDate = new Date(`${dateStr}T${timeStr}`).toISOString();
+    }
+    const { scheduledTime: _st, ...rest } = data;
     createJob({
-      ...data,
+      ...rest,
       price: String(data.price),
       priceType: data.workersNeeded > 1 ? data.priceType : "total",
       workersNeeded: Number(data.workersNeeded),
+      scheduledDate: scheduledDate || undefined,
     } as unknown as CreateJobInput, {
       onSuccess: () => {
         setOpen(false);
@@ -235,6 +247,47 @@ export function CreateJobDialog() {
                 </FormItem>
               )}
             />
+
+            <div className="grid grid-cols-2 gap-4">
+              <FormField
+                control={form.control}
+                name="scheduledDate"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="font-semibold text-foreground/80">Date Needed</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="date"
+                        min={new Date().toISOString().split('T')[0]}
+                        className="rounded-xl border-2 focus:border-primary/50"
+                        {...field}
+                        data-testid="input-scheduled-date"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="scheduledTime"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel className="font-semibold text-foreground/80">Time</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="time"
+                        className="rounded-xl border-2 focus:border-primary/50"
+                        {...field}
+                        data-testid="input-scheduled-time"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
 
             <FormField
               control={form.control}

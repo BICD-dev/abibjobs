@@ -259,6 +259,12 @@ export default function JobDetails() {
                   <Calendar className="w-4 h-4 mr-1.5 text-primary" />
                   Posted {format(new Date(job.createdAt || Date.now()), "PP")}
                 </div>
+                {job.scheduledDate && (
+                  <div className="flex items-center text-primary font-medium" data-testid="text-scheduled-date">
+                    <Clock className="w-4 h-4 mr-1.5" />
+                    Needed: {format(new Date(job.scheduledDate), "PPP 'at' p")}
+                  </div>
+                )}
               </div>
             </div>
 

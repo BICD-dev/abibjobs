@@ -131,7 +131,12 @@ export async function registerRoutes(
         type: 'escrow_hold',
       });
 
-      const job = await storage.createJob({ ...input, posterId: userId });
+      const jobInput = {
+        ...input,
+        posterId: userId,
+        scheduledDate: input.scheduledDate ? new Date(input.scheduledDate as any) : undefined,
+      };
+      const job = await storage.createJob(jobInput);
 
       await storage.createAdminNotification({
         adminId: 0,
