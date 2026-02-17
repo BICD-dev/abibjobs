@@ -15,10 +15,42 @@ import {
   Loader2, MapPin, Calendar, ArrowLeft, CheckCircle, Shield, Users, XCircle,
   MessageSquare, ArrowUpDown, Send, Check, X, AlertTriangle, Wallet,
   Flag, Scale, ArrowUpCircle, Image as ImageIcon, Navigation, Clock, MapPinCheck, UserX, Lock,
-  RefreshCw, Trash2
+  RefreshCw, Trash2, CalendarPlus
 } from "lucide-react";
 import { format } from "date-fns";
 import type { OfferWithSender, DisputeMessageWithSender } from "@shared/schema";
+
+function generateIcsFile(job: { title: string; description: string; location: string; scheduledDate: string | Date }) {
+  const start = new Date(job.scheduledDate);
+  const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  const formatDate = (d: Date) =>
+    `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z`;
+
+  const ics = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//ABIB JOBS//EN',
+    'BEGIN:VEVENT',
+    `DTSTART:${formatDate(start)}`,
+    `DTEND:${formatDate(end)}`,
+    `SUMMARY:${job.title}`,
+    `DESCRIPTION:${job.description.replace(/\n/g, '\\n')}`,
+    `LOCATION:${job.location}`,
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n');
+
+  const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${job.title.replace(/[^a-zA-Z0-9]/g, '_')}.ics`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 
 export default function JobDetails() {
   const [match, params] = useRoute("/jobs/:id");
@@ -260,9 +292,19 @@ export default function JobDetails() {
                   Posted {format(new Date(job.createdAt || Date.now()), "PP")}
                 </div>
                 {job.scheduledDate && (
-                  <div className="flex items-center text-primary font-medium" data-testid="text-scheduled-date">
-                    <Clock className="w-4 h-4 mr-1.5" />
-                    Needed: {format(new Date(job.scheduledDate), "PPP 'at' p")}
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center text-primary font-medium" data-testid="text-scheduled-date">
+                      <Clock className="w-4 h-4 mr-1.5" />
+                      Needed: {format(new Date(job.scheduledDate), "PPP 'at' p")}
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => generateIcsFile(job)}
+                      data-testid="button-add-to-calendar"
+                    >
+                      <CalendarPlus className="w-4 h-4 mr-1" /> Add to Calendar
+                    </Button>
                   </div>
                 )}
               </div>

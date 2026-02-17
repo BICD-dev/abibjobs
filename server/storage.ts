@@ -109,6 +109,7 @@ export interface IStorage {
 
   // Notifications
   createNotification(data: { userId: string; title: string; message: string; type: string; jobId?: number }): Promise<Notification>;
+  broadcastNotificationToAll(data: { title: string; message: string; type: string; jobId?: number; excludeUserId?: string }): Promise<void>;
   getNotifications(userId: string): Promise<Notification[]>;
   markNotificationRead(id: number, userId: string): Promise<void>;
   markAllNotificationsRead(userId: string): Promise<void>;
@@ -758,6 +759,15 @@ export class DatabaseStorage implements IStorage {
   async createNotification(data: { userId: string; title: string; message: string; type: string; jobId?: number }): Promise<Notification> {
     const [notification] = await db.insert(notifications).values(data).returning();
     return notification;
+  }
+
+  async broadcastNotificationToAll(data: { title: string; message: string; type: string; jobId?: number; excludeUserId?: string }): Promise<void> {
+    const allProfiles = await db.select({ userId: profiles.userId }).from(profiles);
+    const userIds = allProfiles.map(p => p.userId).filter(id => id !== data.excludeUserId);
+    if (userIds.length === 0) return;
+    const { excludeUserId, ...notifData } = data;
+    const values = userIds.map(userId => ({ ...notifData, userId }));
+    await db.insert(notifications).values(values);
   }
 
   async getNotifications(userId: string): Promise<Notification[]> {

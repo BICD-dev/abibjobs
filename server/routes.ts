@@ -145,6 +145,14 @@ export async function registerRoutes(
         type: 'info'
       });
 
+      storage.broadcastNotificationToAll({
+        title: 'New Job Available',
+        message: `"${job.title}" in ${job.location} for ₦${parseFloat(job.price).toLocaleString()}. Check it out!`,
+        type: 'info',
+        jobId: job.id,
+        excludeUserId: userId,
+      }).catch(() => {});
+
       res.status(201).json(job);
     } catch (err) {
       if (err instanceof z.ZodError) {
@@ -206,6 +214,14 @@ export async function registerRoutes(
       type: 'info'
     });
 
+    await storage.createNotification({
+      userId: job.posterId,
+      title: 'Worker Accepted Your Job',
+      message: `A worker has accepted your job "${job.title}" (${newAccepted}/${job.workersNeeded} workers).${newStatus === 'in_progress' ? ' Job is now in progress!' : ''}`,
+      type: 'info',
+      jobId: job.id,
+    });
+
     res.json(updated);
   });
 
@@ -251,6 +267,16 @@ export async function registerRoutes(
       message: `"${job.title}" has been completed. Platform fee earned: ₦${fee.toFixed(2)}. Total payout to ${workerIds.length} worker(s): ₦${totalPayout.toFixed(2)}.`,
       type: 'success'
     });
+
+    for (const wId of workerIds) {
+      storage.createNotification({
+        userId: wId,
+        title: 'Job Completed - Payment Received',
+        message: `"${job.title}" has been marked as completed. ₦${payoutPerWorker.toLocaleString()} has been added to your wallet.`,
+        type: 'success',
+        jobId: job.id,
+      }).catch(() => {});
+    }
 
     res.json(updated);
   });
@@ -1502,6 +1528,14 @@ export async function registerRoutes(
         });
       } catch (e) {}
 
+      await storage.createNotification({
+        userId: parsed.data.workerId,
+        title: 'Dispute Filed Against You',
+        message: `The poster has filed a dispute for job "${job.title}". Please review and respond in the job details.`,
+        type: 'warning',
+        jobId: job.id,
+      });
+
       const full = await storage.getDispute(dispute.id);
       res.status(201).json(full);
     } catch (err) {
@@ -2244,6 +2278,18 @@ export async function registerRoutes(
     });
 
     res.json(updated);
+  });
+
+  // --- ADMIN BROADCAST ---
+  app.post('/api/admin/broadcast', isAuthenticated, isOwner, async (req, res) => {
+    const { title, message } = req.body;
+    if (!title || !message) return res.status(400).json({ message: "Title and message are required" });
+    await storage.broadcastNotificationToAll({
+      title,
+      message,
+      type: 'info',
+    });
+    res.json({ success: true, message: "Announcement sent to all users" });
   });
 
   // --- OWNER PASSCODE ---

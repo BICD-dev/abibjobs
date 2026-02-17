@@ -1,12 +1,15 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Navbar } from "@/components/Navbar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Loader2, Eye, UserPlus, ArrowUpCircle, ArrowDownCircle, TrendingUp, CalendarIcon, Clock, Briefcase, Users } from "lucide-react";
+import { Loader2, Eye, UserPlus, ArrowUpCircle, ArrowDownCircle, TrendingUp, CalendarIcon, Clock, Briefcase, Users, Megaphone, Send } from "lucide-react";
 import { useAdminAuth } from "@/hooks/use-admin-auth";
+import { useToast } from "@/hooks/use-toast";
 import { format, subDays } from "date-fns";
 import type { DateRange } from "react-day-picker";
 import { cn } from "@/lib/utils";
@@ -437,7 +440,73 @@ export default function AdminDashboard() {
             </Card>
           </>
         ) : null}
+
+        <BroadcastSection />
       </div>
     </div>
+  );
+}
+
+function BroadcastSection() {
+  const [title, setTitle] = useState("");
+  const [message, setMessage] = useState("");
+  const { toast } = useToast();
+
+  const broadcastMutation = useMutation({
+    mutationFn: async (data: { title: string; message: string }) => {
+      const res = await fetch('/api/admin/broadcast', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message || 'Failed to send');
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Announcement Sent", description: "All users have been notified." });
+      setTitle("");
+      setMessage("");
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  return (
+    <Card className="rounded-3xl border-border shadow-sm" data-testid="card-broadcast">
+      <CardHeader className="flex flex-row items-center gap-2">
+        <Megaphone className="w-5 h-5 text-primary" />
+        <CardTitle className="text-lg">Send Announcement to All Users</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <Input
+          placeholder="Announcement title (e.g. New Feature: Calendar Integration)"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          className="rounded-xl"
+          data-testid="input-broadcast-title"
+        />
+        <Textarea
+          placeholder="Describe the update or announcement..."
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          className="rounded-xl resize-none h-24"
+          data-testid="input-broadcast-message"
+        />
+        <Button
+          onClick={() => broadcastMutation.mutate({ title, message })}
+          disabled={!title.trim() || !message.trim() || broadcastMutation.isPending}
+          className="rounded-xl"
+          data-testid="button-send-broadcast"
+        >
+          {broadcastMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Send className="w-4 h-4 mr-2" />}
+          Send to All Users
+        </Button>
+      </CardContent>
+    </Card>
   );
 }
