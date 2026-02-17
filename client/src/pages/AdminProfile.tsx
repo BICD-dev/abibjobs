@@ -10,7 +10,8 @@ import { Loader2, Clock, Building2, CreditCard, Check, User, CalendarIcon, Chevr
 import { useAdminAuth } from "@/hooks/use-admin-auth";
 import { useToast } from "@/hooks/use-toast";
 import { NIGERIAN_BANKS } from "@/lib/nigerian-banks";
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, isSameMonth, addMonths, subMonths } from "date-fns";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, isSameMonth, addMonths, subMonths, isWithinInterval, parseISO } from "date-fns";
 
 interface AdminHoursResponse {
   hours: { date: string; secondsWorked: number }[];
@@ -66,6 +67,10 @@ export default function AdminProfile() {
   const [isEditing, setIsEditing] = useState(false);
   const [calendarMonth, setCalendarMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const [rangeFrom, setRangeFrom] = useState<Date | null>(null);
+  const [rangeTo, setRangeTo] = useState<Date | null>(null);
+  const [rangeFromOpen, setRangeFromOpen] = useState(false);
+  const [rangeToOpen, setRangeToOpen] = useState(false);
 
   const { data: hoursData, isLoading } = useQuery<AdminHoursResponse>({
     queryKey: ["/api/admin/my-hours"],
@@ -86,6 +91,18 @@ export default function AdminProfile() {
     },
     enabled: !!isStaff,
   });
+
+  const rangeResult = useMemo(() => {
+    if (!rangeFrom || !rangeTo || !hoursData?.hours) return null;
+    const start = rangeFrom < rangeTo ? rangeFrom : rangeTo;
+    const end = rangeFrom < rangeTo ? rangeTo : rangeFrom;
+    const filtered = hoursData.hours.filter(h => {
+      const d = new Date(h.date + 'T00:00:00');
+      return d >= start && d <= end;
+    });
+    const totalSeconds = filtered.reduce((sum, h) => sum + h.secondsWorked, 0);
+    return { totalSeconds, daysWorked: filtered.length, hours: filtered, start, end };
+  }, [rangeFrom, rangeTo, hoursData]);
 
   const bankMutation = useMutation({
     mutationFn: async (data: { bankName: string; bankCode: string; accountNumber: string; accountName: string }) => {
@@ -293,6 +310,97 @@ export default function AdminProfile() {
                     </div>
                   );
                 })()}
+
+                <div className="mt-6 pt-4 border-t space-y-4">
+                  <div className="flex items-center gap-2">
+                    <CalendarIcon className="w-4 h-4 text-primary" />
+                    <p className="text-sm font-semibold text-foreground">Custom Date Range</p>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Pick a start and end date to see total hours worked in that period</p>
+
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <Popover open={rangeFromOpen} onOpenChange={setRangeFromOpen}>
+                      <PopoverTrigger asChild>
+                        <Button variant="outline" className="justify-start text-left font-normal min-w-[150px]" data-testid="button-range-from">
+                          <CalendarIcon className="w-4 h-4 mr-2 flex-shrink-0" />
+                          {rangeFrom ? format(rangeFrom, "MMM d, yyyy") : "Start date"}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="start">
+                        <Calendar
+                          mode="single"
+                          selected={rangeFrom || undefined}
+                          onSelect={(d) => { setRangeFrom(d || null); setRangeFromOpen(false); }}
+                          data-testid="calendar-range-from"
+                        />
+                      </PopoverContent>
+                    </Popover>
+
+                    <span className="text-sm text-muted-foreground">to</span>
+
+                    <Popover open={rangeToOpen} onOpenChange={setRangeToOpen}>
+                      <PopoverTrigger asChild>
+                        <Button variant="outline" className="justify-start text-left font-normal min-w-[150px]" data-testid="button-range-to">
+                          <CalendarIcon className="w-4 h-4 mr-2 flex-shrink-0" />
+                          {rangeTo ? format(rangeTo, "MMM d, yyyy") : "End date"}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="start">
+                        <Calendar
+                          mode="single"
+                          selected={rangeTo || undefined}
+                          onSelect={(d) => { setRangeTo(d || null); setRangeToOpen(false); }}
+                          data-testid="calendar-range-to"
+                        />
+                      </PopoverContent>
+                    </Popover>
+
+                    {(rangeFrom || rangeTo) && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => { setRangeFrom(null); setRangeTo(null); }}
+                        data-testid="button-clear-range"
+                      >
+                        Clear
+                      </Button>
+                    )}
+                  </div>
+
+                  {rangeResult && (
+                    <div className="space-y-3">
+                      <div className="p-4 rounded-xl bg-primary/5 border border-primary/20" data-testid="card-range-result">
+                        <p className="text-xs text-muted-foreground mb-1">
+                          {format(rangeResult.start, "MMM d, yyyy")} &mdash; {format(rangeResult.end, "MMM d, yyyy")}
+                        </p>
+                        <p className="text-2xl font-bold text-foreground" data-testid="text-range-total-hours">
+                          {formatDuration(rangeResult.totalSeconds)}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1" data-testid="text-range-days-worked">
+                          {rangeResult.daysWorked} day{rangeResult.daysWorked !== 1 ? "s" : ""} worked
+                        </p>
+                      </div>
+
+                      {rangeResult.hours.length > 0 && (
+                        <div>
+                          <p className="text-sm font-medium text-muted-foreground mb-2">Breakdown</p>
+                          <div className="space-y-1 max-h-48 overflow-y-auto">
+                            {[...rangeResult.hours].sort((a, b) => b.date.localeCompare(a.date)).map((h) => (
+                              <div key={h.date} className="flex items-center justify-between gap-4 p-2 rounded-lg" data-testid={`row-range-hours-${h.date}`}>
+                                <span className="text-sm text-foreground">{format(new Date(h.date + 'T00:00:00'), "MMM d, yyyy (EEE)")}</span>
+                                <span className="text-sm font-medium text-foreground">{formatDuration(h.secondsWorked)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {rangeFrom && rangeTo && !rangeResult?.hours.length && (
+                    <p className="text-sm text-muted-foreground text-center py-3">No hours recorded in this date range</p>
+                  )}
+                </div>
               </CardContent>
             </Card>
 
