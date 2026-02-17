@@ -9,6 +9,7 @@ import { Loader2 } from "lucide-react";
 
 import { useGlobalVisitorTracking } from "@/hooks/use-visitor-tracking";
 import Home from "@/pages/Home";
+import AuthPage from "@/pages/AuthPage";
 import Jobs from "@/pages/Jobs";
 import JobDetails from "@/pages/JobDetails";
 import Wallet from "@/pages/Wallet";
@@ -39,8 +40,7 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
   }
 
   if (!user) {
-    const returnTo = encodeURIComponent(window.location.pathname);
-    window.location.href = `/api/login?returnTo=${returnTo}`;
+    window.location.href = "/auth";
     return null;
   }
 
@@ -57,6 +57,7 @@ function Router() {
   return (
     <Switch>
       <Route path="/" component={Home} />
+      <Route path="/auth" component={AuthPage} />
       
       <Route path="/jobs">
         {() => <ProtectedRoute component={Jobs} />}

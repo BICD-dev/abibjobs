@@ -62,10 +62,10 @@ export default function Home() {
             
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4 animate-in fade-in slide-in-from-bottom-8 duration-1000 delay-300">
               <Button asChild size="lg" className="h-14 px-8 text-lg rounded-2xl bg-primary hover:bg-primary/90 shadow-xl shadow-primary/20 hover:scale-105 transition-all">
-                <a href="/api/login">Post a Job Now</a>
+                <a href="/auth">Post a Job Now</a>
               </Button>
               <Button asChild size="lg" variant="outline" className="h-14 px-8 text-lg rounded-2xl border-2 hover:bg-muted/50 transition-all">
-                <a href="/api/login">Find Work</a>
+                <a href="/auth">Find Work</a>
               </Button>
             </div>
           </div>
@@ -121,7 +121,7 @@ export default function Home() {
                 Join thousands of Nigerians using ABIB JOBS to simplify their lives.
               </p>
               <Button asChild size="lg" className="h-14 px-10 bg-white text-primary hover:bg-white/90 text-lg font-bold rounded-2xl shadow-lg border-2 border-transparent hover:border-white/50 transition-all">
-                <a href="/api/login">
+                <a href="/auth">
                   Create Free Account <ArrowRight className="ml-2 w-5 h-5" />
                 </a>
               </Button>

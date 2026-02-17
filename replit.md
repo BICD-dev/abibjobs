@@ -48,12 +48,17 @@ Main tables:
 
 Schema changes use `drizzle-kit push` (not migrations). Run `npm run db:push` to sync schema to database.
 
-### Authentication
-- **Replit Auth** via OpenID Connect (OIDC) — handles login/logout/session management
+### Authentication (Dual Auth System)
+- **Two login methods**: Replit Auth (OIDC email login) OR Manual signup/login with email+password
+- Auth page at `/auth` presents users with choice: "Continue with Email" (OIDC), "Sign Up Manually", or "Log In Manually"
+- **Replit Auth** via OpenID Connect (OIDC) — handles email-based login/logout/session management
+- **Manual Auth** — users register with firstName, lastName, email, password; stored in users table with `authMethod='manual'` and `passwordHash`
+- Manual login enforces `authMethod === 'manual'` to prevent cross-auth method access
 - Sessions stored in PostgreSQL via `connect-pg-simple`
-- Auth middleware: `isAuthenticated` guard for protected routes
-- `ensureProfile` middleware auto-creates a profile record for newly authenticated users
-- Login redirect: `/api/login`, Logout: `/api/logout`, Current user: `/api/auth/user`
+- Auth middleware: `isAuthenticated` guard supports both OIDC and manual sessions (checks `req.session.manualUserId` first)
+- `ensureProfile` middleware auto-creates a profile record for newly authenticated users (both auth methods)
+- Routes: POST `/api/auth/register` (manual signup), POST `/api/auth/login-manual` (manual login), GET `/api/auth/user` (current user), GET `/api/logout` (logout both methods)
+- All frontend CTA buttons link to `/auth` instead of `/api/login`
 
 ### API Design
 - Routes defined declaratively in `shared/routes.ts` with Zod schemas for input/output validation

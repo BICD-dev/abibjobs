@@ -42,6 +42,10 @@ import {
 } from "@shared/schema";
 
 export interface IStorage {
+  // Manual Auth
+  getUserByEmail(email: string): Promise<any | undefined>;
+  createManualUser(data: { email: string; firstName: string; lastName: string; passwordHash: string }): Promise<any>;
+
   // Profiles
   getProfile(userId: string): Promise<Profile | undefined>;
   createProfile(userId: string): Promise<Profile>;
@@ -166,6 +170,23 @@ export interface IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
+  async getUserByEmail(email: string): Promise<any | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.email, email));
+    return user;
+  }
+
+  async createManualUser(data: { email: string; firstName: string; lastName: string; passwordHash: string }): Promise<any> {
+    const [user] = await db.insert(users).values({
+      email: data.email,
+      firstName: data.firstName,
+      lastName: data.lastName,
+      passwordHash: data.passwordHash,
+      authMethod: 'manual',
+    }).returning();
+    await db.insert(profiles).values({ userId: user.id });
+    return user;
+  }
+
   async getProfile(userId: string): Promise<Profile | undefined> {
     const [profile] = await db.select().from(profiles).where(eq(profiles.userId, userId));
     return profile;

@@ -136,22 +136,44 @@ export async function setupAuth(app: Express) {
     })(req, res, next);
   });
 
-  app.get("/api/logout", (req, res) => {
-    req.logout(() => {
-      res.redirect(
-        client.buildEndSessionUrl(config, {
-          client_id: process.env.REPL_ID!,
-          post_logout_redirect_uri: `${req.protocol}://${req.hostname}`,
-        }).href
-      );
-    });
+  app.get("/api/logout", (req: any, res) => {
+    const hasOidc = req.isAuthenticated && req.isAuthenticated();
+    const hasManual = !!req.session?.manualUserId;
+
+    if (hasManual) {
+      delete req.session.manualUserId;
+    }
+
+    if (hasOidc) {
+      req.logout(() => {
+        req.session.destroy(() => {
+          res.redirect(
+            client.buildEndSessionUrl(config, {
+              client_id: process.env.REPL_ID!,
+              post_logout_redirect_uri: `${req.protocol}://${req.hostname}`,
+            }).href
+          );
+        });
+      });
+    } else {
+      req.session.destroy(() => {
+        res.redirect("/");
+      });
+    }
   });
 }
 
-export const isAuthenticated: RequestHandler = async (req, res, next) => {
+export const isAuthenticated: RequestHandler = async (req: any, res, next) => {
+  if (req.session?.manualUserId) {
+    if (!req.user) {
+      req.user = { claims: { sub: req.session.manualUserId } };
+    }
+    return next();
+  }
+
   const user = req.user as any;
 
-  if (!req.isAuthenticated() || !user.expires_at) {
+  if (!req.isAuthenticated || !req.isAuthenticated() || !user?.expires_at) {
     return res.status(401).json({ message: "Unauthorized" });
   }
 
