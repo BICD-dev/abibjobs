@@ -1188,9 +1188,24 @@ export async function registerRoutes(
   // Owner: pay selected admins
   app.post('/api/admin/payroll/pay', isAuthenticated, isOwner, async (req, res) => {
     try {
-      const { payments } = req.body;
+      const { payments, paymentSource } = req.body;
       if (!payments || !Array.isArray(payments) || payments.length === 0) {
         return res.status(400).json({ message: "Please select at least one admin to pay" });
+      }
+
+      const totalAmount = payments.reduce((sum: number, p: any) => {
+        const amt = parseFloat(p.amount);
+        return sum + (isNaN(amt) ? 0 : amt);
+      }, 0);
+
+      if (paymentSource === 'platform_earnings') {
+        const earnings = await storage.getPlatformEarnings();
+        const balance = parseFloat(earnings.totalBalance);
+        if (balance < totalAmount) {
+          return res.status(400).json({ 
+            message: `Insufficient platform balance. Available: ${new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', minimumFractionDigits: 0 }).format(balance)}, Required: ${new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', minimumFractionDigits: 0 }).format(totalAmount)}` 
+          });
+        }
       }
 
       const results = [];
@@ -1208,15 +1223,20 @@ export async function registerRoutes(
           bankCode: admin.bankCode || undefined,
           accountNumber: admin.accountNumber || undefined,
           accountName: admin.accountName || undefined,
-          note: note || undefined,
+          note: note ? `${note} (${paymentSource === 'platform_earnings' ? 'Platform Earnings' : 'External Bank'})` : (paymentSource === 'platform_earnings' ? 'Platform Earnings' : 'External Bank'),
           paidBy: 'owner',
         });
         results.push(payment);
       }
 
+      if (paymentSource === 'platform_earnings' && results.length > 0) {
+        const paidTotal = results.reduce((sum, r) => sum + parseFloat(r.amount), 0);
+        await storage.deductPlatformSalary(paidTotal, `Salary payment to ${results.length} admin(s)`);
+      }
+
       res.json({ paid: results.length, payments: results });
-    } catch (err) {
-      res.status(500).json({ message: "Failed to process payments" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to process payments" });
     }
   });
 

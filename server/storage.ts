@@ -544,6 +544,19 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
+  async deductPlatformSalary(amount: number, description: string): Promise<void> {
+    const earnings = await this.getPlatformEarnings();
+    const currentBalance = parseFloat(earnings.totalBalance);
+    if (currentBalance < amount) throw new Error("Insufficient platform balance");
+    const newBalance = currentBalance - amount;
+    await db.update(platformEarnings).set({ totalBalance: newBalance.toFixed(2) }).where(eq(platformEarnings.id, earnings.id));
+    await db.insert(platformTransactions).values({
+      amount: (-amount).toFixed(2),
+      type: 'salary_payment',
+      jobTitle: description,
+    });
+  }
+
   async getAdminUser(id: number): Promise<AdminUser | undefined> {
     const [admin] = await db.select().from(adminUsers).where(eq(adminUsers.id, id));
     return admin;

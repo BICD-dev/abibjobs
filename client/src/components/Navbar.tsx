@@ -38,11 +38,13 @@ export function Navbar() {
   const { data: unreadData } = useUnreadNotificationCount(isAuthenticated);
   const unreadCount = unreadData?.count || 0;
 
-  const navLinks = [
-    { href: "/jobs", label: "Find Jobs", icon: Briefcase },
-    { href: "/my-jobs", label: "My Jobs", icon: ClipboardList },
-    { href: "/wallet", label: "Wallet", icon: Wallet },
-  ];
+  const navLinks = isStaff
+    ? []
+    : [
+        { href: "/jobs", label: "Find Jobs", icon: Briefcase },
+        { href: "/my-jobs", label: "My Jobs", icon: ClipboardList },
+        { href: "/wallet", label: "Wallet", icon: Wallet },
+      ];
 
   const adminLinks = [];
   if (isOwner) {
@@ -53,10 +55,8 @@ export function Navbar() {
     adminLinks.push({ href: "/admin/disputes", label: "Disputes", icon: Scale });
     adminLinks.push({ href: "/admin/staff", label: "Admin Staff", icon: Users });
   } else if (isStaff) {
-    adminLinks.push({ href: "/admin/dashboard", label: "Dashboard", icon: LayoutDashboard });
-    adminLinks.push({ href: "/admin/profile", label: "My Profile", icon: User });
-    adminLinks.push({ href: "/admin/verifications", label: "Verifications", icon: ShieldCheck });
     adminLinks.push({ href: "/admin/disputes", label: "Disputes", icon: Scale });
+    adminLinks.push({ href: "/admin/profile", label: "My Profile", icon: User });
   }
 
   const allLinks = isAuthenticated ? [...navLinks, ...adminLinks] : adminLinks;
@@ -158,14 +158,22 @@ export function Navbar() {
                       </>
                     )}
                     {isStaff && (
-                      <Link href="/admin/profile">
-                        <DropdownMenuItem className="cursor-pointer">
-                          <User className="mr-2 h-4 w-4" />
-                          <span>My Admin Profile</span>
-                        </DropdownMenuItem>
-                      </Link>
+                      <>
+                        <Link href="/admin/profile">
+                          <DropdownMenuItem className="cursor-pointer">
+                            <User className="mr-2 h-4 w-4" />
+                            <span>My Admin Profile</span>
+                          </DropdownMenuItem>
+                        </Link>
+                        <Link href="/admin/disputes">
+                          <DropdownMenuItem className="cursor-pointer">
+                            <Scale className="mr-2 h-4 w-4" />
+                            <span>Manage Disputes</span>
+                          </DropdownMenuItem>
+                        </Link>
+                      </>
                     )}
-                    {(isOwner || isStaff) && (
+                    {isOwner && (
                       <>
                         <Link href="/admin/verifications">
                           <DropdownMenuItem className="cursor-pointer">

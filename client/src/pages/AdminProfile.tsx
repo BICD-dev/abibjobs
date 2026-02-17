@@ -1,15 +1,16 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Navbar } from "@/components/Navbar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Clock, Building2, CreditCard, Check, User } from "lucide-react";
+import { Calendar } from "@/components/ui/calendar";
+import { Loader2, Clock, Building2, CreditCard, Check, User, CalendarIcon, ChevronLeft, ChevronRight } from "lucide-react";
 import { useAdminAuth } from "@/hooks/use-admin-auth";
 import { useToast } from "@/hooks/use-toast";
 import { NIGERIAN_BANKS } from "@/lib/nigerian-banks";
-import { format } from "date-fns";
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, isSameMonth, addMonths, subMonths } from "date-fns";
 
 interface AdminHoursResponse {
   hours: { date: string; secondsWorked: number }[];
@@ -63,6 +64,8 @@ export default function AdminProfile() {
   const [accountNumber, setAccountNumber] = useState("");
   const [accountName, setAccountName] = useState("");
   const [isEditing, setIsEditing] = useState(false);
+  const [calendarMonth, setCalendarMonth] = useState(new Date());
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
 
   const { data: hoursData, isLoading } = useQuery<AdminHoursResponse>({
     queryKey: ["/api/admin/my-hours"],
@@ -187,19 +190,109 @@ export default function AdminProfile() {
                   </p>
                 </div>
 
-                {hoursData?.hours && hoursData.hours.length > 0 ? (
-                  <div className="space-y-1 max-h-48 overflow-y-auto">
-                    <p className="text-sm font-medium text-muted-foreground mb-2">Recent Activity</p>
-                    {hoursData.hours.slice(0, 14).map((h) => (
-                      <div key={h.date} className="flex items-center justify-between gap-4 p-2 rounded-lg" data-testid={`row-hours-${h.date}`}>
-                        <span className="text-sm text-foreground">{format(new Date(h.date + 'T00:00:00'), "MMM d, yyyy")}</span>
-                        <span className="text-sm font-medium text-foreground">{formatDuration(h.secondsWorked)}</span>
+                {(() => {
+                  const hoursMap = new Map<string, number>();
+                  hoursData?.hours?.forEach(h => hoursMap.set(h.date, h.secondsWorked));
+
+                  const workedDates = hoursData?.hours?.map(h => new Date(h.date + 'T00:00:00')) || [];
+
+                  const monthStart = startOfMonth(calendarMonth);
+                  const monthEnd = endOfMonth(calendarMonth);
+                  const monthHours = hoursData?.hours?.filter(h => {
+                    const d = new Date(h.date + 'T00:00:00');
+                    return d >= monthStart && d <= monthEnd;
+                  }) || [];
+                  const monthTotalSeconds = monthHours.reduce((sum, h) => sum + h.secondsWorked, 0);
+                  const daysWorkedThisMonth = monthHours.length;
+
+                  const selectedDateStr = selectedDate ? format(selectedDate, "yyyy-MM-dd") : null;
+                  const selectedDayHours = selectedDateStr ? hoursMap.get(selectedDateStr) : undefined;
+
+                  return (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between gap-4 mb-2">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setCalendarMonth(prev => subMonths(prev, 1))}
+                          data-testid="button-prev-month"
+                        >
+                          <ChevronLeft className="w-4 h-4" />
+                        </Button>
+                        <p className="text-sm font-semibold text-foreground" data-testid="text-calendar-month">
+                          {format(calendarMonth, "MMMM yyyy")}
+                        </p>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setCalendarMonth(prev => addMonths(prev, 1))}
+                          data-testid="button-next-month"
+                        >
+                          <ChevronRight className="w-4 h-4" />
+                        </Button>
                       </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground text-center py-4">No activity recorded yet</p>
-                )}
+
+                      <div className="flex justify-center">
+                        <Calendar
+                          mode="single"
+                          month={calendarMonth}
+                          onMonthChange={setCalendarMonth}
+                          selected={selectedDate || undefined}
+                          onSelect={(d) => setSelectedDate(d || null)}
+                          modifiers={{
+                            worked: workedDates,
+                          }}
+                          modifiersClassNames={{
+                            worked: "bg-primary/20 text-primary font-bold",
+                          }}
+                          data-testid="calendar-hours"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="p-3 rounded-xl bg-muted/30 text-center">
+                          <p className="text-xs text-muted-foreground mb-0.5">Days Worked</p>
+                          <p className="text-lg font-bold text-foreground" data-testid="text-days-worked">{daysWorkedThisMonth}</p>
+                          <p className="text-[10px] text-muted-foreground">this month</p>
+                        </div>
+                        <div className="p-3 rounded-xl bg-muted/30 text-center">
+                          <p className="text-xs text-muted-foreground mb-0.5">Monthly Hours</p>
+                          <p className="text-lg font-bold text-foreground" data-testid="text-month-hours">{formatDuration(monthTotalSeconds)}</p>
+                          <p className="text-[10px] text-muted-foreground">{format(calendarMonth, "MMM yyyy")}</p>
+                        </div>
+                      </div>
+
+                      {selectedDate && (
+                        <div className="p-3 rounded-xl border border-primary/20 bg-primary/5" data-testid="card-selected-day">
+                          <p className="text-sm font-medium text-foreground mb-1">
+                            {format(selectedDate, "EEEE, MMMM d, yyyy")}
+                          </p>
+                          {selectedDayHours ? (
+                            <p className="text-sm text-primary font-semibold" data-testid="text-selected-day-hours">
+                              Worked {formatDuration(selectedDayHours)}
+                            </p>
+                          ) : (
+                            <p className="text-sm text-muted-foreground">No hours recorded</p>
+                          )}
+                        </div>
+                      )}
+
+                      {monthHours.length > 0 && (
+                        <div>
+                          <p className="text-sm font-medium text-muted-foreground mb-2">Daily Breakdown</p>
+                          <div className="space-y-1 max-h-48 overflow-y-auto">
+                            {monthHours.sort((a, b) => b.date.localeCompare(a.date)).map((h) => (
+                              <div key={h.date} className="flex items-center justify-between gap-4 p-2 rounded-lg" data-testid={`row-hours-${h.date}`}>
+                                <span className="text-sm text-foreground">{format(new Date(h.date + 'T00:00:00'), "MMM d, yyyy (EEE)")}</span>
+                                <span className="text-sm font-medium text-foreground">{formatDuration(h.secondsWorked)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </CardContent>
             </Card>
 

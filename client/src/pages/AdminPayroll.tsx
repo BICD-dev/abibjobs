@@ -5,7 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, Wallet, Clock, Users, Check, AlertCircle, CreditCard } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Loader2, Wallet, Clock, Users, Check, AlertCircle, CreditCard, Building2, TrendingUp } from "lucide-react";
 import { useAdminAuth } from "@/hooks/use-admin-auth";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
@@ -57,6 +58,7 @@ export default function AdminPayroll() {
   const [selectedAdmins, setSelectedAdmins] = useState<Set<number>>(new Set());
   const [payAmounts, setPayAmounts] = useState<Record<number, string>>({});
   const [payNote, setPayNote] = useState("");
+  const [paymentSource, setPaymentSource] = useState<string>("platform_earnings");
 
   const { data: admins, isLoading } = useQuery<PayrollAdmin[]>({
     queryKey: ["/api/admin/payroll"],
@@ -67,6 +69,18 @@ export default function AdminPayroll() {
     },
     enabled: !!isOwner,
   });
+
+  const { data: earningsData } = useQuery<{ balance: string }>({
+    queryKey: ["/api/admin/earnings"],
+    queryFn: async () => {
+      const res = await fetch("/api/admin/earnings", { credentials: "include" });
+      if (!res.ok) return { balance: "0" };
+      return res.json();
+    },
+    enabled: !!isOwner,
+  });
+
+  const platformBalance = parseFloat(earningsData?.balance || "0");
 
   const { data: paymentHistory, isLoading: historyLoading } = useQuery<PaymentRecord[]>({
     queryKey: ["/api/admin/payroll/history"],
@@ -83,7 +97,7 @@ export default function AdminPayroll() {
       const res = await fetch("/api/admin/payroll/pay", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ payments }),
+        body: JSON.stringify({ payments, paymentSource }),
         credentials: "include",
       });
       if (!res.ok) {
@@ -94,6 +108,7 @@ export default function AdminPayroll() {
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/payroll/history"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/earnings"] });
       toast({ title: "Payment Processed", description: `Successfully paid ${data.paid} admin(s).` });
       setSelectedAdmins(new Set());
       setPayAmounts({});
@@ -193,6 +208,23 @@ export default function AdminPayroll() {
           </div>
         ) : (
           <div className="space-y-6">
+            <Card data-testid="card-platform-balance">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-muted-foreground">Platform Earnings Balance</p>
+                    <p className="text-2xl font-bold text-foreground mt-1" data-testid="text-platform-balance">
+                      {formatNaira(platformBalance)}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">Available for salary payments</p>
+                  </div>
+                  <div className="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center bg-green-500/10 text-green-500">
+                    <TrendingUp className="w-6 h-6" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
             <Card data-testid="card-admin-list">
               <CardHeader>
                 <div className="flex items-center justify-between gap-4">
@@ -247,12 +279,18 @@ export default function AdminPayroll() {
                             </div>
                           </div>
 
-                          <div className="mt-2 flex items-center gap-2 flex-wrap">
+                          <div className="mt-2 flex flex-col gap-1">
                             {admin.bankName ? (
-                              <span className="inline-flex items-center gap-1 text-xs text-green-600 bg-green-500/10 px-2 py-0.5 rounded-md">
-                                <Check className="w-3 h-3" />
-                                {admin.bankName} &middot; {admin.accountNumber}
-                              </span>
+                              <div className="p-2 rounded-lg bg-muted/30 space-y-0.5" data-testid={`card-admin-bank-${admin.adminId}`}>
+                                <div className="flex items-center gap-1">
+                                  <Building2 className="w-3 h-3 text-green-500 flex-shrink-0" />
+                                  <span className="text-xs font-medium text-foreground">{admin.bankName}</span>
+                                </div>
+                                <p className="text-xs text-muted-foreground pl-4">{admin.accountNumber}</p>
+                                {admin.accountName && (
+                                  <p className="text-xs text-muted-foreground pl-4">{admin.accountName}</p>
+                                )}
+                              </div>
                             ) : (
                               <span className="inline-flex items-center gap-1 text-xs text-orange-600 bg-orange-500/10 px-2 py-0.5 rounded-md">
                                 <AlertCircle className="w-3 h-3" />
@@ -296,6 +334,33 @@ export default function AdminPayroll() {
                           data-testid="input-bulk-amount"
                         />
                       </div>
+                    </div>
+
+                    <div>
+                      <label className="text-sm font-medium text-foreground mb-1 block">Payment Source</label>
+                      <Select value={paymentSource} onValueChange={setPaymentSource}>
+                        <SelectTrigger data-testid="select-payment-source">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="platform_earnings">
+                            Platform Earnings ({formatNaira(platformBalance)})
+                          </SelectItem>
+                          <SelectItem value="external_bank">
+                            External Bank (Manual)
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {paymentSource === 'platform_earnings' && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Amount will be deducted from your platform earnings balance
+                        </p>
+                      )}
+                      {paymentSource === 'external_bank' && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Payment recorded as manual transfer from your own bank account
+                        </p>
+                      )}
                     </div>
 
                     <div>
