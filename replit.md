@@ -42,6 +42,7 @@ Main tables:
 4. **jobs** — Job listings (title, description, price, location, category, status, poster/worker references, workersNeeded, workersAccepted, priceType)
 5. **transactions** — Wallet transaction log (userId, amount, type, status, jobId reference)
 6. **offers** — Price negotiation offers (jobId, senderId, amount, status: pending/accepted/declined/countered, message)
+9. **admin_payments** — Admin salary payment records (adminId, amount, bank info snapshot, note, paidBy, status)
 7. **notifications** — In-app notifications (userId, title, message, type: info/warning/error/success, isRead, jobId)
 8. **site_visits** — Page visit tracking (visitorId, page, userAgent, createdAt)
 
@@ -108,11 +109,24 @@ Schema changes use `drizzle-kit push` (not migrations). Run `npm run db:push` to
 - Transaction types: deposit, withdrawal, escrow_hold, escrow_refund, job_earning, fee, cancellation_compensation
 
 ### Admin Dashboard Analytics
-- Owner-only dashboard at /admin/dashboard showing key platform metrics
+- Dashboard at /admin/dashboard accessible to both owner and staff admins
 - Stats: total visitors (unique), total sign-ups, total user top-ups (deposits), total paid out (earnings + withdrawals)
 - Mini bar charts showing 30-day trends for visitors and sign-ups
+- Per-admin hours worked displayed for owner view
+- Date range calendar picker for total platform hours worked (job completion time tracking)
 - Visit tracking: every page load fires POST /api/track-visit with unique visitor ID stored in localStorage
-- API: GET /api/admin/dashboard (owner-only), POST /api/track-visit (public)
+- API: GET /api/admin/dashboard (admin/owner), GET /api/admin/hours-worked (admin/owner), POST /api/track-visit (public)
+
+### Admin Profile & Payroll System
+- Staff admins have a "My Profile" page at /admin/profile showing their work hours and salary account
+- Each admin can set up and update their salary bank account (Nigerian banks list)
+- Admin payment history visible on profile page
+- Owner has a "Payroll" page at /admin/payroll to pay staff admins
+- Payroll shows all active staff admins with their hours and bank account status
+- Owner can select individual admins or "Select All" for batch payment
+- Payment amounts entered per admin, with option to set same amount for all selected
+- Payment records stored in admin_payments table with bank info snapshot
+- API: GET/POST /api/admin/my-hours, POST /api/admin/my-bank, GET /api/admin/my-payments, GET /api/admin/payroll, POST /api/admin/payroll/pay, GET /api/admin/payroll/history
 
 ### Key Environment Variables
 - `DATABASE_URL` — PostgreSQL connection string (required)

@@ -48,10 +48,13 @@ export function Navbar() {
   if (isOwner) {
     adminLinks.push({ href: "/admin/dashboard", label: "Dashboard", icon: LayoutDashboard });
     adminLinks.push({ href: "/admin/earnings", label: "Earnings", icon: TrendingUp });
+    adminLinks.push({ href: "/admin/payroll", label: "Payroll", icon: Wallet });
     adminLinks.push({ href: "/admin/verifications", label: "Verifications", icon: ShieldCheck });
     adminLinks.push({ href: "/admin/disputes", label: "Disputes", icon: Scale });
     adminLinks.push({ href: "/admin/staff", label: "Admin Staff", icon: Users });
   } else if (isStaff) {
+    adminLinks.push({ href: "/admin/dashboard", label: "Dashboard", icon: LayoutDashboard });
+    adminLinks.push({ href: "/admin/profile", label: "My Profile", icon: User });
     adminLinks.push({ href: "/admin/verifications", label: "Verifications", icon: ShieldCheck });
     adminLinks.push({ href: "/admin/disputes", label: "Disputes", icon: Scale });
   }
@@ -140,6 +143,12 @@ export function Navbar() {
                             <span>Platform Earnings</span>
                           </DropdownMenuItem>
                         </Link>
+                        <Link href="/admin/payroll">
+                          <DropdownMenuItem className="cursor-pointer">
+                            <Wallet className="mr-2 h-4 w-4" />
+                            <span>Admin Payroll</span>
+                          </DropdownMenuItem>
+                        </Link>
                         <Link href="/admin/staff">
                           <DropdownMenuItem className="cursor-pointer">
                             <Users className="mr-2 h-4 w-4" />
@@ -147,6 +156,14 @@ export function Navbar() {
                           </DropdownMenuItem>
                         </Link>
                       </>
+                    )}
+                    {isStaff && (
+                      <Link href="/admin/profile">
+                        <DropdownMenuItem className="cursor-pointer">
+                          <User className="mr-2 h-4 w-4" />
+                          <span>My Admin Profile</span>
+                        </DropdownMenuItem>
+                      </Link>
                     )}
                     {(isOwner || isStaff) && (
                       <>

@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Loader2, Eye, UserPlus, ArrowUpCircle, ArrowDownCircle, TrendingUp, CalendarIcon, Clock, Briefcase } from "lucide-react";
+import { Loader2, Eye, UserPlus, ArrowUpCircle, ArrowDownCircle, TrendingUp, CalendarIcon, Clock, Briefcase, Users } from "lucide-react";
 import { useAdminAuth } from "@/hooks/use-admin-auth";
 import { format, subDays } from "date-fns";
 import type { DateRange } from "react-day-picker";
@@ -26,6 +26,14 @@ interface HoursWorkedData {
   totalHours: number;
   totalJobs: number;
   jobBreakdown: { jobId: number; title: string; hours: number; worker: string; completedAt: string }[];
+}
+
+interface AdminHoursEntry {
+  adminId: number;
+  name: string;
+  email: string;
+  date: string;
+  secondsWorked: number;
 }
 
 function formatNaira(amount: string | number) {
@@ -147,6 +155,19 @@ export default function AdminDashboard() {
     enabled: !!hasAccess && !!dateRange?.from && !!dateRange?.to,
   });
 
+  const { data: adminHours } = useQuery<AdminHoursEntry[]>({
+    queryKey: ['/api/admin/hours'],
+    enabled: !!isOwner,
+  });
+
+  const adminHoursGrouped = adminHours ? adminHours.reduce((acc, entry) => {
+    if (!acc[entry.adminId]) {
+      acc[entry.adminId] = { name: entry.name, email: entry.email, totalSeconds: 0 };
+    }
+    acc[entry.adminId].totalSeconds += entry.secondsWorked;
+    return acc;
+  }, {} as Record<number, { name: string; email: string; totalSeconds: number }>) : {};
+
   if (!hasAccess) {
     return (
       <div className="min-h-screen bg-background">
@@ -220,6 +241,37 @@ export default function AdminDashboard() {
               <MiniChart data={data.recentVisitsByDay} label="Visitors" />
               <MiniChart data={data.recentSignUpsByDay} label="Sign Ups" />
             </div>
+
+            {isOwner && Object.keys(adminHoursGrouped).length > 0 && (
+              <Card className="mb-8" data-testid="card-admin-hours">
+                <CardHeader>
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-green-500/10 flex items-center justify-center flex-shrink-0">
+                      <Users className="w-5 h-5 text-green-500" />
+                    </div>
+                    <div>
+                      <CardTitle>Admin Staff Hours</CardTitle>
+                      <p className="text-sm text-muted-foreground mt-0.5">Total hours worked by each admin</p>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {Object.entries(adminHoursGrouped).map(([id, info]) => (
+                      <div key={id} className="flex items-center justify-between gap-4 p-3 rounded-xl bg-muted/20" data-testid={`row-admin-hours-${id}`}>
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium text-foreground text-sm">{info.name}</p>
+                          <p className="text-xs text-muted-foreground">{info.email}</p>
+                        </div>
+                        <div className="text-right flex-shrink-0">
+                          <p className="font-bold text-foreground">{formatHours(info.totalSeconds / 3600)}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
             <Card className="mb-8" data-testid="card-hours-worked">
               <CardHeader>

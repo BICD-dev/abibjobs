@@ -1119,6 +1119,117 @@ export async function registerRoutes(
     }
   });
 
+  // Staff admin: view own hours
+  app.get('/api/admin/my-hours', async (req, res) => {
+    try {
+      const adminId = (req.session as any)?.adminId;
+      if (!adminId) return res.status(401).json({ message: "Not authenticated" });
+      const admin = await storage.getAdminUser(adminId);
+      if (!admin || !admin.isActive) return res.status(401).json({ message: "Not authenticated" });
+
+      const startDate = req.query.startDate as string | undefined;
+      const endDate = req.query.endDate as string | undefined;
+      const hours = await storage.getMyAdminHours(adminId, startDate, endDate);
+
+      const totalSeconds = hours.reduce((sum, h) => sum + h.secondsWorked, 0);
+      res.json({ hours, totalSeconds, admin: { id: admin.id, name: admin.name, email: admin.email, bankName: admin.bankName, bankCode: admin.bankCode, accountNumber: admin.accountNumber, accountName: admin.accountName } });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch hours" });
+    }
+  });
+
+  // Staff admin: update own bank info
+  app.post('/api/admin/my-bank', async (req, res) => {
+    try {
+      const adminId = (req.session as any)?.adminId;
+      if (!adminId) return res.status(401).json({ message: "Not authenticated" });
+      const admin = await storage.getAdminUser(adminId);
+      if (!admin || !admin.isActive) return res.status(401).json({ message: "Not authenticated" });
+
+      const { bankName, bankCode, accountNumber, accountName } = req.body;
+      if (!bankName || !accountNumber || !accountName) {
+        return res.status(400).json({ message: "Bank name, account number, and account name are required" });
+      }
+
+      const updated = await storage.updateAdminBankInfo(adminId, { bankName, bankCode: bankCode || '', accountNumber, accountName });
+      res.json({ bankName: updated.bankName, bankCode: updated.bankCode, accountNumber: updated.accountNumber, accountName: updated.accountName });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to update bank info" });
+    }
+  });
+
+  // Staff admin: view own payment history
+  app.get('/api/admin/my-payments', async (req, res) => {
+    try {
+      const adminId = (req.session as any)?.adminId;
+      if (!adminId) return res.status(401).json({ message: "Not authenticated" });
+      const admin = await storage.getAdminUser(adminId);
+      if (!admin || !admin.isActive) return res.status(401).json({ message: "Not authenticated" });
+
+      const payments = await storage.getAdminPayments(adminId);
+      res.json(payments);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch payments" });
+    }
+  });
+
+  // Owner: view payroll summary (all admins with hours and bank info)
+  app.get('/api/admin/payroll', isAuthenticated, isOwner, async (req, res) => {
+    try {
+      const startDate = req.query.startDate as string | undefined;
+      const endDate = req.query.endDate as string | undefined;
+      const summary = await storage.getAdminsPayrollSummary(startDate, endDate);
+      res.json(summary);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch payroll data" });
+    }
+  });
+
+  // Owner: pay selected admins
+  app.post('/api/admin/payroll/pay', isAuthenticated, isOwner, async (req, res) => {
+    try {
+      const { payments } = req.body;
+      if (!payments || !Array.isArray(payments) || payments.length === 0) {
+        return res.status(400).json({ message: "Please select at least one admin to pay" });
+      }
+
+      const results = [];
+      for (const p of payments) {
+        const { adminId, amount, note } = p;
+        if (!adminId || !amount || parseFloat(amount) <= 0) continue;
+
+        const admin = await storage.getAdminUser(adminId);
+        if (!admin) continue;
+
+        const payment = await storage.createAdminPayment({
+          adminId,
+          amount: String(amount),
+          bankName: admin.bankName || undefined,
+          bankCode: admin.bankCode || undefined,
+          accountNumber: admin.accountNumber || undefined,
+          accountName: admin.accountName || undefined,
+          note: note || undefined,
+          paidBy: 'owner',
+        });
+        results.push(payment);
+      }
+
+      res.json({ paid: results.length, payments: results });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to process payments" });
+    }
+  });
+
+  // Owner: view all admin payment history
+  app.get('/api/admin/payroll/history', isAuthenticated, isOwner, async (_req, res) => {
+    try {
+      const payments = await storage.getAdminPayments();
+      res.json(payments);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch payment history" });
+    }
+  });
+
   // Owner-only: Platform earnings
   app.get(api.admin.earnings.path, isAuthenticated, isOwner, async (_req, res) => {
     const earnings = await storage.getPlatformEarnings();

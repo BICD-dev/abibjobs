@@ -12,6 +12,7 @@ import {
   disputeMessages,
   adminUsers,
   adminActivity,
+  adminPayments,
   notifications,
   scheduledPayments,
   lagosAddresses,
@@ -25,6 +26,7 @@ import {
   type DisputeMessage,
   type AdminUser,
   type AdminActivity,
+  type AdminPayment,
   type Notification,
   type ScheduledPayment,
   type LagosAddress,
@@ -92,6 +94,16 @@ export interface IStorage {
   getAdminActivity(adminId: number, date: string): Promise<AdminActivity | undefined>;
   upsertAdminActivity(adminId: number, date: string, secondsToAdd: number): Promise<AdminActivity>;
   getAdminHours(date?: string): Promise<{ adminId: number; name: string; email: string; date: string; secondsWorked: number }[]>;
+  getAdminHoursAggregated(startDate?: string, endDate?: string): Promise<{ adminId: number; name: string; email: string; totalSeconds: number }[]>;
+  getMyAdminHours(adminId: number, startDate?: string, endDate?: string): Promise<{ date: string; secondsWorked: number }[]>;
+
+  // Admin Bank Account
+  updateAdminBankInfo(adminId: number, data: { bankName: string; bankCode: string; accountNumber: string; accountName: string }): Promise<AdminUser>;
+
+  // Admin Payments
+  createAdminPayment(data: { adminId: number; amount: string; periodStart?: string; periodEnd?: string; hoursWorked?: string; bankName?: string; bankCode?: string; accountNumber?: string; accountName?: string; note?: string; paidBy?: string }): Promise<AdminPayment>;
+  getAdminPayments(adminId?: number): Promise<(AdminPayment & { adminName?: string })[]>;
+  getAdminsPayrollSummary(startDate?: string, endDate?: string): Promise<{ adminId: number; name: string; email: string; bankName: string | null; accountNumber: string | null; accountName: string | null; bankCode: string | null; totalSeconds: number; isActive: boolean }[]>;
 
   // Notifications
   createNotification(data: { userId: string; title: string; message: string; type: string; jobId?: number }): Promise<Notification>;
@@ -610,6 +622,114 @@ export class DatabaseStorage implements IStorage {
       return results.filter(r => r.date === date);
     }
     return results;
+  }
+
+  async getAdminHoursAggregated(startDate?: string, endDate?: string): Promise<{ adminId: number; name: string; email: string; totalSeconds: number }[]> {
+    const conditions = [];
+    if (startDate) conditions.push(gte(adminActivity.date, startDate));
+    if (endDate) conditions.push(lte(adminActivity.date, endDate));
+
+    const results = await db.select({
+      adminId: adminActivity.adminId,
+      name: adminUsers.name,
+      email: adminUsers.email,
+      totalSeconds: sql<number>`COALESCE(SUM(${adminActivity.secondsWorked}), 0)`.as('total_seconds'),
+    })
+    .from(adminActivity)
+    .innerJoin(adminUsers, eq(adminActivity.adminId, adminUsers.id))
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .groupBy(adminActivity.adminId, adminUsers.name, adminUsers.email);
+
+    return results;
+  }
+
+  async getMyAdminHours(adminId: number, startDate?: string, endDate?: string): Promise<{ date: string; secondsWorked: number }[]> {
+    const conditions = [eq(adminActivity.adminId, adminId)];
+    if (startDate) conditions.push(gte(adminActivity.date, startDate));
+    if (endDate) conditions.push(lte(adminActivity.date, endDate));
+
+    return await db.select({
+      date: adminActivity.date,
+      secondsWorked: adminActivity.secondsWorked,
+    })
+    .from(adminActivity)
+    .where(and(...conditions))
+    .orderBy(desc(adminActivity.date));
+  }
+
+  async updateAdminBankInfo(adminId: number, data: { bankName: string; bankCode: string; accountNumber: string; accountName: string }): Promise<AdminUser> {
+    const [updated] = await db.update(adminUsers)
+      .set({
+        bankName: data.bankName,
+        bankCode: data.bankCode,
+        accountNumber: data.accountNumber,
+        accountName: data.accountName,
+      })
+      .where(eq(adminUsers.id, adminId))
+      .returning();
+    return updated;
+  }
+
+  async createAdminPayment(data: { adminId: number; amount: string; periodStart?: string; periodEnd?: string; hoursWorked?: string; bankName?: string; bankCode?: string; accountNumber?: string; accountName?: string; note?: string; paidBy?: string }): Promise<AdminPayment> {
+    const [payment] = await db.insert(adminPayments).values(data).returning();
+    return payment;
+  }
+
+  async getAdminPayments(adminId?: number): Promise<(AdminPayment & { adminName?: string })[]> {
+    const results = await db.select({
+      id: adminPayments.id,
+      adminId: adminPayments.adminId,
+      amount: adminPayments.amount,
+      periodStart: adminPayments.periodStart,
+      periodEnd: adminPayments.periodEnd,
+      hoursWorked: adminPayments.hoursWorked,
+      bankName: adminPayments.bankName,
+      bankCode: adminPayments.bankCode,
+      accountNumber: adminPayments.accountNumber,
+      accountName: adminPayments.accountName,
+      status: adminPayments.status,
+      note: adminPayments.note,
+      paidBy: adminPayments.paidBy,
+      createdAt: adminPayments.createdAt,
+      adminName: adminUsers.name,
+    })
+    .from(adminPayments)
+    .innerJoin(adminUsers, eq(adminPayments.adminId, adminUsers.id))
+    .where(adminId ? eq(adminPayments.adminId, adminId) : undefined)
+    .orderBy(desc(adminPayments.createdAt));
+
+    return results;
+  }
+
+  async getAdminsPayrollSummary(startDate?: string, endDate?: string): Promise<{ adminId: number; name: string; email: string; bankName: string | null; accountNumber: string | null; accountName: string | null; bankCode: string | null; totalSeconds: number; isActive: boolean }[]> {
+    const admins = await db.select().from(adminUsers).where(eq(adminUsers.role, 'staff'));
+
+    const result = [];
+    for (const admin of admins) {
+      const conditions = [eq(adminActivity.adminId, admin.id)];
+      if (startDate) conditions.push(gte(adminActivity.date, startDate));
+      if (endDate) conditions.push(lte(adminActivity.date, endDate));
+
+      const [hoursRow] = await db.select({
+        totalSeconds: sql<number>`COALESCE(SUM(${adminActivity.secondsWorked}), 0)`.as('total_seconds'),
+      })
+      .from(adminActivity)
+      .where(and(...conditions));
+
+      result.push({
+        adminId: admin.id,
+        name: admin.name,
+        email: admin.email,
+        bankName: admin.bankName,
+        accountNumber: admin.accountNumber,
+        accountName: admin.accountName,
+        bankCode: admin.bankCode,
+        totalSeconds: Number(hoursRow?.totalSeconds || 0),
+        isActive: admin.isActive,
+      });
+    }
+
+    return result;
   }
 
   async createNotification(data: { userId: string; title: string; message: string; type: string; jobId?: number }): Promise<Notification> {

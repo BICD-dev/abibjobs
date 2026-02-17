@@ -134,6 +134,27 @@ export const adminUsers = pgTable("admin_users", {
   name: text("name").notNull(),
   role: text("role").default("staff").notNull(), // 'owner' | 'staff'
   isActive: boolean("is_active").default(true).notNull(),
+  bankName: text("bank_name"),
+  bankCode: text("bank_code"),
+  accountNumber: text("account_number"),
+  accountName: text("account_name"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const adminPayments = pgTable("admin_payments", {
+  id: serial("id").primaryKey(),
+  adminId: integer("admin_id").notNull(),
+  amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
+  periodStart: text("period_start"),
+  periodEnd: text("period_end"),
+  hoursWorked: numeric("hours_worked", { precision: 10, scale: 2 }),
+  bankName: text("bank_name"),
+  bankCode: text("bank_code"),
+  accountNumber: text("account_number"),
+  accountName: text("account_name"),
+  status: text("status").default("completed").notNull(),
+  note: text("note"),
+  paidBy: text("paid_by"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -203,6 +224,7 @@ export const createOfferSchema = insertOfferSchema.omit({ senderId: true, status
 export const insertDisputeSchema = createInsertSchema(disputes).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertDisputeMessageSchema = createInsertSchema(disputeMessages).omit({ id: true, createdAt: true });
 export const insertAdminUserSchema = createInsertSchema(adminUsers).omit({ id: true, createdAt: true });
+export const insertAdminPaymentSchema = createInsertSchema(adminPayments).omit({ id: true, createdAt: true });
 export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, createdAt: true });
 export const insertScheduledPaymentSchema = createInsertSchema(scheduledPayments).omit({ id: true, createdAt: true, processedAt: true });
 
@@ -219,6 +241,7 @@ export type DisputeMessage = typeof disputeMessages.$inferSelect;
 export type AdminUser = typeof adminUsers.$inferSelect;
 export type AdminActivity = typeof adminActivity.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
+export type AdminPayment = typeof adminPayments.$inferSelect;
 export type ScheduledPayment = typeof scheduledPayments.$inferSelect;
 export type LagosAddress = typeof lagosAddresses.$inferSelect;
 export type SiteVisit = typeof siteVisits.$inferSelect;
