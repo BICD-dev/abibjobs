@@ -69,6 +69,7 @@ export function Navbar() {
     adminLinks.push({ href: "/admin/disputes", label: "Disputes", icon: Scale });
     adminLinks.push({ href: "/admin/staff", label: "Admin Staff", icon: Users });
   } else if (isStaff) {
+    adminLinks.push({ href: "/admin/verifications", label: "Verifications", icon: ShieldCheck });
     adminLinks.push({ href: "/admin/disputes", label: "Disputes", icon: Scale });
     adminLinks.push({ href: "/admin/profile", label: "My Profile", icon: User });
   }
