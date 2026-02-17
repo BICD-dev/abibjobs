@@ -21,6 +21,7 @@ import {
   LayoutDashboard
 } from "lucide-react";
 import { useState } from "react";
+import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -108,29 +109,44 @@ export function Navbar() {
                 })}
                 
                 {isAuthenticated && (
-                  <Link href="/notifications">
-                    <span className="relative flex items-center justify-center w-10 h-10 rounded-full text-muted-foreground hover:bg-muted transition-colors cursor-pointer" data-testid="button-notifications">
-                      <Bell className="w-5 h-5" />
-                      {unreadCount > 0 && (
-                        <span className="absolute -top-0.5 -right-0.5 bg-destructive text-destructive-foreground text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1" data-testid="text-unread-count">
-                          {unreadCount > 99 ? '99+' : unreadCount}
-                        </span>
-                      )}
-                    </span>
-                  </Link>
-                )}
-
-                {(isStaff || isOwner) && (
-                  <Link href="/admin/notifications">
-                    <span className="relative flex items-center justify-center w-10 h-10 rounded-full text-muted-foreground hover:bg-muted transition-colors cursor-pointer" data-testid="button-admin-notifications">
-                      <Bell className="w-5 h-5" />
-                      {adminUnreadCount > 0 && (
-                        <span className="absolute -top-0.5 -right-0.5 bg-amber-500 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1" data-testid="text-admin-unread-count">
-                          {adminUnreadCount > 99 ? '99+' : adminUnreadCount}
-                        </span>
-                      )}
-                    </span>
-                  </Link>
+                  (() => {
+                    const totalUnread = unreadCount + ((isStaff || isOwner) ? adminUnreadCount : 0);
+                    const showAdminSection = isStaff || isOwner;
+                    return (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <span className="relative flex items-center justify-center w-10 h-10 rounded-full text-muted-foreground hover:bg-muted transition-colors cursor-pointer" data-testid="button-notifications">
+                            <Bell className="w-5 h-5" />
+                            {totalUnread > 0 && (
+                              <span className="absolute -top-0.5 -right-0.5 bg-destructive text-destructive-foreground text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1" data-testid="text-unread-count">
+                                {totalUnread > 99 ? '99+' : totalUnread}
+                              </span>
+                            )}
+                          </span>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-56">
+                          <DropdownMenuItem asChild>
+                            <Link href="/notifications" className="flex items-center justify-between w-full cursor-pointer" data-testid="link-user-notifications">
+                              <span>My Notifications</span>
+                              {unreadCount > 0 && (
+                                <Badge variant="destructive" className="ml-2 text-[10px] px-1.5 py-0">{unreadCount > 99 ? '99+' : unreadCount}</Badge>
+                              )}
+                            </Link>
+                          </DropdownMenuItem>
+                          {showAdminSection && (
+                            <DropdownMenuItem asChild>
+                              <Link href="/admin/notifications" className="flex items-center justify-between w-full cursor-pointer" data-testid="link-admin-notifications">
+                                <span>Admin Alerts</span>
+                                {adminUnreadCount > 0 && (
+                                  <Badge className="ml-2 text-[10px] px-1.5 py-0 bg-amber-500 text-white border-amber-500">{adminUnreadCount > 99 ? '99+' : adminUnreadCount}</Badge>
+                                )}
+                              </Link>
+                            </DropdownMenuItem>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    );
+                  })()
                 )}
 
                 <div className="h-6 w-px bg-border mx-2" />
@@ -313,7 +329,7 @@ export function Navbar() {
                 {(isStaff || isOwner) && (
                   <Link href="/admin/notifications" onClick={() => setIsOpen(false)}>
                     <div className={`flex items-center p-3 rounded-xl ${location === '/admin/notifications' ? "bg-primary/10 text-primary" : "text-foreground"}`} data-testid="mobile-admin-notifications">
-                      <Bell className="w-5 h-5 mr-3" />
+                      <Shield className="w-5 h-5 mr-3" />
                       <span className="font-medium">Admin Alerts</span>
                       {adminUnreadCount > 0 && (
                         <span className="ml-auto bg-amber-500 text-white text-xs font-bold rounded-full min-w-[20px] h-5 flex items-center justify-center px-1.5">
