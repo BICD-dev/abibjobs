@@ -2169,6 +2169,17 @@ export async function registerRoutes(
     res.json(updated);
   });
 
+  app.post('/api/verification/cancel', isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const profile = await storage.getProfile(userId);
+    if (!profile) return res.status(404).json({ message: "Profile not found" });
+    if (profile.verificationStatus !== 'pending') {
+      return res.status(400).json({ message: "No pending verification to cancel." });
+    }
+    const updated = await storage.reviewVerification(userId, 'redo', 'Cancelled by user for resubmission');
+    res.json(updated);
+  });
+
   app.get(api.verification.pending.path, async (req, res) => {
     const email = req.isAuthenticated() ? (req.user as any)?.claims?.email : null;
     const adminId = (req.session as any)?.adminId;

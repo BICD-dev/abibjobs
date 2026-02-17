@@ -221,6 +221,27 @@ function VerificationCard({ profile }: { profile: any }) {
     );
   }
 
+  const cancelMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch('/api/verification/cancel', {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message || 'Failed to cancel verification');
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/profile/me'] });
+      toast({ title: "Verification Cancelled", description: "You can now resubmit your documents." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
   if (status === 'pending') {
     return (
       <Card className="rounded-3xl border-border shadow-sm" data-testid="card-verification-pending">
@@ -230,8 +251,18 @@ function VerificationCard({ profile }: { profile: any }) {
             Verification Under Review
           </CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">Your documents are being reviewed by our team. You'll be notified once a decision is made.</p>
+          <Button
+            variant="outline"
+            className="w-full rounded-xl"
+            onClick={() => cancelMutation.mutate()}
+            disabled={cancelMutation.isPending}
+            data-testid="button-cancel-verification"
+          >
+            {cancelMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <XCircle className="w-4 h-4 mr-2" />}
+            Cancel & Resubmit
+          </Button>
         </CardContent>
       </Card>
     );
