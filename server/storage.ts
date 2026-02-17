@@ -19,6 +19,8 @@ import {
   lagosAddresses,
   ownerSettings,
   siteVisits,
+  supportTickets,
+  supportMessages,
   type Profile,
   type Job,
   type Transaction,
@@ -39,6 +41,8 @@ import {
   type DisputeMessageWithSender,
   type PlatformEarning,
   type PlatformTransaction,
+  type SupportTicket,
+  type SupportMessage,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -149,6 +153,18 @@ export interface IStorage {
   setResetToken(token: string, expiresAt: Date): Promise<void>;
   getResetToken(): Promise<{ resetToken: string | null; resetTokenExpiresAt: Date | null; ownerEmail: string } | undefined>;
   clearResetToken(): Promise<void>;
+
+  // Support Tickets
+  createSupportTicket(data: { userId: string; userName: string; subject: string }): Promise<SupportTicket>;
+  getSupportTicket(id: number): Promise<SupportTicket | undefined>;
+  getSupportTicketByNumber(ticketNumber: string): Promise<SupportTicket | undefined>;
+  getUserSupportTickets(userId: string): Promise<SupportTicket[]>;
+  getActiveSupportTicket(userId: string): Promise<SupportTicket | undefined>;
+  getAllSupportTickets(status?: string): Promise<SupportTicket[]>;
+  updateSupportTicket(id: number, data: Partial<SupportTicket>): Promise<SupportTicket>;
+  createSupportMessage(data: { ticketId: number; senderId: string; senderName: string; senderType: string; message: string }): Promise<SupportMessage>;
+  getSupportMessages(ticketId: number, afterId?: number): Promise<SupportMessage[]>;
+  getWaitingTicketsCount(): Promise<number>;
 
   // Site Visits & Analytics
   trackVisit(visitorId: string, page: string, userAgent?: string): Promise<void>;
@@ -1142,6 +1158,73 @@ export class DatabaseStorage implements IStorage {
       totalJobs: completedJobs.length,
       jobBreakdown,
     };
+  }
+  // Support Tickets
+  async createSupportTicket(data: { userId: string; userName: string; subject: string }): Promise<SupportTicket> {
+    const ticketNumber = `TK-${Date.now().toString(36).toUpperCase()}`;
+    const [ticket] = await db.insert(supportTickets).values({
+      ticketNumber,
+      userId: data.userId,
+      userName: data.userName,
+      subject: data.subject,
+      status: 'waiting',
+    }).returning();
+    return ticket;
+  }
+
+  async getSupportTicket(id: number): Promise<SupportTicket | undefined> {
+    const [ticket] = await db.select().from(supportTickets).where(eq(supportTickets.id, id));
+    return ticket;
+  }
+
+  async getSupportTicketByNumber(ticketNumber: string): Promise<SupportTicket | undefined> {
+    const [ticket] = await db.select().from(supportTickets).where(eq(supportTickets.ticketNumber, ticketNumber));
+    return ticket;
+  }
+
+  async getUserSupportTickets(userId: string): Promise<SupportTicket[]> {
+    return db.select().from(supportTickets).where(eq(supportTickets.userId, userId)).orderBy(desc(supportTickets.createdAt));
+  }
+
+  async getActiveSupportTicket(userId: string): Promise<SupportTicket | undefined> {
+    const [ticket] = await db.select().from(supportTickets)
+      .where(and(
+        eq(supportTickets.userId, userId),
+        sql`${supportTickets.status} IN ('waiting', 'active')`
+      ))
+      .orderBy(desc(supportTickets.createdAt));
+    return ticket;
+  }
+
+  async getAllSupportTickets(status?: string): Promise<SupportTicket[]> {
+    if (status) {
+      return db.select().from(supportTickets).where(eq(supportTickets.status, status)).orderBy(desc(supportTickets.createdAt));
+    }
+    return db.select().from(supportTickets).orderBy(desc(supportTickets.createdAt));
+  }
+
+  async updateSupportTicket(id: number, data: Partial<SupportTicket>): Promise<SupportTicket> {
+    const [updated] = await db.update(supportTickets).set({ ...data, updatedAt: new Date() }).where(eq(supportTickets.id, id)).returning();
+    return updated;
+  }
+
+  async createSupportMessage(data: { ticketId: number; senderId: string; senderName: string; senderType: string; message: string }): Promise<SupportMessage> {
+    const [msg] = await db.insert(supportMessages).values(data).returning();
+    return msg;
+  }
+
+  async getSupportMessages(ticketId: number, afterId?: number): Promise<SupportMessage[]> {
+    if (afterId) {
+      return db.select().from(supportMessages)
+        .where(and(eq(supportMessages.ticketId, ticketId), sql`${supportMessages.id} > ${afterId}`))
+        .orderBy(supportMessages.id);
+    }
+    return db.select().from(supportMessages).where(eq(supportMessages.ticketId, ticketId)).orderBy(supportMessages.id);
+  }
+
+  async getWaitingTicketsCount(): Promise<number> {
+    const [result] = await db.select({ count: count() }).from(supportTickets).where(eq(supportTickets.status, 'waiting'));
+    return result?.count || 0;
   }
 }
 

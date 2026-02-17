@@ -7,6 +7,9 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { setupAuth, isAuthenticated, registerAuthRoutes } from "./replit_integrations/auth";
 import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
+import { db } from "./db";
+import { users } from "@shared/schema";
+import { eq } from "drizzle-orm";
 
 interface OtpSession {
   userId: string;
@@ -2494,6 +2497,299 @@ export async function registerRoutes(
     } catch (err) {
       console.error("Hours worked error:", err);
       res.status(500).json({ message: "Failed to fetch hours worked data" });
+    }
+  });
+
+  // === SUPPORT CHAT ROUTES ===
+
+  // User: Create a support ticket
+  app.post('/api/support/tickets', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.session?.manualUserId || (req.user as any)?.claims?.sub;
+      if (!userId) return res.status(401).json({ message: "Not authenticated" });
+
+      const { subject } = req.body;
+      if (!subject || typeof subject !== 'string' || subject.trim().length === 0) {
+        return res.status(400).json({ message: "Subject is required" });
+      }
+
+      const existing = await storage.getActiveSupportTicket(userId);
+      if (existing) {
+        return res.json(existing);
+      }
+
+      const [user] = await db.select().from(users).where(eq(users.id, userId));
+      const userName = user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email || 'User' : 'User';
+
+      const ticket = await storage.createSupportTicket({
+        userId,
+        userName,
+        subject: subject.trim(),
+      });
+
+      await storage.createSupportMessage({
+        ticketId: ticket.id,
+        senderId: 'system',
+        senderName: 'System',
+        senderType: 'system',
+        message: `Ticket ${ticket.ticketNumber} created. Please hold on while we connect you with a live agent.`,
+      });
+
+      res.json(ticket);
+    } catch (err) {
+      console.error("Create support ticket error:", err);
+      res.status(500).json({ message: "Failed to create ticket" });
+    }
+  });
+
+  // User: Get active ticket
+  app.get('/api/support/active', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.session?.manualUserId || (req.user as any)?.claims?.sub;
+      if (!userId) return res.status(401).json({ message: "Not authenticated" });
+      const ticket = await storage.getActiveSupportTicket(userId);
+      res.json(ticket || null);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch active ticket" });
+    }
+  });
+
+  // User: Get my ticket history
+  app.get('/api/support/tickets', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.session?.manualUserId || (req.user as any)?.claims?.sub;
+      if (!userId) return res.status(401).json({ message: "Not authenticated" });
+      const tickets = await storage.getUserSupportTickets(userId);
+      res.json(tickets);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch tickets" });
+    }
+  });
+
+  // User: Get messages for own ticket (supports polling with afterId)
+  app.get('/api/support/tickets/:id/messages', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.session?.manualUserId || (req.user as any)?.claims?.sub;
+      if (!userId) return res.status(401).json({ message: "Not authenticated" });
+
+      const ticketId = parseInt(req.params.id);
+      const ticket = await storage.getSupportTicket(ticketId);
+      if (!ticket) return res.status(404).json({ message: "Ticket not found" });
+      if (ticket.userId !== userId) return res.status(403).json({ message: "Not authorized" });
+
+      const afterId = req.query.afterId ? parseInt(req.query.afterId as string) : undefined;
+      const messages = await storage.getSupportMessages(ticketId, afterId);
+      res.json(messages);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch messages" });
+    }
+  });
+
+  // User: Send a message
+  app.post('/api/support/tickets/:id/messages', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.session?.manualUserId || (req.user as any)?.claims?.sub;
+      if (!userId) return res.status(401).json({ message: "Not authenticated" });
+
+      const ticketId = parseInt(req.params.id);
+      const ticket = await storage.getSupportTicket(ticketId);
+      if (!ticket) return res.status(404).json({ message: "Ticket not found" });
+      if (ticket.userId !== userId) return res.status(403).json({ message: "Not authorized" });
+
+      if (ticket.status === 'closed' || ticket.status === 'resolved') {
+        return res.status(400).json({ message: "This ticket is closed" });
+      }
+
+      const { message } = req.body;
+      if (!message || typeof message !== 'string' || message.trim().length === 0) {
+        return res.status(400).json({ message: "Message is required" });
+      }
+
+      const [user] = await db.select().from(users).where(eq(users.id, userId));
+      const senderName = user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User' : 'User';
+
+      const msg = await storage.createSupportMessage({
+        ticketId,
+        senderId: userId,
+        senderName,
+        senderType: 'user',
+        message: message.trim(),
+      });
+
+      res.json(msg);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to send message" });
+    }
+  });
+
+  // User: Close own ticket
+  app.post('/api/support/tickets/:id/close', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.session?.manualUserId || (req.user as any)?.claims?.sub;
+      const ticketId = parseInt(req.params.id);
+      const ticket = await storage.getSupportTicket(ticketId);
+      if (!ticket) return res.status(404).json({ message: "Ticket not found" });
+      if (ticket.userId !== userId) return res.status(403).json({ message: "Not authorized" });
+
+      const updated = await storage.updateSupportTicket(ticketId, { status: 'closed', closedAt: new Date() });
+
+      await storage.createSupportMessage({
+        ticketId,
+        senderId: 'system',
+        senderName: 'System',
+        senderType: 'system',
+        message: 'Chat ended by user.',
+      });
+
+      res.json(updated);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to close ticket" });
+    }
+  });
+
+  // Admin: Get all support tickets
+  app.get('/api/admin/support/tickets', isAdminOrOwner, async (req: any, res) => {
+    try {
+      const status = req.query.status as string | undefined;
+      const tickets = await storage.getAllSupportTickets(status);
+      res.json(tickets);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch support tickets" });
+    }
+  });
+
+  // Admin: Get waiting tickets count
+  app.get('/api/admin/support/waiting-count', isAdminOrOwner, async (_req, res) => {
+    try {
+      const count = await storage.getWaitingTicketsCount();
+      res.json({ count });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch waiting count" });
+    }
+  });
+
+  // Admin: Get ticket details with messages
+  app.get('/api/admin/support/tickets/:id', isAdminOrOwner, async (req: any, res) => {
+    try {
+      const ticketId = parseInt(req.params.id);
+      const ticket = await storage.getSupportTicket(ticketId);
+      if (!ticket) return res.status(404).json({ message: "Ticket not found" });
+      const messages = await storage.getSupportMessages(ticketId);
+      res.json({ ...ticket, messages });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch ticket" });
+    }
+  });
+
+  // Admin: Assign self to a ticket (join chat)
+  app.post('/api/admin/support/tickets/:id/assign', isAdminOrOwner, async (req: any, res) => {
+    try {
+      const ticketId = parseInt(req.params.id);
+      const ticket = await storage.getSupportTicket(ticketId);
+      if (!ticket) return res.status(404).json({ message: "Ticket not found" });
+
+      let adminName = 'Admin';
+      let adminId = 0;
+      if ((req as any).adminRole === 'owner') {
+        adminName = 'Owner';
+        adminId = 0;
+      } else if ((req as any).adminUser) {
+        adminName = (req as any).adminUser.name;
+        adminId = (req as any).adminUser.id;
+      }
+
+      const updated = await storage.updateSupportTicket(ticketId, {
+        status: 'active',
+        assignedAdminId: adminId,
+        assignedAdminName: adminName,
+      });
+
+      await storage.createSupportMessage({
+        ticketId,
+        senderId: `admin-${adminId}`,
+        senderName: adminName,
+        senderType: 'system',
+        message: `${adminName} has joined the chat. How can we help you?`,
+      });
+
+      res.json(updated);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to assign ticket" });
+    }
+  });
+
+  // Admin: Send message to ticket
+  app.post('/api/admin/support/tickets/:id/messages', isAdminOrOwner, async (req: any, res) => {
+    try {
+      const ticketId = parseInt(req.params.id);
+      const ticket = await storage.getSupportTicket(ticketId);
+      if (!ticket) return res.status(404).json({ message: "Ticket not found" });
+
+      const { message } = req.body;
+      if (!message || typeof message !== 'string' || message.trim().length === 0) {
+        return res.status(400).json({ message: "Message is required" });
+      }
+
+      let adminName = 'Admin';
+      let adminId = '0';
+      if ((req as any).adminRole === 'owner') {
+        adminName = 'Owner';
+        adminId = 'admin-owner';
+      } else if ((req as any).adminUser) {
+        adminName = (req as any).adminUser.name;
+        adminId = `admin-${(req as any).adminUser.id}`;
+      }
+
+      const msg = await storage.createSupportMessage({
+        ticketId,
+        senderId: adminId,
+        senderName: adminName,
+        senderType: 'admin',
+        message: message.trim(),
+      });
+
+      res.json(msg);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to send message" });
+    }
+  });
+
+  // Admin: Close/resolve a ticket
+  app.post('/api/admin/support/tickets/:id/close', isAdminOrOwner, async (req: any, res) => {
+    try {
+      const ticketId = parseInt(req.params.id);
+      const ticket = await storage.getSupportTicket(ticketId);
+      if (!ticket) return res.status(404).json({ message: "Ticket not found" });
+
+      let adminName = 'Admin';
+      if ((req as any).adminRole === 'owner') adminName = 'Owner';
+      else if ((req as any).adminUser) adminName = (req as any).adminUser.name;
+
+      const updated = await storage.updateSupportTicket(ticketId, { status: 'resolved', closedAt: new Date() });
+
+      await storage.createSupportMessage({
+        ticketId,
+        senderId: 'system',
+        senderName: 'System',
+        senderType: 'system',
+        message: `Chat resolved by ${adminName}. Thank you for contacting support.`,
+      });
+
+      res.json(updated);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to close ticket" });
+    }
+  });
+
+  // Admin: Get messages for a ticket (polling)
+  app.get('/api/admin/support/tickets/:id/messages', isAdminOrOwner, async (req: any, res) => {
+    try {
+      const ticketId = parseInt(req.params.id);
+      const afterId = req.query.afterId ? parseInt(req.query.afterId as string) : undefined;
+      const messages = await storage.getSupportMessages(ticketId, afterId);
+      res.json(messages);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch messages" });
     }
   });
 

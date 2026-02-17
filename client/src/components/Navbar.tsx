@@ -18,7 +18,8 @@ import {
   Users,
   Bell,
   ClipboardList,
-  LayoutDashboard
+  LayoutDashboard,
+  Headphones
 } from "lucide-react";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -79,9 +80,11 @@ export function Navbar() {
     adminLinks.push({ href: "/admin/verifications", label: "Verifications", icon: ShieldCheck });
     adminLinks.push({ href: "/admin/disputes", label: "Disputes", icon: Scale });
     adminLinks.push({ href: "/admin/staff", label: "Admin Staff", icon: Users });
+    adminLinks.push({ href: "/admin/support", label: "Live Support", icon: Headphones });
   } else if (isStaff) {
     adminLinks.push({ href: "/admin/verifications", label: "Verifications", icon: ShieldCheck });
     adminLinks.push({ href: "/admin/disputes", label: "Disputes", icon: Scale });
+    adminLinks.push({ href: "/admin/support", label: "Live Support", icon: Headphones });
     adminLinks.push({ href: "/admin/profile", label: "My Profile", icon: User });
   }
 

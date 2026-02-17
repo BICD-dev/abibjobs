@@ -45,6 +45,8 @@ Main tables:
 9. **admin_payments** — Admin salary payment records (adminId, amount, bank info snapshot, note, paidBy, status)
 7. **notifications** — In-app notifications (userId, title, message, type: info/warning/error/success, isRead, jobId)
 8. **site_visits** — Page visit tracking (visitorId, page, userAgent, createdAt)
+9. **support_tickets** — Live support chat tickets (ticketNumber, userId, userName, subject, status: waiting/active/resolved/closed, assignedAdminId, assignedAdminName)
+10. **support_messages** — Chat messages within support tickets (ticketId, senderId, senderName, senderType: user/admin/system, message)
 
 Schema changes use `drizzle-kit push` (not migrations). Run `npm run db:push` to sync schema to database.
 
@@ -132,6 +134,19 @@ Schema changes use `drizzle-kit push` (not migrations). Run `npm run db:push` to
 - Payment amounts entered per admin, with option to set same amount for all selected
 - Payment records stored in admin_payments table with bank info snapshot
 - API: GET/POST /api/admin/my-hours, POST /api/admin/my-bank, GET /api/admin/my-payments, GET /api/admin/payroll, POST /api/admin/payroll/pay, GET /api/admin/payroll/history
+
+### Live Support Chat
+- Floating chat widget (bottom-right) available to all authenticated users
+- Users describe their query to create a support ticket with unique ticket number (TK-XXXX)
+- Ticket starts in "waiting" status with animated spinner until a live agent joins
+- Once admin joins, status changes to "active" and both parties can chat in real-time
+- Messages polled every 3 seconds for near-real-time updates
+- Users can end chat; admins can resolve tickets
+- Admin support page at /admin/support shows all tickets with status filters
+- Both owner and staff admins can view, join, and respond to support chats
+- Waiting ticket count badge shown on admin support page
+- Routes: POST /api/support/tickets, GET /api/support/active, GET/POST /api/support/tickets/:id/messages, POST /api/support/tickets/:id/close
+- Admin routes: GET /api/admin/support/tickets, POST /api/admin/support/tickets/:id/assign, POST /api/admin/support/tickets/:id/messages, POST /api/admin/support/tickets/:id/close
 
 ### Key Environment Variables
 - `DATABASE_URL` — PostgreSQL connection string (required)

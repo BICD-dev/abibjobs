@@ -24,9 +24,11 @@ import AdminDashboard from "@/pages/AdminDashboard";
 import AdminProfile from "@/pages/AdminProfile";
 import AdminPayroll from "@/pages/AdminPayroll";
 import AdminNotifications from "@/pages/AdminNotifications";
+import AdminSupport from "@/pages/AdminSupport";
 import Notifications from "@/pages/Notifications";
 import MyJobs from "@/pages/MyJobs";
 import NotFound from "@/pages/not-found";
+import { SupportChat } from "@/components/SupportChat";
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const { user, isLoading } = useAuth();
@@ -91,6 +93,7 @@ function Router() {
       <Route path="/admin/payroll" component={AdminPayroll} />
       <Route path="/admin/notifications" component={AdminNotifications} />
       <Route path="/admin/verifications" component={AdminVerifications} />
+      <Route path="/admin/support" component={AdminSupport} />
 
       <Route component={NotFound} />
     </Switch>
@@ -110,6 +113,7 @@ function App() {
         <AdminPingTracker />
         <VisitorTracker />
         <Router />
+        <SupportChat />
       </TooltipProvider>
     </QueryClientProvider>
   );
