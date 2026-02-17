@@ -132,11 +132,13 @@ export async function registerRoutes(
       });
 
       const job = await storage.createJob({ ...input, posterId: userId });
-      
-      // Update transaction with job ID
-      // (Simplified: we created tx before job, but for linking we might want to update it or create it after.
-      // Ideally database transaction. Here we just leave it or create another log if needed.
-      // Let's just proceed.)
+
+      await storage.createAdminNotification({
+        adminId: 0,
+        title: 'New Job Posted',
+        message: `"${job.title}" posted in ${job.category} for ₦${parseFloat(job.price).toLocaleString()}${job.priceType === 'per_person' ? '/person' : ''} (${job.workersNeeded} worker${job.workersNeeded > 1 ? 's' : ''} needed).`,
+        type: 'info'
+      });
 
       res.status(201).json(job);
     } catch (err) {
@@ -191,6 +193,14 @@ export async function registerRoutes(
     }
 
     const updated = await storage.updateJob(jobId, updateData);
+
+    await storage.createAdminNotification({
+      adminId: 0,
+      title: 'Job Accepted',
+      message: `A worker accepted "${job.title}" (${newAccepted}/${job.workersNeeded} workers).${newStatus === 'in_progress' ? ' Job is now in progress.' : ''}`,
+      type: 'info'
+    });
+
     res.json(updated);
   });
 
@@ -229,6 +239,14 @@ export async function registerRoutes(
     await storage.addPlatformEarning(fee, job.id, job.title);
 
     const updated = await storage.updateJob(jobId, { status: 'completed', completedAt: new Date() });
+
+    await storage.createAdminNotification({
+      adminId: 0,
+      title: 'Job Completed',
+      message: `"${job.title}" has been completed. Platform fee earned: ₦${fee.toFixed(2)}. Total payout to ${workerIds.length} worker(s): ₦${totalPayout.toFixed(2)}.`,
+      type: 'success'
+    });
+
     res.json(updated);
   });
 
@@ -299,6 +317,14 @@ export async function registerRoutes(
     }
 
     const updated = await storage.updateJob(jobId, { status: 'cancelled' });
+
+    await storage.createAdminNotification({
+      adminId: 0,
+      title: 'Job Cancelled',
+      message: `"${job.title}" was cancelled by the poster.${workerIsEnRoute ? ` 10% penalty applied (₦${(Math.round(escrowAmount * 0.1 * 100) / 100).toLocaleString()} to worker compensation).` : ' Full escrow refunded.'}`,
+      type: 'warning'
+    });
+
     res.json(updated);
   });
 
@@ -1689,6 +1715,13 @@ export async function registerRoutes(
       });
 
       await storage.updateJob(dispute.jobId, { status: 'completed', completedAt: new Date() });
+
+      await storage.createAdminNotification({
+        adminId: 0,
+        title: 'Dispute Resolved - Job Completed',
+        message: `"${job.title}" completed via dispute resolution. Resolved amount: ₦${resolvedAmount.toLocaleString()}. Platform fee: ₦${fee.toFixed(2)}.`,
+        type: 'success'
+      });
 
       const full = await storage.getDispute(disputeId);
       res.json(full);

@@ -787,6 +787,7 @@ export class DatabaseStorage implements IStorage {
     for (const admin of allAdmins) {
       await db.insert(adminNotifications).values({ ...data, adminId: admin.id });
     }
+    await db.insert(adminNotifications).values({ ...data, adminId: 0 });
   }
 
   async getAdminNotifications(adminId: number): Promise<AdminNotification[]> {
