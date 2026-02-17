@@ -49,6 +49,7 @@ export const jobs = pgTable("jobs", {
   workerProgress: text("worker_progress"), // null, 'getting_ready', 'on_the_way', 'at_location'
   posterConfirmedArrival: boolean("poster_confirmed_arrival").default(false),
   acceptedAt: timestamp("accepted_at"),
+  completedAt: timestamp("completed_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -193,7 +194,7 @@ export const ownerSettings = pgTable("owner_settings", {
 // === SCHEMAS ===
 
 export const insertProfileSchema = createInsertSchema(profiles).omit({ id: true });
-export const insertJobSchema = createInsertSchema(jobs).omit({ id: true, createdAt: true, updatedAt: true, workerId: true, status: true, workersAccepted: true, workerProgress: true, posterConfirmedArrival: true });
+export const insertJobSchema = createInsertSchema(jobs).omit({ id: true, createdAt: true, updatedAt: true, workerId: true, status: true, workersAccepted: true, workerProgress: true, posterConfirmedArrival: true, completedAt: true });
 export const createJobSchema = insertJobSchema.omit({ posterId: true });
 
 export const insertTransactionSchema = createInsertSchema(transactions).omit({ id: true, createdAt: true });

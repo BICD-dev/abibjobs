@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, desc, and, sql, gte, count } from "drizzle-orm";
+import { eq, desc, and, sql, gte, lte, count, isNotNull } from "drizzle-orm";
 import {
   users,
   profiles,
@@ -134,6 +134,11 @@ export interface IStorage {
     todaySignUps: number;
     recentVisitsByDay: { date: string; count: number }[];
     recentSignUpsByDay: { date: string; count: number }[];
+  }>;
+  getHoursWorked(startDate: Date, endDate: Date): Promise<{
+    totalHours: number;
+    totalJobs: number;
+    jobBreakdown: { jobId: number; title: string; hours: number; worker: string; completedAt: string }[];
   }>;
 }
 
@@ -849,6 +854,52 @@ export class DatabaseStorage implements IStorage {
       todaySignUps: Number(todaySignUpsResult?.count || 0),
       recentVisitsByDay: recentVisitsByDay.map(r => ({ date: r.date, count: Number(r.count) })),
       recentSignUpsByDay: recentSignUpsByDay.map(r => ({ date: r.date, count: Number(r.count) })),
+    };
+  }
+
+  async getHoursWorked(startDate: Date, endDate: Date) {
+    const completedJobs = await db
+      .select({
+        id: jobs.id,
+        title: jobs.title,
+        workerId: jobs.workerId,
+        acceptedAt: jobs.acceptedAt,
+        completedAt: jobs.completedAt,
+      })
+      .from(jobs)
+      .where(
+        and(
+          eq(jobs.status, 'completed'),
+          isNotNull(jobs.acceptedAt),
+          isNotNull(jobs.completedAt),
+          gte(jobs.completedAt, startDate),
+          lte(jobs.completedAt, endDate),
+        )
+      )
+      .orderBy(desc(jobs.completedAt));
+
+    let totalHours = 0;
+    const jobBreakdown: { jobId: number; title: string; hours: number; worker: string; completedAt: string }[] = [];
+
+    for (const job of completedJobs) {
+      if (job.acceptedAt && job.completedAt) {
+        const diffMs = new Date(job.completedAt).getTime() - new Date(job.acceptedAt).getTime();
+        const hours = Math.max(diffMs / (1000 * 60 * 60), 0);
+        totalHours += hours;
+        jobBreakdown.push({
+          jobId: job.id,
+          title: job.title,
+          hours: Math.round(hours * 100) / 100,
+          worker: job.workerId || 'Unknown',
+          completedAt: new Date(job.completedAt).toISOString(),
+        });
+      }
+    }
+
+    return {
+      totalHours: Math.round(totalHours * 100) / 100,
+      totalJobs: completedJobs.length,
+      jobBreakdown,
     };
   }
 }

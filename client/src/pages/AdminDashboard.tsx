@@ -1,8 +1,15 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Navbar } from "@/components/Navbar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2, Eye, UserPlus, ArrowUpCircle, ArrowDownCircle, TrendingUp, Calendar } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Loader2, Eye, UserPlus, ArrowUpCircle, ArrowDownCircle, TrendingUp, CalendarIcon, Clock, Briefcase } from "lucide-react";
 import { useAdminAuth } from "@/hooks/use-admin-auth";
+import { format, subDays } from "date-fns";
+import type { DateRange } from "react-day-picker";
+import { cn } from "@/lib/utils";
 
 interface DashboardAnalytics {
   totalVisitors: number;
@@ -13,6 +20,12 @@ interface DashboardAnalytics {
   todaySignUps: number;
   recentVisitsByDay: { date: string; count: number }[];
   recentSignUpsByDay: { date: string; count: number }[];
+}
+
+interface HoursWorkedData {
+  totalHours: number;
+  totalJobs: number;
+  jobBreakdown: { jobId: number; title: string; hours: number; worker: string; completedAt: string }[];
 }
 
 function formatNaira(amount: string | number) {
@@ -95,20 +108,52 @@ function MiniChart({ data, label }: { data: { date: string; count: number }[]; l
   );
 }
 
+function formatHours(hours: number) {
+  if (hours < 1) {
+    const minutes = Math.round(hours * 60);
+    return `${minutes}m`;
+  }
+  const h = Math.floor(hours);
+  const m = Math.round((hours - h) * 60);
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
 export default function AdminDashboard() {
-  const { isOwner } = useAdminAuth();
-  const { data, isLoading, isError } = useQuery<DashboardAnalytics>({
-    queryKey: ['/api/admin/dashboard'],
-    enabled: !!isOwner,
+  const { isOwner, isAdmin } = useAdminAuth();
+  const hasAccess = isOwner || isAdmin;
+  const [dateRange, setDateRange] = useState<DateRange | undefined>({
+    from: subDays(new Date(), 30),
+    to: new Date(),
   });
 
-  if (!isOwner) {
+  const { data, isLoading, isError } = useQuery<DashboardAnalytics>({
+    queryKey: ['/api/admin/dashboard'],
+    enabled: !!hasAccess,
+  });
+
+  const { data: hoursData, isLoading: isHoursLoading } = useQuery<HoursWorkedData>({
+    queryKey: ['/api/admin/hours-worked', dateRange?.from?.toISOString(), dateRange?.to?.toISOString()],
+    queryFn: async () => {
+      if (!dateRange?.from || !dateRange?.to) return { totalHours: 0, totalJobs: 0, jobBreakdown: [] };
+      const params = new URLSearchParams({
+        startDate: dateRange.from.toISOString(),
+        endDate: dateRange.to.toISOString(),
+      });
+      const res = await fetch(`/api/admin/hours-worked?${params}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch hours data");
+      return res.json();
+    },
+    enabled: !!hasAccess && !!dateRange?.from && !!dateRange?.to,
+  });
+
+  if (!hasAccess) {
     return (
       <div className="min-h-screen bg-background">
         <Navbar />
         <div className="max-w-4xl mx-auto p-8 text-center">
           <h1 className="text-2xl font-bold text-foreground">Access Denied</h1>
-          <p className="text-muted-foreground mt-2">Owner access required to view the dashboard.</p>
+          <p className="text-muted-foreground mt-2">Admin access required to view the dashboard.</p>
         </div>
       </div>
     );
@@ -171,10 +216,173 @@ export default function AdminDashboard() {
               />
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
               <MiniChart data={data.recentVisitsByDay} label="Visitors" />
               <MiniChart data={data.recentSignUpsByDay} label="Sign Ups" />
             </div>
+
+            <Card className="mb-8" data-testid="card-hours-worked">
+              <CardHeader>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+                      <Clock className="w-5 h-5 text-primary" />
+                    </div>
+                    <div>
+                      <CardTitle data-testid="text-hours-title">Total Hours Worked</CardTitle>
+                      <p className="text-sm text-muted-foreground mt-0.5">Select a date range to view work hours</p>
+                    </div>
+                  </div>
+
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        className={cn(
+                          "justify-start text-left font-normal",
+                          !dateRange && "text-muted-foreground"
+                        )}
+                        data-testid="button-date-range-picker"
+                      >
+                        <CalendarIcon className="mr-2 h-4 w-4" />
+                        {dateRange?.from ? (
+                          dateRange.to ? (
+                            <>
+                              {format(dateRange.from, "MMM d, yyyy")} - {format(dateRange.to, "MMM d, yyyy")}
+                            </>
+                          ) : (
+                            format(dateRange.from, "MMM d, yyyy")
+                          )
+                        ) : (
+                          <span>Pick a date range</span>
+                        )}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="end">
+                      <Calendar
+                        initialFocus
+                        mode="range"
+                        defaultMonth={dateRange?.from}
+                        selected={dateRange}
+                        onSelect={setDateRange}
+                        numberOfMonths={2}
+                        data-testid="calendar-date-range"
+                      />
+                      <div className="flex flex-wrap gap-2 p-3 border-t">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setDateRange({ from: subDays(new Date(), 7), to: new Date() })}
+                          data-testid="button-last-7-days"
+                        >
+                          Last 7 days
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setDateRange({ from: subDays(new Date(), 30), to: new Date() })}
+                          data-testid="button-last-30-days"
+                        >
+                          Last 30 days
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setDateRange({ from: subDays(new Date(), 90), to: new Date() })}
+                          data-testid="button-last-90-days"
+                        >
+                          Last 90 days
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            const now = new Date();
+                            setDateRange({ from: new Date(now.getFullYear(), 0, 1), to: now });
+                          }}
+                          data-testid="button-this-year"
+                        >
+                          This year
+                        </Button>
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {isHoursLoading ? (
+                  <div className="flex justify-center py-10">
+                    <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                  </div>
+                ) : hoursData ? (
+                  <div className="space-y-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="p-4 rounded-xl bg-muted/30">
+                        <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                          <Clock className="w-4 h-4" />
+                          <span className="text-sm font-medium">Total Hours</span>
+                        </div>
+                        <p className="text-3xl font-bold text-foreground" data-testid="text-total-hours">
+                          {formatHours(hoursData.totalHours)}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {hoursData.totalHours > 0 ? `${hoursData.totalHours.toFixed(2)} hours total` : "No completed jobs in this period"}
+                        </p>
+                      </div>
+                      <div className="p-4 rounded-xl bg-muted/30">
+                        <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                          <Briefcase className="w-4 h-4" />
+                          <span className="text-sm font-medium">Jobs Completed</span>
+                        </div>
+                        <p className="text-3xl font-bold text-foreground" data-testid="text-total-jobs-completed">
+                          {hoursData.totalJobs}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {hoursData.totalJobs > 0 && hoursData.totalHours > 0
+                            ? `Avg ${formatHours(hoursData.totalHours / hoursData.totalJobs)} per job`
+                            : "Within selected range"}
+                        </p>
+                      </div>
+                    </div>
+
+                    {hoursData.jobBreakdown.length > 0 && (
+                      <div>
+                        <h4 className="text-sm font-semibold text-foreground mb-3">Job Breakdown</h4>
+                        <div className="space-y-2 max-h-72 overflow-y-auto">
+                          {hoursData.jobBreakdown.map((job) => (
+                            <div
+                              key={job.jobId}
+                              className="flex items-center justify-between gap-4 p-3 rounded-xl bg-muted/20"
+                              data-testid={`row-job-hours-${job.jobId}`}
+                            >
+                              <div className="min-w-0 flex-1">
+                                <p className="font-medium text-foreground text-sm truncate">{job.title}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  Completed {format(new Date(job.completedAt), "MMM d, yyyy 'at' h:mm a")}
+                                </p>
+                              </div>
+                              <div className="text-right flex-shrink-0">
+                                <p className="font-bold text-foreground">{formatHours(job.hours)}</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {hoursData.totalJobs === 0 && (
+                      <div className="text-center py-6">
+                        <Clock className="w-12 h-12 text-muted-foreground/30 mx-auto mb-3" />
+                        <p className="text-muted-foreground text-sm">No completed jobs found in this date range</p>
+                        <p className="text-muted-foreground text-xs mt-1">Try selecting a different period</p>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-center py-6 text-muted-foreground">Select a date range to view hours worked</div>
+                )}
+              </CardContent>
+            </Card>
           </>
         ) : null}
       </div>

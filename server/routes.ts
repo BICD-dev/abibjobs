@@ -228,7 +228,7 @@ export async function registerRoutes(
 
     await storage.addPlatformEarning(fee, job.id, job.title);
 
-    const updated = await storage.updateJob(jobId, { status: 'completed' });
+    const updated = await storage.updateJob(jobId, { status: 'completed', completedAt: new Date() });
     res.json(updated);
   });
 
@@ -1430,7 +1430,7 @@ export async function registerRoutes(
         resolvedBy: 'agreement',
       });
 
-      await storage.updateJob(dispute.jobId, { status: 'completed' });
+      await storage.updateJob(dispute.jobId, { status: 'completed', completedAt: new Date() });
 
       const full = await storage.getDispute(disputeId);
       res.json(full);
@@ -1634,7 +1634,11 @@ export async function registerRoutes(
         resolvedBy: 'admin',
       });
 
-      await storage.updateJob(dispute.jobId, { status: action === 'refund_poster' ? 'cancelled' : 'completed' });
+      const newStatus = action === 'refund_poster' ? 'cancelled' : 'completed';
+      await storage.updateJob(dispute.jobId, { 
+        status: newStatus,
+        ...(newStatus === 'completed' ? { completedAt: new Date() } : {}),
+      });
 
       const full = await storage.getDispute(disputeId);
       res.json(full);
@@ -1999,13 +2003,35 @@ export async function registerRoutes(
   });
 
   // --- ADMIN DASHBOARD ANALYTICS ---
-  app.get('/api/admin/dashboard', isAuthenticated, isOwner, async (_req, res) => {
+  app.get('/api/admin/dashboard', isAuthenticated, isAdminOrOwner, async (_req, res) => {
     try {
       const analytics = await storage.getDashboardAnalytics();
       res.json(analytics);
     } catch (err) {
       console.error("Dashboard analytics error:", err);
       res.status(500).json({ message: "Failed to fetch analytics" });
+    }
+  });
+
+  app.get('/api/admin/hours-worked', isAuthenticated, isAdminOrOwner, async (req, res) => {
+    try {
+      const { startDate, endDate } = req.query;
+      if (!startDate || !endDate) {
+        return res.status(400).json({ message: "startDate and endDate query parameters are required" });
+      }
+      const start = new Date(startDate as string);
+      const end = new Date(endDate as string);
+      end.setHours(23, 59, 59, 999);
+
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+        return res.status(400).json({ message: "Invalid date format" });
+      }
+
+      const result = await storage.getHoursWorked(start, end);
+      res.json(result);
+    } catch (err) {
+      console.error("Hours worked error:", err);
+      res.status(500).json({ message: "Failed to fetch hours worked data" });
     }
   });
 
