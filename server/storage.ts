@@ -21,6 +21,7 @@ import {
   siteVisits,
   supportTickets,
   supportMessages,
+  withdrawalRequests,
   type Profile,
   type Job,
   type Transaction,
@@ -43,6 +44,7 @@ import {
   type PlatformTransaction,
   type SupportTicket,
   type SupportMessage,
+  type WithdrawalRequest,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -166,6 +168,12 @@ export interface IStorage {
   createSupportMessage(data: { ticketId: number; senderId: string; senderName: string; senderType: string; message: string }): Promise<SupportMessage>;
   getSupportMessages(ticketId: number, afterId?: number): Promise<SupportMessage[]>;
   getWaitingTicketsCount(): Promise<number>;
+
+  // Withdrawal Requests
+  createWithdrawalRequest(data: { userId: string; userName: string; amount: string; bankName: string; bankCode?: string | null; accountNumber: string; accountName?: string | null; reason?: string | null }): Promise<WithdrawalRequest>;
+  getUserWithdrawalRequests(userId: string): Promise<WithdrawalRequest[]>;
+  getAllWithdrawalRequests(status?: string): Promise<WithdrawalRequest[]>;
+  processWithdrawalRequest(id: number, status: 'approved' | 'rejected', adminId: number, adminNote?: string): Promise<WithdrawalRequest>;
 
   // Site Visits & Analytics
   trackVisit(visitorId: string, page: string, userAgent?: string): Promise<void>;
@@ -1248,6 +1256,30 @@ export class DatabaseStorage implements IStorage {
   async getWaitingTicketsCount(): Promise<number> {
     const [result] = await db.select({ count: count() }).from(supportTickets).where(eq(supportTickets.status, 'waiting'));
     return result?.count || 0;
+  }
+
+  async createWithdrawalRequest(data: { userId: string; userName: string; amount: string; bankName: string; bankCode?: string | null; accountNumber: string; accountName?: string | null; reason?: string | null }): Promise<WithdrawalRequest> {
+    const [req] = await db.insert(withdrawalRequests).values(data).returning();
+    return req;
+  }
+
+  async getUserWithdrawalRequests(userId: string): Promise<WithdrawalRequest[]> {
+    return db.select().from(withdrawalRequests).where(eq(withdrawalRequests.userId, userId)).orderBy(desc(withdrawalRequests.createdAt));
+  }
+
+  async getAllWithdrawalRequests(status?: string): Promise<WithdrawalRequest[]> {
+    if (status) {
+      return db.select().from(withdrawalRequests).where(eq(withdrawalRequests.status, status)).orderBy(desc(withdrawalRequests.createdAt));
+    }
+    return db.select().from(withdrawalRequests).orderBy(desc(withdrawalRequests.createdAt));
+  }
+
+  async processWithdrawalRequest(id: number, status: 'approved' | 'rejected', adminId: number, adminNote?: string): Promise<WithdrawalRequest> {
+    const [updated] = await db.update(withdrawalRequests)
+      .set({ status, adminNote: adminNote || null, processedBy: adminId, processedAt: new Date() })
+      .where(eq(withdrawalRequests.id, id))
+      .returning();
+    return updated;
   }
 }
 

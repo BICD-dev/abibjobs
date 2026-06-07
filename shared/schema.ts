@@ -238,6 +238,23 @@ export const supportMessages = pgTable("support_messages", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const withdrawalRequests = pgTable("withdrawal_requests", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  userName: text("user_name").notNull(),
+  amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
+  bankName: text("bank_name").notNull(),
+  bankCode: text("bank_code"),
+  accountNumber: text("account_number").notNull(),
+  accountName: text("account_name"),
+  reason: text("reason"),
+  status: text("status").default("pending").notNull(), // 'pending', 'approved', 'rejected'
+  adminNote: text("admin_note"),
+  processedBy: integer("processed_by"),
+  processedAt: timestamp("processed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // === SCHEMAS ===
 
 export const insertProfileSchema = createInsertSchema(profiles).omit({ id: true });
@@ -270,6 +287,7 @@ export const insertNotificationSchema = createInsertSchema(notifications).omit({
 export const insertScheduledPaymentSchema = createInsertSchema(scheduledPayments).omit({ id: true, createdAt: true, processedAt: true });
 export const insertSupportTicketSchema = createInsertSchema(supportTickets).omit({ id: true, createdAt: true, updatedAt: true, closedAt: true });
 export const insertSupportMessageSchema = createInsertSchema(supportMessages).omit({ id: true, createdAt: true });
+export const insertWithdrawalRequestSchema = createInsertSchema(withdrawalRequests).omit({ id: true, createdAt: true, processedAt: true });
 
 // === TYPES ===
 
@@ -292,6 +310,7 @@ export type SiteVisit = typeof siteVisits.$inferSelect;
 export type OwnerSettings = typeof ownerSettings.$inferSelect;
 export type SupportTicket = typeof supportTickets.$inferSelect;
 export type SupportMessage = typeof supportMessages.$inferSelect;
+export type WithdrawalRequest = typeof withdrawalRequests.$inferSelect;
 
 export type CreateJobInput = z.infer<typeof createJobSchema>;
 export type VerificationStatus = 'unverified' | 'pending' | 'verified' | 'declined' | 'redo_requested';

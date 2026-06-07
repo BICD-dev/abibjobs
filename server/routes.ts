@@ -2238,6 +2238,107 @@ export async function registerRoutes(
     res.json({ methods, hasDeposits: methods.length > 0 });
   });
 
+  // User: submit withdrawal request (when they want a different account)
+  app.post('/api/wallet/withdrawal-requests', isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const { amount, bankName, bankCode, accountNumber, accountName, reason } = req.body;
+    if (!amount || !bankName || !accountNumber) {
+      return res.status(400).json({ message: "Amount, bank name, and account number are required." });
+    }
+    const val = parseFloat(amount);
+    if (isNaN(val) || val <= 0) return res.status(400).json({ message: "Invalid amount." });
+
+    const profile = await storage.getProfile(userId);
+    if (!profile || parseFloat(profile.walletBalance) < val) {
+      return res.status(400).json({ message: "Insufficient wallet balance for this request." });
+    }
+
+    const userRecord = await storage.getUser(userId);
+    const userName = userRecord
+      ? `${userRecord.firstName || ''} ${userRecord.lastName || ''}`.trim() || userRecord.email || userId
+      : userId;
+
+    const request = await storage.createWithdrawalRequest({
+      userId,
+      userName,
+      amount: val.toString(),
+      bankName,
+      bankCode: bankCode || null,
+      accountNumber,
+      accountName: accountName || null,
+      reason: reason || null,
+    });
+
+    res.json(request);
+  });
+
+  // User: view their own withdrawal requests
+  app.get('/api/wallet/withdrawal-requests', isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const requests = await storage.getUserWithdrawalRequests(userId);
+    res.json(requests);
+  });
+
+  // Admin: view all withdrawal requests
+  app.get('/api/admin/withdrawal-requests', isAdminOrOwner, async (req, res) => {
+    const status = req.query.status as string | undefined;
+    const requests = await storage.getAllWithdrawalRequests(status);
+    res.json(requests);
+  });
+
+  // Admin: approve or reject a withdrawal request
+  app.post('/api/admin/withdrawal-requests/:id/process', isAdminOrOwner, async (req, res) => {
+    const id = parseInt(req.params.id);
+    const { action, adminNote } = req.body;
+    if (!['approved', 'rejected'].includes(action)) {
+      return res.status(400).json({ message: "Action must be 'approved' or 'rejected'." });
+    }
+    const adminUser = (req as any).adminUser;
+    if (!adminUser) return res.status(401).json({ message: "Admin not authenticated." });
+
+    const existing = (await storage.getAllWithdrawalRequests()).find(r => r.id === id);
+    if (!existing) return res.status(404).json({ message: "Request not found." });
+    if (existing.status !== 'pending') return res.status(400).json({ message: "This request has already been processed." });
+
+    if (action === 'approved') {
+      const profile = await storage.getProfile(existing.userId);
+      const balance = parseFloat(profile?.walletBalance || '0');
+      const amount = parseFloat(existing.amount);
+      if (balance < amount) {
+        return res.status(400).json({ message: "User has insufficient wallet balance to fulfil this request." });
+      }
+      // Deduct from user wallet
+      await storage.updateWalletBalance(existing.userId, -amount);
+      await storage.createTransaction({
+        userId: existing.userId,
+        amount: (-amount).toString(),
+        type: 'withdrawal',
+        bankName: existing.bankName,
+        bankCode: existing.bankCode,
+        accountNumber: existing.accountNumber,
+        accountName: existing.accountName,
+      });
+      // Notify user
+      await storage.createNotification({
+        userId: existing.userId,
+        title: 'Withdrawal Approved',
+        message: `Your withdrawal request of N${amount.toLocaleString()} to ${existing.bankName} (${existing.accountNumber}) has been approved and processed.`,
+        type: 'success',
+      });
+    } else {
+      // Notify user of rejection
+      await storage.createNotification({
+        userId: existing.userId,
+        title: 'Withdrawal Request Rejected',
+        message: `Your withdrawal request of N${parseFloat(existing.amount).toLocaleString()} was not approved.${adminNote ? ` Reason: ${adminNote}` : ''}`,
+        type: 'warning',
+      });
+    }
+
+    const updated = await storage.processWithdrawalRequest(id, action, adminUser.id, adminNote);
+    res.json(updated);
+  });
+
   app.post(api.wallet.withdraw.path, isAuthenticated, async (req, res) => {
     const userId = (req.user as any).claims.sub;
     const parsed = api.wallet.withdraw.input.safeParse(req.body);
