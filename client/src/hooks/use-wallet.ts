@@ -171,12 +171,38 @@ export function useResendOtp() {
   });
 }
 
+export interface DepositMethod {
+  bankCode: string | null;
+  bankName: string | null;
+  accountNumber: string | null;
+  accountName: string | null;
+}
+
+export interface WithdrawInput {
+  amount: number;
+  bankCode?: string;
+  bankName: string;
+  accountNumber: string;
+  accountName?: string;
+}
+
+export function useDepositMethods() {
+  return useQuery({
+    queryKey: [api.wallet.depositMethods.path],
+    queryFn: async () => {
+      const res = await fetch(api.wallet.depositMethods.path, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch deposit methods");
+      return res.json() as Promise<{ methods: DepositMethod[]; hasDeposits: boolean }>;
+    },
+  });
+}
+
 export function useWithdraw() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
   return useMutation({
-    mutationFn: async (input: WalletTransactionInput) => {
+    mutationFn: async (input: WithdrawInput) => {
       const res = await fetch(api.wallet.withdraw.path, {
         method: api.wallet.withdraw.method,
         headers: { "Content-Type": "application/json" },

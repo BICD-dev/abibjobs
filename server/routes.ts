@@ -2232,6 +2232,12 @@ export async function registerRoutes(
     });
   });
 
+  app.get(api.wallet.depositMethods.path, isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const methods = await storage.getDepositMethods(userId);
+    res.json({ methods, hasDeposits: methods.length > 0 });
+  });
+
   app.post(api.wallet.withdraw.path, isAuthenticated, async (req, res) => {
     const userId = (req.user as any).claims.sub;
     const parsed = api.wallet.withdraw.input.safeParse(req.body);
@@ -2241,6 +2247,15 @@ export async function registerRoutes(
     const profile = await storage.getProfile(userId);
     if (!profile || parseFloat(profile.walletBalance) < amount) {
       return res.status(400).json({ message: "Insufficient funds" });
+    }
+
+    // Validate withdrawal destination matches a deposit method (if user has any deposits)
+    const depositMethods = await storage.getDepositMethods(userId);
+    if (depositMethods.length > 0) {
+      const isValidDestination = depositMethods.some(m => m.accountNumber === accountNumber && m.bankName === bankName);
+      if (!isValidDestination) {
+        return res.status(400).json({ message: "Withdrawal must go to one of your original deposit payment methods." });
+      }
     }
 
     await storage.updateWalletBalance(userId, -amount);

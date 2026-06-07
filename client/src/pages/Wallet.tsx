@@ -1,20 +1,21 @@
 import { useState, useRef, useEffect } from "react";
-import { useWallet, useDeposit, useWithdraw, useCardDeposit, useVerifyOtp, useResendOtp } from "@/hooks/use-wallet";
+import { useWallet, useDeposit, useWithdraw, useCardDeposit, useVerifyOtp, useResendOtp, useDepositMethods, type DepositMethod } from "@/hooks/use-wallet";
 import { Navbar } from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Plus, ArrowUpRight, ArrowDownLeft, Wallet as WalletIcon, Building2, CreditCard, Landmark, ShieldCheck, RotateCcw } from "lucide-react";
+import { Loader2, Plus, ArrowUpRight, ArrowDownLeft, Wallet as WalletIcon, Building2, CreditCard, Landmark, ShieldCheck, RotateCcw, CheckCircle2 } from "lucide-react";
 import { format } from "date-fns";
 import { NIGERIAN_BANKS } from "@/lib/nigerian-banks";
 
-type DepositMethod = "bank_transfer" | "card" | "bank_account";
+type DepositMethodType = "bank_transfer" | "card" | "bank_account";
 type DepositStep = "method" | "details" | "otp" | "success";
 
 export default function Wallet() {
   const { data: wallet, isLoading } = useWallet();
+  const { data: depositMethodsData } = useDepositMethods();
   const { mutate: deposit, isPending: isDepositing } = useDeposit();
   const { mutate: withdraw, isPending: isWithdrawing } = useWithdraw();
   const { mutateAsync: initiateCardDeposit, isPending: isInitiating } = useCardDeposit();
@@ -28,7 +29,7 @@ export default function Wallet() {
   const [action, setAction] = useState<"deposit" | "withdraw">("deposit");
   const [open, setOpen] = useState(false);
 
-  const [depositMethod, setDepositMethod] = useState<DepositMethod>("bank_transfer");
+  const [depositMethod, setDepositMethod] = useState<DepositMethodType>("bank_transfer");
   const [depositStep, setDepositStep] = useState<DepositStep>("method");
   const [cardNumber, setCardNumber] = useState("");
   const [cardExpiry, setCardExpiry] = useState("");
@@ -37,6 +38,8 @@ export default function Wallet() {
   const [otpValue, setOtpValue] = useState(["", "", "", "", "", ""]);
   const [otpMaskedInfo, setOtpMaskedInfo] = useState("");
   const otpInputRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  const [selectedWithdrawMethod, setSelectedWithdrawMethod] = useState<DepositMethod | null>(null);
 
   const selectedBank = NIGERIAN_BANKS.find(b => b.code === bankCode);
 
@@ -53,6 +56,7 @@ export default function Wallet() {
     setOtpSessionId("");
     setOtpValue(["", "", "", "", "", ""]);
     setOtpMaskedInfo("");
+    setSelectedWithdrawMethod(null);
   };
 
   const handleBankTransferSubmit = (e: React.FormEvent) => {
@@ -158,55 +162,132 @@ export default function Wallet() {
 
   if (isLoading) return <div className="min-h-screen bg-background flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
 
+  const getMethodIcon = (method: DepositMethod) => {
+    if (method.bankName === "Card Payment") return <CreditCard className="w-5 h-5 text-primary" />;
+    return <Building2 className="w-5 h-5 text-primary" />;
+  };
+
+  const getMethodLabel = (method: DepositMethod) => {
+    if (method.bankName === "Card Payment") return `Debit Card (${method.accountNumber})`;
+    if (method.bankCode) {
+      const bank = NIGERIAN_BANKS.find(b => b.code === method.bankCode);
+      return `${bank?.name || method.bankName} — ${method.accountNumber}`;
+    }
+    return `${method.bankName} — ${method.accountNumber}`;
+  };
+
+  const handleWithdrawSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const val = Number(amount);
+    const methods = depositMethodsData?.methods ?? [];
+    if (!val) return;
+
+    if (methods.length > 0 && !selectedWithdrawMethod) return;
+
+    const dest = methods.length > 0 && selectedWithdrawMethod ? {
+      bankCode: selectedWithdrawMethod.bankCode ?? undefined,
+      bankName: selectedWithdrawMethod.bankName ?? "",
+      accountNumber: selectedWithdrawMethod.accountNumber ?? "",
+      accountName: selectedWithdrawMethod.accountName ?? undefined,
+    } : {
+      bankCode: bankCode || undefined,
+      bankName: NIGERIAN_BANKS.find(b => b.code === bankCode)?.name ?? bankCode,
+      accountNumber,
+      accountName: accountName || undefined,
+    };
+
+    withdraw({ amount: val, ...dest }, { onSuccess: () => { setOpen(false); resetForm(); } });
+  };
+
   const renderDepositContent = () => {
     if (action === "withdraw") {
+      const methods = depositMethodsData?.methods ?? [];
+      const hasDeposits = depositMethodsData?.hasDeposits ?? false;
+
       return (
-        <form onSubmit={handleBankTransferSubmit} className="space-y-4 mt-4">
-          <div className="space-y-2">
-            <label className="text-sm font-medium flex items-center gap-2">
-              <Building2 className="w-4 h-4" />
-              Select Bank
-            </label>
-            <Select value={bankCode} onValueChange={setBankCode}>
-              <SelectTrigger className="rounded-xl" data-testid="select-bank">
-                <SelectValue placeholder="Choose your bank" />
-              </SelectTrigger>
-              <SelectContent>
-                {NIGERIAN_BANKS.map((bank) => (
-                  <SelectItem key={bank.code} value={bank.code} data-testid={`select-bank-option-${bank.code}`}>
-                    {bank.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Account Number</label>
-            <Input
-              type="text"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              maxLength={10}
-              placeholder="Enter 10-digit account number"
-              value={accountNumber}
-              onChange={e => setAccountNumber(e.target.value.replace(/\D/g, ''))}
-              className="rounded-xl"
-              data-testid="input-account-number"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Account Name (optional)</label>
-            <Input
-              type="text"
-              placeholder="e.g. John Doe"
-              value={accountName}
-              onChange={e => setAccountName(e.target.value)}
-              className="rounded-xl"
-              data-testid="input-account-name"
-            />
-          </div>
+        <form onSubmit={handleWithdrawSubmit} className="space-y-4 mt-4">
+          {hasDeposits ? (
+            <>
+              <div className="space-y-2">
+                <p className="text-sm text-muted-foreground">
+                  For security, withdrawals can only be sent back to the payment method you used to deposit funds.
+                </p>
+                <label className="text-sm font-medium">Select Refund Destination</label>
+                <div className="space-y-2">
+                  {methods.map((m, i) => {
+                    const isSelected = selectedWithdrawMethod?.accountNumber === m.accountNumber && selectedWithdrawMethod?.bankName === m.bankName;
+                    return (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => setSelectedWithdrawMethod(m)}
+                        className={`w-full flex items-center gap-3 p-3 rounded-xl border text-left transition-colors ${isSelected ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"}`}
+                        data-testid={`button-withdraw-method-${i}`}
+                      >
+                        <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                          {getMethodIcon(m)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-foreground text-sm truncate">{getMethodLabel(m)}</p>
+                          {m.accountName && <p className="text-xs text-muted-foreground truncate">{m.accountName}</p>}
+                        </div>
+                        {isSelected && <CheckCircle2 className="w-5 h-5 text-primary flex-shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-muted-foreground">
+                You have no deposit history. Enter your bank details to receive your job earnings.
+              </p>
+              <div className="space-y-2">
+                <label className="text-sm font-medium flex items-center gap-2">
+                  <Building2 className="w-4 h-4" />
+                  Select Bank
+                </label>
+                <Select value={bankCode} onValueChange={setBankCode}>
+                  <SelectTrigger className="rounded-xl" data-testid="select-bank">
+                    <SelectValue placeholder="Choose your bank" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {NIGERIAN_BANKS.map((bank) => (
+                      <SelectItem key={bank.code} value={bank.code} data-testid={`select-bank-option-${bank.code}`}>
+                        {bank.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Account Number</label>
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={10}
+                  placeholder="Enter 10-digit account number"
+                  value={accountNumber}
+                  onChange={e => setAccountNumber(e.target.value.replace(/\D/g, ''))}
+                  className="rounded-xl"
+                  data-testid="input-account-number"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Account Name (optional)</label>
+                <Input
+                  type="text"
+                  placeholder="e.g. John Doe"
+                  value={accountName}
+                  onChange={e => setAccountName(e.target.value)}
+                  className="rounded-xl"
+                  data-testid="input-account-name"
+                />
+              </div>
+            </>
+          )}
 
           <div className="space-y-2">
             <label className="text-sm font-medium">Amount (N)</label>
@@ -220,22 +301,18 @@ export default function Wallet() {
             />
           </div>
 
-          {bankCode && accountNumber && amount && (
+          {selectedWithdrawMethod && amount && (
             <Card className="bg-muted/50 border-dashed">
               <CardContent className="p-4 space-y-1 text-sm">
                 <p className="font-semibold text-foreground" data-testid="text-summary-title">Withdrawal Summary</p>
                 <div className="flex justify-between gap-2 flex-wrap">
-                  <span className="text-muted-foreground">Bank</span>
-                  <span className="font-medium text-foreground" data-testid="text-summary-bank">{selectedBank?.name}</span>
+                  <span className="text-muted-foreground">To</span>
+                  <span className="font-medium text-foreground" data-testid="text-summary-destination">{getMethodLabel(selectedWithdrawMethod)}</span>
                 </div>
-                <div className="flex justify-between gap-2 flex-wrap">
-                  <span className="text-muted-foreground">Account</span>
-                  <span className="font-medium text-foreground" data-testid="text-summary-account">{accountNumber}</span>
-                </div>
-                {accountName && (
+                {selectedWithdrawMethod.accountName && (
                   <div className="flex justify-between gap-2 flex-wrap">
                     <span className="text-muted-foreground">Name</span>
-                    <span className="font-medium text-foreground" data-testid="text-summary-name">{accountName}</span>
+                    <span className="font-medium text-foreground">{selectedWithdrawMethod.accountName}</span>
                   </div>
                 )}
                 <div className="flex justify-between gap-2 flex-wrap">
@@ -249,7 +326,7 @@ export default function Wallet() {
           <Button
             type="submit"
             className="w-full rounded-xl font-bold bg-primary text-white"
-            disabled={isWithdrawing || !bankCode || !accountNumber || !amount}
+            disabled={isWithdrawing || !amount || (hasDeposits && !selectedWithdrawMethod) || (!hasDeposits && (!bankCode || !accountNumber))}
             data-testid="button-confirm-transaction"
           >
             {isWithdrawing ? <Loader2 className="animate-spin" /> : "Confirm Withdrawal"}

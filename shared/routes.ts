@@ -250,14 +250,29 @@ export const api = {
       path: '/api/wallet/withdraw' as const,
       input: z.object({
         amount: z.number().min(1),
-        bankCode: z.string().min(1),
+        bankCode: z.string().optional(),
         bankName: z.string().min(1),
-        accountNumber: z.string().length(10),
+        accountNumber: z.string().min(4),
         accountName: z.string().optional(),
       }),
       responses: {
         200: z.object({ newBalance: z.string() }),
         400: errorSchemas.payment,
+      },
+    },
+    depositMethods: {
+      method: 'GET' as const,
+      path: '/api/wallet/deposit-methods' as const,
+      responses: {
+        200: z.object({
+          methods: z.array(z.object({
+            bankCode: z.string().nullable(),
+            bankName: z.string().nullable(),
+            accountNumber: z.string().nullable(),
+            accountName: z.string().nullable(),
+          })),
+          hasDeposits: z.boolean(),
+        }),
       },
     },
   },

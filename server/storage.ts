@@ -67,6 +67,7 @@ export interface IStorage {
 
   // Wallet & Transactions
   getTransactions(userId: string): Promise<Transaction[]>;
+  getDepositMethods(userId: string): Promise<{ bankCode: string | null; bankName: string | null; accountNumber: string | null; accountName: string | null }[]>;
   createTransaction(tx: { userId: string; amount: string; type: string; jobId?: number; bankName?: string | null; bankCode?: string | null; accountNumber?: string | null; accountName?: string | null }): Promise<Transaction>;
   updateWalletBalance(userId: string, amountChange: number): Promise<Profile>;
 
@@ -380,6 +381,28 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(transactions)
       .where(eq(transactions.userId, userId))
       .orderBy(desc(transactions.createdAt));
+  }
+
+  async getDepositMethods(userId: string): Promise<{ bankCode: string | null; bankName: string | null; accountNumber: string | null; accountName: string | null }[]> {
+    const deposits = await db.select({
+      bankCode: transactions.bankCode,
+      bankName: transactions.bankName,
+      accountNumber: transactions.accountNumber,
+      accountName: transactions.accountName,
+    }).from(transactions)
+      .where(and(eq(transactions.userId, userId), eq(transactions.type, 'deposit')))
+      .orderBy(desc(transactions.createdAt));
+
+    const seen = new Set<string>();
+    const unique: { bankCode: string | null; bankName: string | null; accountNumber: string | null; accountName: string | null }[] = [];
+    for (const d of deposits) {
+      const key = `${d.accountNumber}|${d.bankName}`;
+      if (!seen.has(key) && d.accountNumber) {
+        seen.add(key);
+        unique.push(d);
+      }
+    }
+    return unique;
   }
 
   async createTransaction(tx: { userId: string; amount: string; type: string; jobId?: number; bankName?: string | null; bankCode?: string | null; accountNumber?: string | null; accountName?: string | null }): Promise<Transaction> {
