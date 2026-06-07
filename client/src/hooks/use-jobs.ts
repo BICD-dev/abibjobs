@@ -62,6 +62,10 @@ export function useJob(id: number) {
       return api.jobs.get.responses[200].parse(await res.json());
     },
     enabled: !!id,
+    refetchInterval: (query) => {
+      const data = query.state.data as any;
+      return data?.status === 'in_progress' && data?.workerLatitude ? 10000 : false;
+    },
   });
 }
 

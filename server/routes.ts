@@ -511,6 +511,37 @@ export async function registerRoutes(
     }
   });
 
+  // --- WORKER LIVE LOCATION ---
+  app.post('/api/jobs/:id/worker-location', isAuthenticated, async (req, res) => {
+    try {
+      const jobId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      const { latitude, longitude } = req.body;
+
+      if (!latitude || !longitude) {
+        return res.status(400).json({ message: "Latitude and longitude are required" });
+      }
+
+      const job = await storage.getJob(jobId);
+      if (!job) return res.status(404).json({ message: "Job not found" });
+
+      const workerIds = job.workerId ? job.workerId.split(',') : [];
+      if (!workerIds.includes(userId)) {
+        return res.status(403).json({ message: "Only a worker on this job can share their location" });
+      }
+
+      const updated = await storage.updateJob(jobId, {
+        workerLatitude: String(latitude),
+        workerLongitude: String(longitude),
+        workerLocationUpdatedAt: new Date(),
+      });
+
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   app.post(api.jobs.noShow.path, isAuthenticated, async (req, res) => {
     try {
       const jobId = Number(req.params.id);

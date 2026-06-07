@@ -1,9 +1,10 @@
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useCallback } from "react";
 import { useRoute, useLocation } from "wouter";
 import { useJob, useAcceptJob, useCompleteJob, useCancelJob, useUpdateJobProgress, useConfirmArrival, useReportNoShow } from "@/hooks/use-jobs";
 import { useOffers, useCreateOffer, useAcceptOffer, useDeclineOffer, useCounterOffer } from "@/hooks/use-offers";
 import { useDisputeByJob, useCreateDispute, useDisputeMessage, useAcceptProposal, useEscalateDispute, useUploadDisputeImage } from "@/hooks/use-disputes";
 import { useAuth } from "@/hooks/use-auth";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Navbar } from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -15,8 +16,9 @@ import {
   Loader2, MapPin, Calendar, ArrowLeft, CheckCircle, Shield, Users, XCircle,
   MessageSquare, ArrowUpDown, Send, Check, X, AlertTriangle, Wallet,
   Flag, Scale, ArrowUpCircle, Image as ImageIcon, Navigation, Clock, MapPinCheck, UserX, Lock,
-  RefreshCw, Trash2, CalendarPlus
+  RefreshCw, Trash2, CalendarPlus, LocateFixed, Radio
 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import type { OfferWithSender, DisputeMessageWithSender } from "@shared/schema";
 
@@ -100,6 +102,43 @@ export default function JobDetails() {
   const [proposalMessage, setProposalMessage] = useState("");
   const [disputeImage, setDisputeImage] = useState<File | null>(null);
   const [disputeImagePreview, setDisputeImagePreview] = useState<string | null>(null);
+
+  // Live location
+  const { toast } = useToast();
+  const queryClientRef = useQueryClient();
+  const [isSharingLocation, setIsSharingLocation] = useState(false);
+
+  const shareMyLocation = useCallback(() => {
+    if (!navigator.geolocation) {
+      toast({ title: "Not supported", description: "Your browser doesn't support location access.", variant: "destructive" });
+      return;
+    }
+    setIsSharingLocation(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const res = await fetch(`/api/jobs/${id}/worker-location`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+            credentials: 'include',
+          });
+          if (!res.ok) throw new Error();
+          queryClientRef.invalidateQueries({ queryKey: ['/api/jobs/:id', id] });
+          toast({ title: "Location shared", description: "Your live location has been sent to the job poster." });
+        } catch {
+          toast({ title: "Failed", description: "Could not share your location. Please try again.", variant: "destructive" });
+        } finally {
+          setIsSharingLocation(false);
+        }
+      },
+      () => {
+        setIsSharingLocation(false);
+        toast({ title: "Location denied", description: "Please allow location access to share your position.", variant: "destructive" });
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  }, [id, queryClientRef, toast]);
 
   const noShowAvailability = useMemo(() => {
     if (!job?.acceptedAt) return { canReport: true, remainingText: '' };
@@ -344,6 +383,70 @@ export default function JobDetails() {
                   {job.description}
                 </p>
               </section>
+
+              {/* Job Location Map */}
+              {job.latitude && job.longitude && (
+                <section data-testid="section-job-map">
+                  <h3 className="text-lg font-bold font-display mb-3 flex items-center gap-2">
+                    <MapPin className="w-5 h-5 text-primary" />
+                    Job Location
+                  </h3>
+                  <div className="rounded-2xl overflow-hidden border border-border shadow-sm">
+                    <iframe
+                      title="Job location map"
+                      src={`https://www.openstreetmap.org/export/embed.html?bbox=${parseFloat(String(job.longitude))-0.01},${parseFloat(String(job.latitude))-0.01},${parseFloat(String(job.longitude))+0.01},${parseFloat(String(job.latitude))+0.01}&layer=mapnik&marker=${job.latitude},${job.longitude}`}
+                      width="100%"
+                      height="240"
+                      style={{ border: 0 }}
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                    />
+                  </div>
+                  <a
+                    href={`https://www.openstreetmap.org/?mlat=${job.latitude}&mlon=${job.longitude}#map=16/${job.latitude}/${job.longitude}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-primary underline mt-1 inline-block"
+                  >
+                    Open in Maps ↗
+                  </a>
+                </section>
+              )}
+
+              {/* Worker Live Location (for poster — if worker has shared their location) */}
+              {isPoster && isInProgress && job.workerLatitude && job.workerLongitude && (
+                <section data-testid="section-worker-live-map">
+                  <h3 className="text-lg font-bold font-display mb-3 flex items-center gap-2">
+                    <Radio className="w-5 h-5 text-green-600 animate-pulse" />
+                    Worker's Live Location
+                    {job.workerLocationUpdatedAt && (
+                      <span className="text-xs font-normal text-muted-foreground ml-auto">
+                        Updated {format(new Date(job.workerLocationUpdatedAt), "p")}
+                      </span>
+                    )}
+                  </h3>
+                  <div className="rounded-2xl overflow-hidden border border-green-200 dark:border-green-800 shadow-sm">
+                    <iframe
+                      title="Worker live location"
+                      src={`https://www.openstreetmap.org/export/embed.html?bbox=${parseFloat(String(job.workerLongitude))-0.005},${parseFloat(String(job.workerLatitude))-0.005},${parseFloat(String(job.workerLongitude))+0.005},${parseFloat(String(job.workerLatitude))+0.005}&layer=mapnik&marker=${job.workerLatitude},${job.workerLongitude}`}
+                      width="100%"
+                      height="220"
+                      style={{ border: 0 }}
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                    />
+                  </div>
+                  <a
+                    href={`https://www.openstreetmap.org/?mlat=${job.workerLatitude}&mlon=${job.workerLongitude}#map=17/${job.workerLatitude}/${job.workerLongitude}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-primary underline mt-1 inline-block"
+                  >
+                    Open worker's location in Maps ↗
+                  </a>
+                </section>
+              )}
+
 
               <div className="bg-muted/30 rounded-2xl p-6 border border-border mt-8">
                 <h3 className="text-lg font-bold font-display mb-4">Actions</h3>
@@ -657,9 +760,31 @@ export default function JobDetails() {
                               </div>
                             )}
                             {job.workerProgress === 'at_location' && (
-                              <div className="flex items-center text-blue-600 bg-blue-50 dark:bg-blue-950/30 p-3 rounded-xl border border-blue-100 dark:border-blue-900 text-sm">
-                                <MapPinCheck className="w-4 h-4 mr-2 shrink-0" />
-                                {job.posterConfirmedArrival ? "The poster has confirmed your arrival." : "Waiting for the poster to confirm your arrival."}
+                              <div className="space-y-3">
+                                <div className="flex items-center text-blue-600 bg-blue-50 dark:bg-blue-950/30 p-3 rounded-xl border border-blue-100 dark:border-blue-900 text-sm">
+                                  <MapPinCheck className="w-4 h-4 mr-2 shrink-0" />
+                                  {job.posterConfirmedArrival ? "The poster has confirmed your arrival." : "Waiting for the poster to confirm your arrival."}
+                                </div>
+                                <Button
+                                  variant="outline"
+                                  className="w-full rounded-xl border-green-300 text-green-700 hover:bg-green-50 dark:border-green-700 dark:text-green-400"
+                                  onClick={shareMyLocation}
+                                  disabled={isSharingLocation}
+                                  data-testid="button-share-location"
+                                >
+                                  {isSharingLocation ? (
+                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                  ) : (
+                                    <LocateFixed className="w-4 h-4 mr-2" />
+                                  )}
+                                  {isSharingLocation ? "Sharing..." : job.workerLatitude ? "Update My Location" : "Share My Live Location"}
+                                </Button>
+                                {job.workerLatitude && job.workerLocationUpdatedAt && (
+                                  <p className="text-xs text-green-600 flex items-center gap-1">
+                                    <Radio className="w-3 h-3" />
+                                    Location last shared at {format(new Date(job.workerLocationUpdatedAt), "p")}
+                                  </p>
+                                )}
                               </div>
                             )}
                           </div>

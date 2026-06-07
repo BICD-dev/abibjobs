@@ -30,7 +30,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Plus, CalendarDays } from "lucide-react";
+import { Loader2, Plus, MapPin, LocateFixed } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 import { z } from "zod";
 
 const formSchema = createJobSchema.extend({
@@ -45,6 +46,10 @@ type FormValues = z.infer<typeof formSchema>;
 
 export function CreateJobDialog() {
   const [open, setOpen] = useState(false);
+  const [jobLat, setJobLat] = useState<number | null>(null);
+  const [jobLng, setJobLng] = useState<number | null>(null);
+  const [isGettingLocation, setIsGettingLocation] = useState(false);
+  const { toast } = useToast();
   const { mutate: createJob, isPending } = useCreateJob();
   
   const form = useForm<FormValues>({
@@ -70,6 +75,40 @@ export function CreateJobDialog() {
     ? watchedPrice * watchedWorkersNeeded
     : watchedPrice || 0;
 
+  const handleUseMyLocation = () => {
+    if (!navigator.geolocation) {
+      toast({ title: "Not supported", description: "Your browser doesn't support location access.", variant: "destructive" });
+      return;
+    }
+    setIsGettingLocation(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const { latitude, longitude } = pos.coords;
+        setJobLat(latitude);
+        setJobLng(longitude);
+        try {
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json`,
+            { headers: { 'Accept-Language': 'en' } }
+          );
+          const data = await res.json();
+          const address = data.display_name || `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+          form.setValue("location", address, { shouldValidate: true });
+          toast({ title: "Location captured", description: "Your live location has been set as the job address." });
+        } catch {
+          form.setValue("location", `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`, { shouldValidate: true });
+        } finally {
+          setIsGettingLocation(false);
+        }
+      },
+      (err) => {
+        setIsGettingLocation(false);
+        toast({ title: "Location denied", description: "Please allow location access or type the address manually.", variant: "destructive" });
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+
   const onSubmit = (data: FormValues) => {
     let scheduledDate: string | undefined;
     if (data.scheduledDate) {
@@ -84,10 +123,13 @@ export function CreateJobDialog() {
       priceType: data.workersNeeded > 1 ? data.priceType : "total",
       workersNeeded: Number(data.workersNeeded),
       scheduledDate: scheduledDate || undefined,
+      ...(jobLat !== null && jobLng !== null ? { latitude: String(jobLat), longitude: String(jobLng) } : {}),
     } as unknown as CreateJobInput, {
       onSuccess: () => {
         setOpen(false);
         form.reset();
+        setJobLat(null);
+        setJobLng(null);
       },
     });
   };
@@ -234,15 +276,41 @@ export function CreateJobDialog() {
               name="location"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="font-semibold text-foreground/80">Location</FormLabel>
+                  <div className="flex items-center justify-between mb-1">
+                    <FormLabel className="font-semibold text-foreground/80">Location</FormLabel>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs text-primary hover:text-primary/80 gap-1"
+                      onClick={handleUseMyLocation}
+                      disabled={isGettingLocation}
+                      data-testid="button-use-my-location"
+                    >
+                      {isGettingLocation ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <LocateFixed className="w-3.5 h-3.5" />
+                      )}
+                      {isGettingLocation ? "Getting location..." : "Use my location"}
+                    </Button>
+                  </div>
                   <FormControl>
                     <AddressAutocomplete
                       value={field.value}
-                      onChange={field.onChange}
+                      onChange={(val) => {
+                        field.onChange(val);
+                        if (jobLat !== null) { setJobLat(null); setJobLng(null); }
+                      }}
                       placeholder="Start typing an area in Lagos..."
                       className="rounded-xl border-2 focus:border-primary/50"
                     />
                   </FormControl>
+                  {jobLat !== null && (
+                    <p className="text-xs text-green-600 flex items-center gap-1 mt-1">
+                      <MapPin className="w-3 h-3" /> Live location pinned — map will show job site
+                    </p>
+                  )}
                   <FormMessage />
                 </FormItem>
               )}

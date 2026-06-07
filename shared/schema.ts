@@ -49,6 +49,11 @@ export const jobs = pgTable("jobs", {
   workersAccepted: integer("workers_accepted").default(0).notNull(),
   workerProgress: text("worker_progress"), // null, 'getting_ready', 'on_the_way', 'at_location'
   posterConfirmedArrival: boolean("poster_confirmed_arrival").default(false),
+  latitude: numeric("latitude", { precision: 10, scale: 7 }),
+  longitude: numeric("longitude", { precision: 10, scale: 7 }),
+  workerLatitude: numeric("worker_latitude", { precision: 10, scale: 7 }),
+  workerLongitude: numeric("worker_longitude", { precision: 10, scale: 7 }),
+  workerLocationUpdatedAt: timestamp("worker_location_updated_at"),
   scheduledDate: timestamp("scheduled_date"),
   acceptedAt: timestamp("accepted_at"),
   completedAt: timestamp("completed_at"),
