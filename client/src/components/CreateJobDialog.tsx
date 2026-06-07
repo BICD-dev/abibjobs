@@ -184,8 +184,8 @@ export function CreateJobDialog() {
           Post a Job
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[500px] rounded-2xl border-none shadow-2xl">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-[500px] rounded-2xl border-none shadow-2xl max-h-[90vh] flex flex-col">
+        <DialogHeader className="shrink-0">
           <DialogTitle className="text-2xl font-bold font-display text-primary">Post a New Job</DialogTitle>
           <DialogDescription>
             Describe what needs to be done. We'll hold the payment in escrow.
@@ -193,7 +193,7 @@ export function CreateJobDialog() {
         </DialogHeader>
 
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6 mt-4">
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6 mt-4 overflow-y-auto flex-1 pr-1">
             <FormField
               control={form.control}
               name="title"
