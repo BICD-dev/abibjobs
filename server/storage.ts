@@ -867,8 +867,21 @@ export class DatabaseStorage implements IStorage {
   }
 
   async broadcastNotificationToAll(data: { title: string; message: string; type: string; jobId?: number; excludeUserId?: string }): Promise<void> {
-    const allProfiles = await db.select({ userId: profiles.userId }).from(profiles);
-    const userIds = allProfiles.map(p => p.userId).filter(id => id !== data.excludeUserId);
+    // Get all admin emails so we can exclude admin accounts from user notifications
+    const adminEmailRecords = await db.select({ email: adminUsers.email }).from(adminUsers);
+    const adminEmails = new Set(adminEmailRecords.map(a => a.email.toLowerCase()));
+
+    // Join profiles with users to get their emails, then exclude admin accounts
+    const allUserData = await db
+      .select({ userId: profiles.userId, email: users.email })
+      .from(profiles)
+      .leftJoin(users, eq(profiles.userId, users.id));
+
+    const userIds = allUserData
+      .filter(u => u.userId !== data.excludeUserId)
+      .filter(u => !u.email || !adminEmails.has(u.email.toLowerCase()))
+      .map(u => u.userId);
+
     if (userIds.length === 0) return;
     const { excludeUserId, ...notifData } = data;
     const values = userIds.map(userId => ({ ...notifData, userId }));
