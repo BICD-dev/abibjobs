@@ -16,8 +16,9 @@ import {
   Loader2, MapPin, Calendar, ArrowLeft, CheckCircle, Shield, Users, XCircle,
   MessageSquare, ArrowUpDown, Send, Check, X, AlertTriangle, Wallet,
   Flag, Scale, ArrowUpCircle, Image as ImageIcon, Navigation, Clock, MapPinCheck, UserX, Lock,
-  RefreshCw, Trash2, CalendarPlus, LocateFixed, Radio
+  RefreshCw, Trash2, CalendarPlus, LocateFixed, Radio, Camera, ChevronLeft, ChevronRight
 } from "lucide-react";
+import { Dialog as LightboxDialog, DialogContent as LightboxContent } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import type { OfferWithSender, DisputeMessageWithSender } from "@shared/schema";
@@ -107,6 +108,9 @@ export default function JobDetails() {
   const { toast } = useToast();
   const queryClientRef = useQueryClient();
   const [isSharingLocation, setIsSharingLocation] = useState(false);
+
+  // Image lightbox
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   const shareMyLocation = useCallback(() => {
     if (!navigator.geolocation) {
@@ -383,6 +387,33 @@ export default function JobDetails() {
                   {job.description}
                 </p>
               </section>
+
+              {/* Job Photos Gallery */}
+              {job.images && job.images.length > 0 && (
+                <section data-testid="section-job-photos">
+                  <h3 className="text-lg font-bold font-display mb-3 flex items-center gap-2">
+                    <Camera className="w-5 h-5 text-primary" />
+                    Job Photos
+                  </h3>
+                  <div className={`grid gap-2 ${job.images.length === 1 ? 'grid-cols-1' : job.images.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
+                    {job.images.map((imgPath, i) => (
+                      <button
+                        key={i}
+                        className="aspect-square rounded-xl overflow-hidden border border-border hover:opacity-90 transition-opacity focus:outline-none focus:ring-2 focus:ring-primary"
+                        onClick={() => setLightboxIndex(i)}
+                        data-testid={`button-job-photo-${i}`}
+                      >
+                        <img
+                          src={imgPath}
+                          alt={`Job photo ${i + 1}`}
+                          className="w-full h-full object-cover"
+                          onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                        />
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              )}
 
               {/* Job Location Map */}
               {job.latitude && job.longitude && (
@@ -1332,6 +1363,49 @@ export default function JobDetails() {
           </div>
         </div>
       </main>
+
+      {/* Photo Lightbox */}
+      {job.images && job.images.length > 0 && lightboxIndex !== null && (
+        <LightboxDialog open={lightboxIndex !== null} onOpenChange={(open) => { if (!open) setLightboxIndex(null); }}>
+          <LightboxContent className="max-w-3xl p-0 bg-black/95 border-none rounded-2xl overflow-hidden">
+            <div className="relative w-full">
+              <img
+                src={job.images[lightboxIndex]}
+                alt={`Job photo ${lightboxIndex + 1}`}
+                className="w-full max-h-[80vh] object-contain"
+                data-testid="img-lightbox"
+              />
+              {job.images.length > 1 && (
+                <>
+                  <button
+                    onClick={() => setLightboxIndex(i => i !== null ? (i - 1 + job.images!.length) % job.images!.length : 0)}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 bg-black/50 hover:bg-black/80 text-white rounded-full flex items-center justify-center transition-colors"
+                    data-testid="button-lightbox-prev"
+                  >
+                    <ChevronLeft className="w-5 h-5" />
+                  </button>
+                  <button
+                    onClick={() => setLightboxIndex(i => i !== null ? (i + 1) % job.images!.length : 0)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 bg-black/50 hover:bg-black/80 text-white rounded-full flex items-center justify-center transition-colors"
+                    data-testid="button-lightbox-next"
+                  >
+                    <ChevronRight className="w-5 h-5" />
+                  </button>
+                  <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
+                    {job.images.map((_, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setLightboxIndex(i)}
+                        className={`w-2 h-2 rounded-full transition-colors ${i === lightboxIndex ? 'bg-white' : 'bg-white/40 hover:bg-white/60'}`}
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          </LightboxContent>
+        </LightboxDialog>
+      )}
     </div>
   );
 }

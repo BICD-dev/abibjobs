@@ -30,8 +30,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Plus, MapPin, LocateFixed } from "lucide-react";
+import { Loader2, Plus, MapPin, LocateFixed, ImagePlus, X, Camera } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useUpload } from "@/hooks/use-upload";
 import { z } from "zod";
 
 const formSchema = createJobSchema.extend({
@@ -44,13 +45,22 @@ const formSchema = createJobSchema.extend({
 
 type FormValues = z.infer<typeof formSchema>;
 
+interface UploadedImage {
+  objectPath: string;
+  previewUrl: string;
+  name: string;
+}
+
 export function CreateJobDialog() {
   const [open, setOpen] = useState(false);
   const [jobLat, setJobLat] = useState<number | null>(null);
   const [jobLng, setJobLng] = useState<number | null>(null);
   const [isGettingLocation, setIsGettingLocation] = useState(false);
+  const [uploadedImages, setUploadedImages] = useState<UploadedImage[]>([]);
+  const [uploadingCount, setUploadingCount] = useState(0);
   const { toast } = useToast();
   const { mutate: createJob, isPending } = useCreateJob();
+  const { uploadFile } = useUpload();
   
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -74,6 +84,35 @@ export function CreateJobDialog() {
   const totalEscrow = watchedPrice && watchedWorkersNeeded > 1 && watchedPriceType === "per_person"
     ? watchedPrice * watchedWorkersNeeded
     : watchedPrice || 0;
+
+  const handleImageFiles = async (files: FileList | null) => {
+    if (!files) return;
+    const remaining = 5 - uploadedImages.length;
+    const toUpload = Array.from(files).slice(0, remaining);
+    if (toUpload.length === 0) {
+      toast({ title: "Max 5 photos", description: "You can upload up to 5 photos per job.", variant: "destructive" });
+      return;
+    }
+    setUploadingCount(c => c + toUpload.length);
+    for (const file of toUpload) {
+      if (!file.type.startsWith('image/')) continue;
+      const previewUrl = URL.createObjectURL(file);
+      const result = await uploadFile(file);
+      if (result) {
+        setUploadedImages(prev => [...prev, { objectPath: result.objectPath, previewUrl, name: file.name }]);
+      }
+      setUploadingCount(c => c - 1);
+    }
+  };
+
+  const removeImage = (index: number) => {
+    setUploadedImages(prev => {
+      const next = [...prev];
+      URL.revokeObjectURL(next[index].previewUrl);
+      next.splice(index, 1);
+      return next;
+    });
+  };
 
   const handleUseMyLocation = () => {
     if (!navigator.geolocation) {
@@ -124,12 +163,15 @@ export function CreateJobDialog() {
       workersNeeded: Number(data.workersNeeded),
       scheduledDate: scheduledDate || undefined,
       ...(jobLat !== null && jobLng !== null ? { latitude: String(jobLat), longitude: String(jobLng) } : {}),
+      ...(uploadedImages.length > 0 ? { images: uploadedImages.map(img => img.objectPath) } : {}),
     } as unknown as CreateJobInput, {
       onSuccess: () => {
         setOpen(false);
         form.reset();
         setJobLat(null);
         setJobLng(null);
+        uploadedImages.forEach(img => URL.revokeObjectURL(img.previewUrl));
+        setUploadedImages([]);
       },
     });
   };
@@ -375,10 +417,83 @@ export function CreateJobDialog() {
               )}
             />
 
+            {/* Photo Upload Section */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-semibold text-foreground/80 flex items-center gap-1.5">
+                  <Camera className="w-4 h-4" />
+                  Job Photos
+                  <span className="text-muted-foreground font-normal">(optional, up to 5)</span>
+                </label>
+                {uploadedImages.length < 5 && (
+                  <label className="cursor-pointer" data-testid="button-add-photos">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="hidden"
+                      onChange={e => handleImageFiles(e.target.files)}
+                      disabled={uploadingCount > 0}
+                    />
+                    <span className="inline-flex items-center gap-1 text-xs text-primary hover:text-primary/80 font-medium border border-primary/30 rounded-lg px-2 py-1">
+                      {uploadingCount > 0 ? (
+                        <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Uploading...</>
+                      ) : (
+                        <><ImagePlus className="w-3.5 h-3.5" /> Add Photos</>
+                      )}
+                    </span>
+                  </label>
+                )}
+              </div>
+
+              {uploadedImages.length > 0 && (
+                <div className="grid grid-cols-3 gap-2" data-testid="section-image-previews">
+                  {uploadedImages.map((img, i) => (
+                    <div key={i} className="relative aspect-square rounded-xl overflow-hidden border border-border group">
+                      <img
+                        src={img.previewUrl}
+                        alt={img.name}
+                        className="w-full h-full object-cover"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeImage(i)}
+                        className="absolute top-1 right-1 w-6 h-6 bg-black/60 hover:bg-black/80 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                        data-testid={`button-remove-image-${i}`}
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                  {uploadingCount > 0 && (
+                    <div className="aspect-square rounded-xl border border-border/50 border-dashed bg-muted/30 flex items-center justify-center">
+                      <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {uploadedImages.length === 0 && uploadingCount === 0 && (
+                <label className="cursor-pointer block">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={e => handleImageFiles(e.target.files)}
+                  />
+                  <div className="border-2 border-dashed border-border hover:border-primary/40 rounded-xl p-6 text-center transition-colors" data-testid="dropzone-images">
+                    <ImagePlus className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
+                    <p className="text-sm text-muted-foreground">Click to add photos showing what needs to be done</p>
+                  </div>
+                </label>
+              )}
+            </div>
+
             <Button 
               type="submit" 
               className="w-full h-12 rounded-xl text-lg font-bold bg-primary hover:bg-primary/90"
-              disabled={isPending}
+              disabled={isPending || uploadingCount > 0}
             >
               {isPending ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : null}
               {isPending ? "Creating Job..." : "Post Job & Hold Funds"}

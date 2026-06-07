@@ -47,6 +47,7 @@ export const jobs = pgTable("jobs", {
   priceType: text("price_type").default("total").notNull(), // 'total' or 'per_person'
   workersNeeded: integer("workers_needed").default(1).notNull(),
   workersAccepted: integer("workers_accepted").default(0).notNull(),
+  images: text("images").array(),
   workerProgress: text("worker_progress"), // null, 'getting_ready', 'on_the_way', 'at_location'
   posterConfirmedArrival: boolean("poster_confirmed_arrival").default(false),
   latitude: numeric("latitude", { precision: 10, scale: 7 }),
