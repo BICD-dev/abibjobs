@@ -6,16 +6,6 @@ export * from "./models/auth";
 
 // === TABLE DEFINITIONS ===
 
-// Users table (Extends the basic auth schema if needed, or we use a separate profile table)
-// Since Replit Auth uses `users` table defined in `shared/models/auth.ts`, we might need to extend it
-// or create a separate `profiles` table linked by `id` or `userId`.
-// However, the `shared/models/auth.ts` is imported in `server/replit_integrations/auth/index.ts`.
-// To keep things simple and unified, let's assume we can join or just use a `profiles` table
-// for app-specific data like wallet balance and role.
-// Actually, looking at the auth blueprint, it creates a `users` table.
-// I will create a `profiles` table to hold the wallet balance and verification info
-// to avoid conflicts with the auth blueprint's table definition which might be rigid.
-
 export const profiles = pgTable("profiles", {
   id: serial("id").primaryKey(),
   userId: text("user_id").notNull().unique(),
@@ -23,7 +13,7 @@ export const profiles = pgTable("profiles", {
   role: text("role").default("user"),
   walletBalance: numeric("wallet_balance", { precision: 10, scale: 2 }).default("0").notNull(),
   isVerified: boolean("is_verified").default(false).notNull(),
-  verificationStatus: text("verification_status").default("unverified").notNull(), // 'unverified', 'pending', 'verified', 'declined', 'redo_requested'
+  verificationStatus: text("verification_status").default("unverified").notNull(),
   idCardUrl: text("id_card_url"),
   faceScanUrl: text("face_scan_url"),
   verificationNote: text("verification_note"),
@@ -41,14 +31,14 @@ export const jobs = pgTable("jobs", {
   price: numeric("price", { precision: 10, scale: 2 }).notNull(),
   location: text("location").notNull(),
   category: text("category").notNull(),
-  status: text("status").default("open").notNull(), // 'open', 'in_progress', 'completed', 'cancelled'
+  status: text("status").default("open").notNull(),
   posterId: text("poster_id").notNull(),
   workerId: text("worker_id"),
-  priceType: text("price_type").default("total").notNull(), // 'total' or 'per_person'
+  priceType: text("price_type").default("total").notNull(),
   workersNeeded: integer("workers_needed").default(1).notNull(),
   workersAccepted: integer("workers_accepted").default(0).notNull(),
   images: text("images").array(),
-  workerProgress: text("worker_progress"), // null, 'getting_ready', 'on_the_way', 'at_location'
+  workerProgress: text("worker_progress"),
   posterConfirmedArrival: boolean("poster_confirmed_arrival").default(false),
   latitude: numeric("latitude", { precision: 10, scale: 7 }),
   longitude: numeric("longitude", { precision: 10, scale: 7 }),
@@ -66,7 +56,7 @@ export const transactions = pgTable("transactions", {
   id: serial("id").primaryKey(),
   userId: text("user_id").notNull(),
   amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
-  type: text("type").notNull(), // 'deposit', 'withdrawal', 'job_payment', 'job_earning', 'fee'
+  type: text("type").notNull(),
   status: text("status").default("completed").notNull(),
   jobId: integer("job_id"),
   bankName: text("bank_name"),
@@ -88,7 +78,7 @@ export const platformEarnings = pgTable("platform_earnings", {
 export const platformTransactions = pgTable("platform_transactions", {
   id: serial("id").primaryKey(),
   amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
-  type: text("type").notNull(), // 'fee_earned', 'withdrawal'
+  type: text("type").notNull(),
   jobId: integer("job_id"),
   jobTitle: text("job_title"),
   bankName: text("bank_name"),
@@ -103,7 +93,7 @@ export const offers = pgTable("offers", {
   jobId: integer("job_id").notNull(),
   senderId: text("sender_id").notNull(),
   amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
-  status: text("status").default("pending").notNull(), // 'pending', 'accepted', 'declined', 'countered'
+  status: text("status").default("pending").notNull(),
   message: text("message"),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -140,7 +130,7 @@ export const adminUsers = pgTable("admin_users", {
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
   name: text("name").notNull(),
-  role: text("role").default("staff").notNull(), // 'owner' | 'staff'
+  role: text("role").default("staff").notNull(),
   isActive: boolean("is_active").default(true).notNull(),
   bankName: text("bank_name"),
   bankCode: text("bank_code"),
@@ -169,7 +159,7 @@ export const adminPayments = pgTable("admin_payments", {
 export const adminActivity = pgTable("admin_activity", {
   id: serial("id").primaryKey(),
   adminId: integer("admin_id").notNull(),
-  date: text("date").notNull(), // YYYY-MM-DD
+  date: text("date").notNull(),
   secondsWorked: integer("seconds_worked").default(0).notNull(),
   lastActiveAt: timestamp("last_active_at"),
 });
@@ -179,7 +169,7 @@ export const notifications = pgTable("notifications", {
   userId: text("user_id").notNull(),
   title: text("title").notNull(),
   message: text("message").notNull(),
-  type: text("type").default("info").notNull(), // 'info', 'warning', 'error', 'success'
+  type: text("type").default("info").notNull(),
   isRead: boolean("is_read").default(false).notNull(),
   jobId: integer("job_id"),
   createdAt: timestamp("created_at").defaultNow(),
@@ -254,7 +244,7 @@ export const withdrawalRequests = pgTable("withdrawal_requests", {
   accountNumber: text("account_number").notNull(),
   accountName: text("account_name"),
   reason: text("reason"),
-  status: text("status").default("pending").notNull(), // 'pending', 'approved', 'rejected'
+  status: text("status").default("pending").notNull(),
   adminNote: text("admin_note"),
   processedBy: integer("processed_by"),
   processedAt: timestamp("processed_at"),
@@ -376,4 +366,3 @@ export interface WalletState {
   balance: string;
   transactions: Transaction[];
 }
-
