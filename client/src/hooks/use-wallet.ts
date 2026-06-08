@@ -89,7 +89,7 @@ export function useCardDeposit() {
         const error = await res.json();
         throw new Error(error.message || "Failed to initiate payment");
       }
-      return res.json() as Promise<{ sessionId: string; message: string; otpSentTo: string }>;
+      return res.json() as Promise<{ sessionId: string; message: string; otpSentTo: string; instant?: boolean; promptType?: string; newBalance?: string }>;
     },
     onError: (error: Error) => {
       toast({

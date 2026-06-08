@@ -11,30 +11,42 @@ import { db } from "./db";
 import { users } from "@shared/schema";
 import { eq } from "drizzle-orm";
 
-interface OtpSession {
+interface PaystackSession {
   userId: string;
   amount: number;
   paymentMethod: 'card' | 'bank_account';
-  otp: string;
+  paystackReference: string;
   maskedInfo: string;
-  attempts: number;
+  bankCode?: string;
+  bankName?: string;
+  accountNumber?: string;
   expiresAt: number;
   createdAt: number;
 }
 
-const otpSessions = new Map<string, OtpSession>();
+const paystackSessions = new Map<string, PaystackSession>();
 
-function generateOtp(): string {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+async function paystackRequest(method: string, path: string, body?: any): Promise<any> {
+  const secretKey = process.env.PAYSTACK_SECRET_KEY;
+  if (!secretKey) throw new Error("PAYSTACK_SECRET_KEY is not configured");
+  const resp = await fetch(`https://api.paystack.co${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${secretKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return resp.json();
 }
 
 function cleanExpiredSessions() {
   const now = Date.now();
-  const keys = Array.from(otpSessions.keys());
+  const keys = Array.from(paystackSessions.keys());
   for (const key of keys) {
-    const session = otpSessions.get(key);
+    const session = paystackSessions.get(key);
     if (session && session.expiresAt < now) {
-      otpSessions.delete(key);
+      paystackSessions.delete(key);
     }
   }
 }
@@ -2144,48 +2156,121 @@ export async function registerRoutes(
 
     const { amount, paymentMethod, cardNumber, cardExpiry, cardCvv, bankCode, accountNumber } = parsed.data;
 
+    // Fetch user email for Paystack
+    const userRecord = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+    const userEmail = userRecord[0]?.email || `user_${userId}@abib.jobs`;
+
+    // Amount in kobo (Paystack uses smallest currency unit)
+    const amountKobo = amount * 100;
+
+    let chargeBody: any = {
+      email: userEmail,
+      amount: amountKobo,
+    };
+
+    let maskedInfo = '';
+
     if (paymentMethod === 'card') {
       if (!cardNumber || !cardExpiry || !cardCvv) {
         return res.status(400).json({ message: "Card number, expiry and CVV are required" });
       }
-      if (cardNumber.replace(/\s/g, '').length < 13) {
+      const cleanCard = cardNumber.replace(/\s/g, '');
+      if (cleanCard.length < 13) {
         return res.status(400).json({ message: "Invalid card number" });
       }
+      const [expMonth, expYear] = cardExpiry.replace(/\s/g, '').split('/');
+      chargeBody.card = {
+        number: cleanCard,
+        cvv: cardCvv,
+        expiry_month: expMonth,
+        expiry_year: expYear?.length === 2 ? `20${expYear}` : expYear,
+      };
+      maskedInfo = `****${cleanCard.slice(-4)}`;
     } else {
       if (!bankCode || !accountNumber) {
         return res.status(400).json({ message: "Bank and account number are required" });
       }
+      chargeBody.bank = {
+        code: bankCode,
+        account_number: accountNumber,
+      };
+      maskedInfo = `****${accountNumber.slice(-4)}`;
     }
 
-    const sessionId = crypto.randomUUID();
-    const otp = generateOtp();
+    try {
+      const chargeResp = await paystackRequest('POST', '/charge', chargeBody);
+      console.log(`[Paystack] charge response:`, JSON.stringify(chargeResp));
 
-    let maskedInfo = '';
-    if (paymentMethod === 'card') {
-      const cleanCard = cardNumber!.replace(/\s/g, '');
-      maskedInfo = `****${cleanCard.slice(-4)}`;
-    } else {
-      maskedInfo = `****${accountNumber!.slice(-4)}`;
+      if (!chargeResp.status) {
+        return res.status(400).json({ message: chargeResp.message || "Payment initiation failed" });
+      }
+
+      const data = chargeResp.data;
+      const reference = data?.reference;
+
+      if (!reference) {
+        return res.status(400).json({ message: "No payment reference returned. Please try again." });
+      }
+
+      // If charge is already successful (test mode sometimes skips OTP)
+      if (data.status === 'success') {
+        await storage.updateWalletBalance(userId, amount);
+        const profile = await storage.getProfile(userId);
+
+        // Fetch bank name from NIGERIAN_BANKS if needed
+        let bankName = paymentMethod === 'card' ? 'Card Payment' : 'Bank Account';
+
+        await storage.createTransaction({
+          userId,
+          amount: amount.toString(),
+          type: 'deposit',
+          bankName,
+          bankCode: bankCode || null,
+          accountNumber: maskedInfo,
+          accountName: paymentMethod === 'card' ? 'Debit Card' : 'Bank Account',
+        });
+
+        return res.json({
+          sessionId: reference,
+          message: 'Payment completed instantly',
+          otpSentTo: maskedInfo,
+          instant: true,
+          newBalance: profile?.walletBalance || "0",
+        });
+      }
+
+      // Needs OTP or PIN
+      if (data.status === 'send_otp' || data.status === 'send_pin' || data.status === 'pending') {
+        const sessionId = crypto.randomUUID();
+        paystackSessions.set(sessionId, {
+          userId,
+          amount,
+          paymentMethod,
+          paystackReference: reference,
+          maskedInfo,
+          bankCode: bankCode || undefined,
+          accountNumber: accountNumber || undefined,
+          expiresAt: Date.now() + 15 * 60 * 1000,
+          createdAt: Date.now(),
+        });
+
+        const displayMessage = data.status === 'send_pin'
+          ? `Enter your bank PIN for account ${maskedInfo}`
+          : `OTP sent to the phone number linked to ${maskedInfo}`;
+
+        return res.json({
+          sessionId,
+          message: displayMessage,
+          otpSentTo: maskedInfo,
+          promptType: data.status,
+        });
+      }
+
+      return res.status(400).json({ message: data.message || `Unexpected payment status: ${data.status}` });
+    } catch (err: any) {
+      console.error('[Paystack] charge error:', err);
+      return res.status(500).json({ message: "Payment service error. Please try again." });
     }
-
-    otpSessions.set(sessionId, {
-      userId,
-      amount,
-      paymentMethod,
-      otp,
-      maskedInfo,
-      attempts: 0,
-      expiresAt: Date.now() + 10 * 60 * 1000,
-      createdAt: Date.now(),
-    });
-
-    console.log(`[OTP] Session ${sessionId} for user ${userId}: OTP is ${otp}`);
-
-    res.json({
-      sessionId,
-      message: `OTP sent to your registered phone/email`,
-      otpSentTo: maskedInfo,
-    });
   });
 
   app.post(api.wallet.verifyOtp.path, isAuthenticated, async (req, res) => {
@@ -2194,7 +2279,7 @@ export async function registerRoutes(
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
 
     const { sessionId, otp } = parsed.data;
-    const session = otpSessions.get(sessionId);
+    const session = paystackSessions.get(sessionId);
 
     if (!session) {
       return res.status(400).json({ message: "Session expired or invalid. Please try again." });
@@ -2205,37 +2290,62 @@ export async function registerRoutes(
     }
 
     if (session.expiresAt < Date.now()) {
-      otpSessions.delete(sessionId);
-      return res.status(400).json({ message: "OTP has expired. Please initiate a new deposit." });
+      paystackSessions.delete(sessionId);
+      return res.status(400).json({ message: "Session expired. Please initiate a new deposit." });
     }
 
-    if (session.otp !== otp) {
-      session.attempts += 1;
-      if (session.attempts >= 3) {
-        otpSessions.delete(sessionId);
-        return res.status(400).json({ message: "Too many incorrect attempts. Please initiate a new deposit." });
+    try {
+      // Submit OTP to Paystack
+      const otpResp = await paystackRequest('POST', '/charge/submit_otp', {
+        otp,
+        reference: session.paystackReference,
+      });
+      console.log(`[Paystack] submit_otp response:`, JSON.stringify(otpResp));
+
+      if (!otpResp.status) {
+        return res.status(400).json({ message: otpResp.message || "OTP verification failed" });
       }
-      return res.status(400).json({ message: `Incorrect OTP. ${3 - session.attempts} attempt(s) remaining.` });
+
+      const data = otpResp.data;
+
+      // Verify transaction status
+      if (data.status === 'success') {
+        // Double-check with verify endpoint
+        const verifyResp = await paystackRequest('GET', `/transaction/verify/${session.paystackReference}`);
+        console.log(`[Paystack] verify response:`, JSON.stringify(verifyResp));
+
+        if (verifyResp.data?.status !== 'success') {
+          return res.status(400).json({ message: "Payment could not be confirmed. Please contact support." });
+        }
+
+        await storage.updateWalletBalance(userId, session.amount);
+        await storage.createTransaction({
+          userId,
+          amount: session.amount.toString(),
+          type: 'deposit',
+          bankName: session.paymentMethod === 'card' ? 'Card Payment' : 'Bank Account',
+          bankCode: session.bankCode || null,
+          accountNumber: session.maskedInfo,
+          accountName: session.paymentMethod === 'card' ? 'Debit Card' : 'Bank Account',
+        });
+
+        paystackSessions.delete(sessionId);
+        const profile = await storage.getProfile(userId);
+        return res.json({
+          newBalance: profile?.walletBalance || "0",
+          message: "Deposit successful!",
+        });
+      }
+
+      if (data.status === 'send_otp' || data.status === 'send_pin') {
+        return res.status(400).json({ message: "Incorrect OTP. Please try again." });
+      }
+
+      return res.status(400).json({ message: data.message || `Payment status: ${data.status}. Please try again.` });
+    } catch (err: any) {
+      console.error('[Paystack] verify-otp error:', err);
+      return res.status(500).json({ message: "Payment service error. Please try again." });
     }
-
-    await storage.updateWalletBalance(userId, session.amount);
-    await storage.createTransaction({
-      userId,
-      amount: session.amount.toString(),
-      type: 'deposit',
-      bankName: session.paymentMethod === 'card' ? 'Card Payment' : 'Bank Transfer',
-      bankCode: null,
-      accountNumber: session.maskedInfo,
-      accountName: session.paymentMethod === 'card' ? 'Debit Card' : 'Bank Account',
-    });
-
-    otpSessions.delete(sessionId);
-
-    const profile = await storage.getProfile(userId);
-    res.json({
-      newBalance: profile?.walletBalance || "0",
-      message: "Deposit successful!",
-    });
   });
 
   app.post(api.wallet.resendOtp.path, isAuthenticated, async (req, res) => {
@@ -2244,23 +2354,22 @@ export async function registerRoutes(
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
 
     const { sessionId } = parsed.data;
-    const session = otpSessions.get(sessionId);
+    const session = paystackSessions.get(sessionId);
 
     if (!session || session.userId !== userId) {
       return res.status(400).json({ message: "Session expired or invalid. Please try again." });
     }
 
-    const newOtp = generateOtp();
-    session.otp = newOtp;
-    session.attempts = 0;
-    session.expiresAt = Date.now() + 10 * 60 * 1000;
-
-    console.log(`[OTP] Resend for session ${sessionId}: OTP is ${newOtp}`);
-
-    res.json({
-      message: "New OTP sent successfully",
-      otpSentTo: session.maskedInfo,
-    });
+    try {
+      // Paystack doesn't have a resend OTP endpoint directly — we inform the user to check their phone
+      res.json({
+        message: "Please check your phone for the OTP already sent by your bank",
+        otpSentTo: session.maskedInfo,
+      });
+    } catch (err: any) {
+      console.error('[Paystack] resend-otp error:', err);
+      return res.status(500).json({ message: "Could not resend OTP. Please try again." });
+    }
   });
 
   app.get(api.wallet.depositMethods.path, isAuthenticated, async (req, res) => {

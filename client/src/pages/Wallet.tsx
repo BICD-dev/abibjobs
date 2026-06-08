@@ -42,6 +42,7 @@ export default function Wallet() {
   const [otpSessionId, setOtpSessionId] = useState("");
   const [otpValue, setOtpValue] = useState(["", "", "", "", "", ""]);
   const [otpMaskedInfo, setOtpMaskedInfo] = useState("");
+  const [otpPromptMessage, setOtpPromptMessage] = useState("");
   const otpInputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   const [selectedWithdrawMethod, setSelectedWithdrawMethod] = useState<DepositMethod | null>(null);
@@ -106,6 +107,7 @@ export default function Wallet() {
     setOtpSessionId("");
     setOtpValue(["", "", "", "", "", ""]);
     setOtpMaskedInfo("");
+    setOtpPromptMessage("");
     setSelectedWithdrawMethod(null);
   };
 
@@ -147,8 +149,16 @@ export default function Wallet() {
         }),
       });
 
+      // Paystack sometimes completes instantly without OTP (e.g. test mode)
+      if ((result as any).instant) {
+        setDepositStep("success");
+        setTimeout(() => { setOpen(false); resetForm(); }, 2000);
+        return;
+      }
+
       setOtpSessionId(result.sessionId);
       setOtpMaskedInfo(result.otpSentTo);
+      setOtpPromptMessage(result.message || "");
       setDepositStep("otp");
     } catch {}
   };
@@ -442,9 +452,11 @@ export default function Wallet() {
             <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
               <ShieldCheck className="w-8 h-8 text-primary" />
             </div>
-            <h3 className="font-semibold text-lg text-foreground" data-testid="text-otp-title">Enter OTP</h3>
+            <h3 className="font-semibold text-lg text-foreground" data-testid="text-otp-title">
+              Verify Payment
+            </h3>
             <p className="text-sm text-muted-foreground mt-1">
-              A 6-digit verification code has been sent to your registered phone/email for {otpMaskedInfo}
+              {otpPromptMessage || `Enter the OTP sent to the phone number linked to ${otpMaskedInfo}`}
             </p>
           </div>
 
