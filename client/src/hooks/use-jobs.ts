@@ -92,7 +92,7 @@ export function useCreateJob() {
       queryClient.invalidateQueries({ queryKey: [api.jobs.list.path] });
       toast({
         title: "Success",
-        description: "Job posted successfully! Money has been held in escrow.",
+        description: "Job posted! Payment will be held in escrow when a worker accepts.",
         variant: "default",
       });
     },

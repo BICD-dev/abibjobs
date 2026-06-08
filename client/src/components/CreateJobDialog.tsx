@@ -188,7 +188,7 @@ export function CreateJobDialog() {
         <DialogHeader className="shrink-0">
           <DialogTitle className="text-2xl font-bold font-display text-primary">Post a New Job</DialogTitle>
           <DialogDescription>
-            Describe what needs to be done. We'll hold the payment in escrow.
+            Describe what needs to be done. Payment is held in escrow once a worker accepts.
           </DialogDescription>
         </DialogHeader>
 
@@ -297,7 +297,7 @@ export function CreateJobDialog() {
                       Each worker earns: <span className="font-semibold text-foreground">{"\u20A6"}{Number(watchedPrice).toLocaleString()}</span>
                     </p>
                     <p className="text-muted-foreground">
-                      Total escrow held: <span className="font-semibold text-foreground">{"\u20A6"}{totalEscrow.toLocaleString()}</span> ({watchedWorkersNeeded} workers)
+                      Total held on acceptance: <span className="font-semibold text-foreground">{"\u20A6"}{totalEscrow.toLocaleString()}</span> ({watchedWorkersNeeded} workers)
                     </p>
                   </>
                 ) : (
