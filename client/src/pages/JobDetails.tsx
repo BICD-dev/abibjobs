@@ -420,8 +420,8 @@ export default function JobDetails() {
                 </section>
               )}
 
-              {/* Worker Live Location (for poster — if worker has shared their location) */}
-              {isPoster && isInProgress && job.workerLatitude && job.workerLongitude && (
+              {/* Worker Live Location (for poster — shown as soon as worker is on the way) */}
+              {isPoster && isInProgress && (job.workerProgress === 'on_the_way' || job.workerProgress === 'at_location') && (
                 <section data-testid="section-worker-live-map">
                   <h3 className="text-lg font-bold font-display mb-3 flex items-center gap-2">
                     <Radio className="w-5 h-5 text-green-600 animate-pulse" />
@@ -432,21 +432,33 @@ export default function JobDetails() {
                       </span>
                     )}
                   </h3>
-                  <div className="rounded-2xl overflow-hidden border border-green-200 dark:border-green-800 shadow-sm">
-                    <LiveWorkerMap
-                      lat={parseFloat(String(job.workerLatitude))}
-                      lng={parseFloat(String(job.workerLongitude))}
-                      updatedAt={job.workerLocationUpdatedAt ? String(job.workerLocationUpdatedAt) : null}
-                    />
-                  </div>
-                  <a
-                    href={`https://www.openstreetmap.org/?mlat=${job.workerLatitude}&mlon=${job.workerLongitude}#map=17/${job.workerLatitude}/${job.workerLongitude}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-primary underline mt-1 inline-block"
-                  >
-                    Open worker's location in Maps ↗
-                  </a>
+                  {job.workerLatitude && job.workerLongitude ? (
+                    <>
+                      <div className="rounded-2xl overflow-hidden border border-green-200 dark:border-green-800 shadow-sm">
+                        <LiveWorkerMap
+                          lat={parseFloat(String(job.workerLatitude))}
+                          lng={parseFloat(String(job.workerLongitude))}
+                          updatedAt={job.workerLocationUpdatedAt ? String(job.workerLocationUpdatedAt) : null}
+                        />
+                      </div>
+                      <a
+                        href={`https://www.openstreetmap.org/?mlat=${job.workerLatitude}&mlon=${job.workerLongitude}#map=17/${job.workerLatitude}/${job.workerLongitude}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-primary underline mt-1 inline-block"
+                      >
+                        Open worker's location in Maps ↗
+                      </a>
+                    </>
+                  ) : (
+                    <div className="flex items-center gap-3 p-4 rounded-2xl border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-950/30">
+                      <Loader2 className="w-5 h-5 text-green-600 animate-spin shrink-0" />
+                      <div>
+                        <p className="text-sm font-semibold text-green-700 dark:text-green-400">Worker is on the way</p>
+                        <p className="text-xs text-green-600 dark:text-green-500 mt-0.5">Waiting for their live location to come through…</p>
+                      </div>
+                    </div>
+                  )}
                 </section>
               )}
 

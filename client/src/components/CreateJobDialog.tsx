@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { createJobSchema, type CreateJobInput } from "@shared/schema";
@@ -56,11 +56,42 @@ export function CreateJobDialog() {
   const [jobLat, setJobLat] = useState<number | null>(null);
   const [jobLng, setJobLng] = useState<number | null>(null);
   const [isGettingLocation, setIsGettingLocation] = useState(false);
+  const [locationStatus, setLocationStatus] = useState<"idle" | "fetching" | "captured" | "denied">("idle");
   const [uploadedImages, setUploadedImages] = useState<UploadedImage[]>([]);
   const [uploadingCount, setUploadingCount] = useState(0);
   const { toast } = useToast();
   const { mutate: createJob, isPending } = useCreateJob();
   const { uploadFile } = useUpload();
+
+  // Auto-capture poster GPS when dialog opens
+  useEffect(() => {
+    if (!open) return;
+    if (!navigator.geolocation) return;
+    setLocationStatus("fetching");
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const { latitude, longitude } = pos.coords;
+        setJobLat(latitude);
+        setJobLng(longitude);
+        setLocationStatus("captured");
+        try {
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json`,
+            { headers: { 'Accept-Language': 'en' } }
+          );
+          const data = await res.json();
+          const address = data.display_name || `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+          form.setValue("location", address, { shouldValidate: true });
+        } catch {
+          form.setValue("location", `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`, { shouldValidate: true });
+        }
+      },
+      () => {
+        setLocationStatus("denied");
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  }, [open]);
   
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -120,11 +151,13 @@ export function CreateJobDialog() {
       return;
     }
     setIsGettingLocation(true);
+    setLocationStatus("fetching");
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         const { latitude, longitude } = pos.coords;
         setJobLat(latitude);
         setJobLng(longitude);
+        setLocationStatus("captured");
         try {
           const res = await fetch(
             `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json`,
@@ -133,15 +166,15 @@ export function CreateJobDialog() {
           const data = await res.json();
           const address = data.display_name || `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
           form.setValue("location", address, { shouldValidate: true });
-          toast({ title: "Location captured", description: "Your live location has been set as the job address." });
         } catch {
           form.setValue("location", `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`, { shouldValidate: true });
         } finally {
           setIsGettingLocation(false);
         }
       },
-      (err) => {
+      () => {
         setIsGettingLocation(false);
+        setLocationStatus("denied");
         toast({ title: "Location denied", description: "Please allow location access or type the address manually.", variant: "destructive" });
       },
       { enableHighAccuracy: true, timeout: 10000 }
@@ -170,6 +203,7 @@ export function CreateJobDialog() {
         form.reset();
         setJobLat(null);
         setJobLng(null);
+        setLocationStatus("idle");
         uploadedImages.forEach(img => URL.revokeObjectURL(img.previewUrl));
         setUploadedImages([]);
       },
@@ -177,7 +211,7 @@ export function CreateJobDialog() {
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) { setJobLat(null); setJobLng(null); setLocationStatus("idle"); form.reset(); } }}>
       <DialogTrigger asChild>
         <Button size="lg" className="bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/25 rounded-xl font-semibold">
           <Plus className="mr-2 h-5 w-5" />
@@ -348,9 +382,19 @@ export function CreateJobDialog() {
                       className="rounded-xl border-2 focus:border-primary/50"
                     />
                   </FormControl>
-                  {jobLat !== null && (
+                  {locationStatus === "fetching" && (
+                    <p className="text-xs text-blue-600 flex items-center gap-1 mt-1">
+                      <Loader2 className="w-3 h-3 animate-spin" /> Getting your live location…
+                    </p>
+                  )}
+                  {locationStatus === "captured" && jobLat !== null && (
                     <p className="text-xs text-green-600 flex items-center gap-1 mt-1">
-                      <MapPin className="w-3 h-3" /> Live location pinned — map will show job site
+                      <MapPin className="w-3 h-3" /> Live location pinned — you can still edit the address below
+                    </p>
+                  )}
+                  {locationStatus === "denied" && (
+                    <p className="text-xs text-amber-600 flex items-center gap-1 mt-1">
+                      <MapPin className="w-3 h-3" /> Location access denied — type your address manually
                     </p>
                   )}
                   <FormMessage />
