@@ -1,4 +1,6 @@
 import { useState, useRef, useMemo, useCallback } from "react";
+import LiveWorkerMap from "@/components/LiveWorkerMap";
+import WorkerLocationTracker from "@/components/WorkerLocationTracker";
 import { useRoute, useLocation } from "wouter";
 import { useJob, useAcceptJob, useCompleteJob, useCancelJob, useUpdateJobProgress, useConfirmArrival, useReportNoShow } from "@/hooks/use-jobs";
 import { useOffers, useCreateOffer, useAcceptOffer, useDeclineOffer, useCounterOffer } from "@/hooks/use-offers";
@@ -107,42 +109,9 @@ export default function JobDetails() {
   // Live location
   const { toast } = useToast();
   const queryClientRef = useQueryClient();
-  const [isSharingLocation, setIsSharingLocation] = useState(false);
 
   // Image lightbox
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
-
-  const shareMyLocation = useCallback(() => {
-    if (!navigator.geolocation) {
-      toast({ title: "Not supported", description: "Your browser doesn't support location access.", variant: "destructive" });
-      return;
-    }
-    setIsSharingLocation(true);
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        try {
-          const res = await fetch(`/api/jobs/${id}/worker-location`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
-            credentials: 'include',
-          });
-          if (!res.ok) throw new Error();
-          queryClientRef.invalidateQueries({ queryKey: ['/api/jobs/:id', id] });
-          toast({ title: "Location shared", description: "Your live location has been sent to the job poster." });
-        } catch {
-          toast({ title: "Failed", description: "Could not share your location. Please try again.", variant: "destructive" });
-        } finally {
-          setIsSharingLocation(false);
-        }
-      },
-      () => {
-        setIsSharingLocation(false);
-        toast({ title: "Location denied", description: "Please allow location access to share your position.", variant: "destructive" });
-      },
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
-  }, [id, queryClientRef, toast]);
 
   const noShowAvailability = useMemo(() => {
     if (!job?.acceptedAt) return { canReport: true, remainingText: '' };
@@ -457,14 +426,10 @@ export default function JobDetails() {
                     )}
                   </h3>
                   <div className="rounded-2xl overflow-hidden border border-green-200 dark:border-green-800 shadow-sm">
-                    <iframe
-                      title="Worker live location"
-                      src={`https://www.openstreetmap.org/export/embed.html?bbox=${parseFloat(String(job.workerLongitude))-0.005},${parseFloat(String(job.workerLatitude))-0.005},${parseFloat(String(job.workerLongitude))+0.005},${parseFloat(String(job.workerLatitude))+0.005}&layer=mapnik&marker=${job.workerLatitude},${job.workerLongitude}`}
-                      width="100%"
-                      height="220"
-                      style={{ border: 0 }}
-                      loading="lazy"
-                      referrerPolicy="no-referrer"
+                    <LiveWorkerMap
+                      lat={parseFloat(String(job.workerLatitude))}
+                      lng={parseFloat(String(job.workerLongitude))}
+                      updatedAt={job.workerLocationUpdatedAt ? String(job.workerLocationUpdatedAt) : null}
                     />
                   </div>
                   <a
@@ -798,37 +763,22 @@ export default function JobDetails() {
                               })}
                             </div>
                             {(job.workerProgress === 'on_the_way' || job.workerProgress === 'at_location') && (
-                              <div className="flex items-center text-amber-600 bg-amber-50 dark:bg-amber-950/30 p-3 rounded-xl border border-amber-100 dark:border-amber-900 text-sm">
-                                <AlertTriangle className="w-4 h-4 mr-2 shrink-0" />
-                                If the poster cancels now, you will receive 10% compensation within 24 hours.
+                              <div className="space-y-3">
+                                <div className="flex items-center text-amber-600 bg-amber-50 dark:bg-amber-950/30 p-3 rounded-xl border border-amber-100 dark:border-amber-900 text-sm">
+                                  <AlertTriangle className="w-4 h-4 mr-2 shrink-0" />
+                                  If the poster cancels now, you will receive 10% compensation within 24 hours.
+                                </div>
+                                <WorkerLocationTracker
+                                  jobId={job.id}
+                                  workerProgress={job.workerProgress}
+                                  onLocationUpdate={() => queryClientRef.invalidateQueries({ queryKey: ['/api/jobs/:id', id] })}
+                                />
                               </div>
                             )}
                             {job.workerProgress === 'at_location' && (
-                              <div className="space-y-3">
-                                <div className="flex items-center text-blue-600 bg-blue-50 dark:bg-blue-950/30 p-3 rounded-xl border border-blue-100 dark:border-blue-900 text-sm">
-                                  <MapPinCheck className="w-4 h-4 mr-2 shrink-0" />
-                                  {job.posterConfirmedArrival ? "The poster has confirmed your arrival." : "Waiting for the poster to confirm your arrival."}
-                                </div>
-                                <Button
-                                  variant="outline"
-                                  className="w-full rounded-xl border-green-300 text-green-700 hover:bg-green-50 dark:border-green-700 dark:text-green-400"
-                                  onClick={shareMyLocation}
-                                  disabled={isSharingLocation}
-                                  data-testid="button-share-location"
-                                >
-                                  {isSharingLocation ? (
-                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                  ) : (
-                                    <LocateFixed className="w-4 h-4 mr-2" />
-                                  )}
-                                  {isSharingLocation ? "Sharing..." : job.workerLatitude ? "Update My Location" : "Share My Live Location"}
-                                </Button>
-                                {job.workerLatitude && job.workerLocationUpdatedAt && (
-                                  <p className="text-xs text-green-600 flex items-center gap-1">
-                                    <Radio className="w-3 h-3" />
-                                    Location last shared at {format(new Date(job.workerLocationUpdatedAt), "p")}
-                                  </p>
-                                )}
+                              <div className="flex items-center text-blue-600 bg-blue-50 dark:bg-blue-950/30 p-3 rounded-xl border border-blue-100 dark:border-blue-900 text-sm">
+                                <MapPinCheck className="w-4 h-4 mr-2 shrink-0" />
+                                {job.posterConfirmedArrival ? "The poster has confirmed your arrival." : "Waiting for the poster to confirm your arrival."}
                               </div>
                             )}
 

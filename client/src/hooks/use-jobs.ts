@@ -64,7 +64,7 @@ export function useJob(id: number) {
     enabled: !!id,
     refetchInterval: (query) => {
       const data = query.state.data as any;
-      return data?.status === 'in_progress' && data?.workerLatitude ? 10000 : false;
+      return data?.status === 'in_progress' && data?.workerLatitude ? 5000 : false;
     },
   });
 }
