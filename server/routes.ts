@@ -1424,8 +1424,11 @@ export async function registerRoutes(
       { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
     ];
     if (process.env.TURN_URL && process.env.TURN_USERNAME && process.env.TURN_CREDENTIAL) {
+      // TURN_URL may hold several comma-separated relay URLs sharing the same
+      // credentials (e.g. UDP:3478 + TCP:443 for firewall/CGNAT traversal).
+      const turnUrls = process.env.TURN_URL.split(',').map((u) => u.trim()).filter(Boolean);
       iceServers.push({
-        urls: process.env.TURN_URL,
+        urls: turnUrls.length === 1 ? turnUrls[0] : turnUrls,
         username: process.env.TURN_USERNAME,
         credential: process.env.TURN_CREDENTIAL,
       });
