@@ -24,7 +24,15 @@ import {
   sendNoShowWarningEmail,
   sendWalletDepositEmail,
   sendWithdrawalEmail,
+  sendWithdrawalVerificationCodeEmail,
 } from "./email";
+
+// Never expose a withdrawal request's verification code over the API — it must
+// reach the user only by email, then be relayed to the admin out-of-band.
+function stripWithdrawalCode<T extends { verificationCode?: string | null }>(req: T): Omit<T, "verificationCode"> {
+  const { verificationCode, ...rest } = req as any;
+  return rest;
+}
 
 interface PaystackSession {
   userId: string;
@@ -3108,6 +3116,11 @@ export async function registerRoutes(
       ? `${userRecord.firstName || ''} ${userRecord.lastName || ''}`.trim() || userRecord.email || userId
       : userId;
 
+    // Withdrawals through this flow always go to a new bank account, so we
+    // require email verification: a code is sent to the user's registered email
+    // and an admin must enter it (relayed by the user) before approving.
+    const verificationCode = String(crypto.randomInt(100000, 1000000));
+
     const request = await storage.createWithdrawalRequest({
       userId,
       userName,
@@ -3117,44 +3130,66 @@ export async function registerRoutes(
       accountNumber,
       accountName: accountName || null,
       reason: reason || null,
+      verificationCode,
     });
 
     if (userRecord?.email) {
-      sendWithdrawalEmail(userRecord.email, userRecord.firstName || userRecord.email, val).catch(() => {});
+      sendWithdrawalVerificationCodeEmail(userRecord.email, userRecord.firstName || userRecord.email, verificationCode, val, bankName, accountNumber).catch(() => {});
     }
 
-    res.json(request);
+    res.json(stripWithdrawalCode(request));
   });
 
   // User: view their own withdrawal requests
   app.get('/api/wallet/withdrawal-requests', isAuthenticated, async (req, res) => {
     const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
     const requests = await storage.getUserWithdrawalRequests(userId);
-    res.json(requests);
+    res.json(requests.map(stripWithdrawalCode));
   });
 
   // Admin: view all withdrawal requests
   app.get('/api/admin/withdrawal-requests', isAdminOrOwner, async (req, res) => {
     const status = req.query.status as string | undefined;
     const requests = await storage.getAllWithdrawalRequests(status);
-    res.json(requests);
+    res.json(requests.map(stripWithdrawalCode));
   });
 
   // Admin: approve or reject a withdrawal request
   app.post('/api/admin/withdrawal-requests/:id/process', isAdminOrOwner, async (req, res) => {
     const id = parseInt(req.params.id);
-    const { action, adminNote } = req.body;
+    const { action, adminNote, code } = req.body;
     if (!['approved', 'rejected'].includes(action)) {
       return res.status(400).json({ message: "Action must be 'approved' or 'rejected'." });
     }
     const adminUser = (req as any).adminUser;
     if (!adminUser) return res.status(401).json({ message: "Admin not authenticated." });
 
-    const existing = (await storage.getAllWithdrawalRequests()).find(r => r.id === id);
+    const existing = await storage.getWithdrawalRequest(id);
     if (!existing) return res.status(404).json({ message: "Request not found." });
     if (existing.status !== 'pending') return res.status(400).json({ message: "This request has already been processed." });
 
     if (action === 'approved') {
+      // Require the email verification code to match before approving a new-bank withdrawal.
+      // (Older requests created before this feature may have no code stored — those are allowed through.)
+      if (existing.verificationCode) {
+        const MAX_CODE_ATTEMPTS = 5;
+        if ((existing.codeAttempts ?? 0) >= MAX_CODE_ATTEMPTS) {
+          return res.status(400).json({ message: "Too many incorrect attempts for this code. Click 'Resend code' to send the user a new code, then try again." });
+        }
+        const entered = typeof code === 'string' ? code.trim() : '';
+        if (!entered) {
+          return res.status(400).json({ message: "Enter the verification code sent to the user's email before approving." });
+        }
+        if (entered !== existing.verificationCode) {
+          const attempts = await storage.incrementWithdrawalCodeAttempts(id);
+          const remaining = Math.max(0, MAX_CODE_ATTEMPTS - attempts);
+          return res.status(400).json({
+            message: remaining > 0
+              ? `The verification code does not match. ${remaining} attempt${remaining === 1 ? '' : 's'} left before you must resend a new code.`
+              : "Too many incorrect attempts for this code. Click 'Resend code' to send the user a new code, then try again.",
+          });
+        }
+      }
       const profile = await storage.getProfile(existing.userId);
       const balance = parseFloat(profile?.walletBalance || '0');
       const amount = parseFloat(existing.amount);
@@ -3190,7 +3225,33 @@ export async function registerRoutes(
     }
 
     const updated = await storage.processWithdrawalRequest(id, action, adminUser.id, adminNote);
-    res.json(updated);
+    res.json(stripWithdrawalCode(updated));
+  });
+
+  // Admin: re-send the email verification code for a pending withdrawal request
+  app.post('/api/admin/withdrawal-requests/:id/resend-code', isAdminOrOwner, async (req, res) => {
+    const id = parseInt(req.params.id);
+    const existing = await storage.getWithdrawalRequest(id);
+    if (!existing) return res.status(404).json({ message: "Request not found." });
+    if (existing.status !== 'pending') return res.status(400).json({ message: "This request has already been processed." });
+
+    const userRecord = await storage.getUser(existing.userId);
+    if (!userRecord?.email) {
+      return res.status(400).json({ message: "This user has no email address on file, so a code cannot be sent." });
+    }
+
+    const newCode = String(crypto.randomInt(100000, 1000000));
+    await storage.setWithdrawalRequestCode(id, newCode);
+
+    await sendWithdrawalVerificationCodeEmail(
+      userRecord.email,
+      userRecord.firstName || userRecord.email,
+      newCode,
+      parseFloat(existing.amount),
+      existing.bankName,
+      existing.accountNumber,
+    );
+    res.json({ success: true });
   });
 
   app.post(api.wallet.withdraw.path, isAuthenticated, async (req, res) => {

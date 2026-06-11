@@ -1,3 +1,4 @@
 - [Dev vs Prod database](dev-vs-prod-database.md) — published app uses a SEPARATE prod DB (read-only to tools); dev-side fixes do NOT reach production; app uses bcryptjs not bcrypt.
 - [WebSocket + Vite HMR](websocket-vite-hmr.md) — never `new WebSocketServer({server})` (kills HMR); use noServer + path-scoped httpServer.on(upgrade), destroy stray upgrades only in prod.
 - [Live UI needs polling](live-data-no-autorefetch.md) — global react-query disables all auto-refetch (staleTime Infinity, no interval/focus); cross-user live UIs MUST add explicit refetchInterval.
+- [Withdrawal code verification](withdrawal-code-verification.md) — new-bank withdrawals need an emailed 6-digit code; never null the code to lock it (null=legacy passthrough), use codeAttempts; always stripWithdrawalCode in responses.

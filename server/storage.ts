@@ -181,9 +181,12 @@ export interface IStorage {
   getWaitingTicketsCount(): Promise<number>;
 
   // Withdrawal Requests
-  createWithdrawalRequest(data: { userId: string; userName: string; amount: string; bankName: string; bankCode?: string | null; accountNumber: string; accountName?: string | null; reason?: string | null }): Promise<WithdrawalRequest>;
+  createWithdrawalRequest(data: { userId: string; userName: string; amount: string; bankName: string; bankCode?: string | null; accountNumber: string; accountName?: string | null; reason?: string | null; verificationCode?: string | null }): Promise<WithdrawalRequest>;
   getUserWithdrawalRequests(userId: string): Promise<WithdrawalRequest[]>;
   getAllWithdrawalRequests(status?: string): Promise<WithdrawalRequest[]>;
+  getWithdrawalRequest(id: number): Promise<WithdrawalRequest | undefined>;
+  setWithdrawalRequestCode(id: number, code: string): Promise<WithdrawalRequest | undefined>;
+  incrementWithdrawalCodeAttempts(id: number): Promise<number>;
   processWithdrawalRequest(id: number, status: 'approved' | 'rejected', adminId: number, adminNote?: string): Promise<WithdrawalRequest>;
 
   // Site Visits & Analytics
@@ -1374,7 +1377,7 @@ export class DatabaseStorage implements IStorage {
     return result?.count || 0;
   }
 
-  async createWithdrawalRequest(data: { userId: string; userName: string; amount: string; bankName: string; bankCode?: string | null; accountNumber: string; accountName?: string | null; reason?: string | null }): Promise<WithdrawalRequest> {
+  async createWithdrawalRequest(data: { userId: string; userName: string; amount: string; bankName: string; bankCode?: string | null; accountNumber: string; accountName?: string | null; reason?: string | null; verificationCode?: string | null }): Promise<WithdrawalRequest> {
     const [req] = await db.insert(withdrawalRequests).values(data).returning();
     return req;
   }
@@ -1388,6 +1391,27 @@ export class DatabaseStorage implements IStorage {
       return db.select().from(withdrawalRequests).where(eq(withdrawalRequests.status, status)).orderBy(desc(withdrawalRequests.createdAt));
     }
     return db.select().from(withdrawalRequests).orderBy(desc(withdrawalRequests.createdAt));
+  }
+
+  async getWithdrawalRequest(id: number): Promise<WithdrawalRequest | undefined> {
+    const [req] = await db.select().from(withdrawalRequests).where(eq(withdrawalRequests.id, id));
+    return req;
+  }
+
+  async setWithdrawalRequestCode(id: number, code: string): Promise<WithdrawalRequest | undefined> {
+    const [updated] = await db.update(withdrawalRequests)
+      .set({ verificationCode: code, codeAttempts: 0 })
+      .where(eq(withdrawalRequests.id, id))
+      .returning();
+    return updated;
+  }
+
+  async incrementWithdrawalCodeAttempts(id: number): Promise<number> {
+    const [updated] = await db.update(withdrawalRequests)
+      .set({ codeAttempts: sql`${withdrawalRequests.codeAttempts} + 1` })
+      .where(eq(withdrawalRequests.id, id))
+      .returning();
+    return updated?.codeAttempts ?? 0;
   }
 
   async processWithdrawalRequest(id: number, status: 'approved' | 'rejected', adminId: number, adminNote?: string): Promise<WithdrawalRequest> {

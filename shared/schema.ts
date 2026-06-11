@@ -250,6 +250,8 @@ export const withdrawalRequests = pgTable("withdrawal_requests", {
   accountName: text("account_name"),
   reason: text("reason"),
   status: text("status").default("pending").notNull(),
+  verificationCode: text("verification_code"),
+  codeAttempts: integer("code_attempts").default(0).notNull(),
   adminNote: text("admin_note"),
   processedBy: integer("processed_by"),
   processedAt: timestamp("processed_at"),
