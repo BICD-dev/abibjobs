@@ -14,7 +14,9 @@ import { useProfile } from "@/hooks/use-profile";
 type AuthView = "choose" | "manual-signup" | "manual-login" | "forgot-password" | "verify";
 
 export default function AuthPage() {
-  const [view, setView] = useState<AuthView>("choose");
+  const initialMode = new URLSearchParams(window.location.search).get("mode");
+  const initialView: AuthView = initialMode === "login" ? "manual-login" : initialMode === "signup" ? "manual-signup" : "choose";
+  const [view, setView] = useState<AuthView>(initialView);
   const [newUserName, setNewUserName] = useState("");
   const [, setLocation] = useLocation();
 

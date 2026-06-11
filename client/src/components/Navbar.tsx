@@ -286,8 +286,11 @@ export function Navbar() {
                     Admin
                   </Link>
                 </Button>
-                <Button asChild className="bg-primary hover:bg-primary/90 text-white shadow-md shadow-primary/20 rounded-xl px-6 font-semibold">
-                  <a href="/auth">Login / Sign Up</a>
+                <Button asChild variant="outline" className="rounded-xl px-5 font-semibold">
+                  <a href="/auth?mode=login">Log In</a>
+                </Button>
+                <Button asChild className="bg-primary hover:bg-primary/90 text-white shadow-md shadow-primary/20 rounded-xl px-5 font-semibold">
+                  <a href="/auth?mode=signup">Sign Up</a>
                 </Button>
               </div>
             )}
@@ -402,7 +405,10 @@ export function Navbar() {
               <div className="p-4 bg-muted/30 rounded-2xl text-center space-y-3">
                 <p className="mb-4 text-muted-foreground">Join thousands of Nigerians earning daily.</p>
                 <Button asChild className="w-full bg-primary hover:bg-primary/90 text-white rounded-xl h-12 text-lg">
-                  <a href="/auth">Get Started</a>
+                  <a href="/auth?mode=signup">Sign Up</a>
+                </Button>
+                <Button asChild variant="outline" className="w-full rounded-xl h-12 text-lg">
+                  <a href="/auth?mode=login">Log In</a>
                 </Button>
                 <Button asChild variant="outline" className="w-full rounded-xl">
                   <Link href="/admin/login">
