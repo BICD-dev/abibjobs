@@ -22,6 +22,7 @@ import {
   supportTickets,
   supportMessages,
   withdrawalRequests,
+  adminWithdrawals,
   type Profile,
   type Job,
   type Transaction,
@@ -45,6 +46,7 @@ import {
   type SupportTicket,
   type SupportMessage,
   type WithdrawalRequest,
+  type AdminWithdrawal,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -123,6 +125,13 @@ export interface IStorage {
   createAdminPayment(data: { adminId: number; amount: string; periodStart?: string; periodEnd?: string; hoursWorked?: string; bankName?: string; bankCode?: string; accountNumber?: string; accountName?: string; note?: string; paidBy?: string }): Promise<AdminPayment>;
   getAdminPayments(adminId?: number): Promise<(AdminPayment & { adminName?: string })[]>;
   getAdminsPayrollSummary(startDate?: string, endDate?: string): Promise<{ adminId: number; name: string; email: string; bankName: string | null; accountNumber: string | null; accountName: string | null; bankCode: string | null; totalSeconds: number; isActive: boolean }[]>;
+
+  // Admin Wallet & Withdrawals
+  creditAdminWallet(adminId: number, amount: number): Promise<AdminUser>;
+  requestAdminWithdrawal(adminId: number, data: { amount: string; bankName: string; bankCode?: string | null; accountNumber: string; accountName?: string | null }): Promise<AdminWithdrawal>;
+  getAdminWithdrawals(adminId: number): Promise<AdminWithdrawal[]>;
+  getAllAdminWithdrawals(status?: string): Promise<(AdminWithdrawal & { adminName?: string })[]>;
+  processAdminWithdrawal(id: number, status: 'approved' | 'rejected', processedBy: number, adminNote?: string): Promise<AdminWithdrawal>;
 
   // Notifications
   createNotification(data: { userId: string; title: string; message: string; type: string; jobId?: number }): Promise<Notification>;
@@ -861,6 +870,86 @@ export class DatabaseStorage implements IStorage {
     .orderBy(desc(adminPayments.createdAt));
 
     return results;
+  }
+
+  // Atomic credit (used by payroll). Single UPDATE avoids read-modify-write races.
+  async creditAdminWallet(adminId: number, amount: number): Promise<AdminUser> {
+    const [updated] = await db.update(adminUsers)
+      .set({ walletBalance: sql`${adminUsers.walletBalance} + ${amount}` })
+      .where(eq(adminUsers.id, adminId))
+      .returning();
+    if (!updated) throw new Error("Admin not found");
+    return updated;
+  }
+
+  // Hold-on-request: conditionally deduct the wallet and create the withdrawal in one transaction.
+  // The conditional WHERE prevents double-spend across concurrent/multiple pending requests.
+  async requestAdminWithdrawal(adminId: number, data: { amount: string; bankName: string; bankCode?: string | null; accountNumber: string; accountName?: string | null }): Promise<AdminWithdrawal> {
+    const amountNum = parseFloat(data.amount);
+    if (!isFinite(amountNum) || amountNum <= 0) throw new Error("Invalid amount");
+
+    return db.transaction(async (tx) => {
+      const [held] = await tx.update(adminUsers)
+        .set({ walletBalance: sql`${adminUsers.walletBalance} - ${amountNum}` })
+        .where(and(eq(adminUsers.id, adminId), sql`${adminUsers.walletBalance} >= ${amountNum}`))
+        .returning();
+      if (!held) throw new Error("Insufficient wallet balance");
+
+      const [created] = await tx.insert(adminWithdrawals).values({
+        adminId,
+        amount: amountNum.toFixed(2),
+        bankName: data.bankName,
+        bankCode: data.bankCode ?? null,
+        accountNumber: data.accountNumber,
+        accountName: data.accountName ?? null,
+      }).returning();
+      return created;
+    });
+  }
+
+  async getAdminWithdrawals(adminId: number): Promise<AdminWithdrawal[]> {
+    return db.select().from(adminWithdrawals).where(eq(adminWithdrawals.adminId, adminId)).orderBy(desc(adminWithdrawals.createdAt));
+  }
+
+  async getAllAdminWithdrawals(status?: string): Promise<(AdminWithdrawal & { adminName?: string })[]> {
+    return db.select({
+      id: adminWithdrawals.id,
+      adminId: adminWithdrawals.adminId,
+      amount: adminWithdrawals.amount,
+      bankName: adminWithdrawals.bankName,
+      bankCode: adminWithdrawals.bankCode,
+      accountNumber: adminWithdrawals.accountNumber,
+      accountName: adminWithdrawals.accountName,
+      status: adminWithdrawals.status,
+      adminNote: adminWithdrawals.adminNote,
+      processedBy: adminWithdrawals.processedBy,
+      processedAt: adminWithdrawals.processedAt,
+      createdAt: adminWithdrawals.createdAt,
+      adminName: adminUsers.name,
+    })
+    .from(adminWithdrawals)
+    .innerJoin(adminUsers, eq(adminWithdrawals.adminId, adminUsers.id))
+    .where(status ? eq(adminWithdrawals.status, status) : undefined)
+    .orderBy(desc(adminWithdrawals.createdAt));
+  }
+
+  // Process is conditional on status='pending' so it cannot double-process.
+  // Rejection refunds the held amount back to the admin wallet in the same transaction.
+  async processAdminWithdrawal(id: number, status: 'approved' | 'rejected', processedBy: number, adminNote?: string): Promise<AdminWithdrawal> {
+    return db.transaction(async (tx) => {
+      const [updated] = await tx.update(adminWithdrawals)
+        .set({ status, adminNote: adminNote || null, processedBy, processedAt: new Date() })
+        .where(and(eq(adminWithdrawals.id, id), eq(adminWithdrawals.status, 'pending')))
+        .returning();
+      if (!updated) throw new Error("This request has already been processed.");
+
+      if (status === 'rejected') {
+        await tx.update(adminUsers)
+          .set({ walletBalance: sql`${adminUsers.walletBalance} + ${parseFloat(updated.amount)}` })
+          .where(eq(adminUsers.id, updated.adminId));
+      }
+      return updated;
+    });
   }
 
   async getAdminsPayrollSummary(startDate?: string, endDate?: string): Promise<{ adminId: number; name: string; email: string; bankName: string | null; accountNumber: string | null; accountName: string | null; bankCode: string | null; totalSeconds: number; isActive: boolean }[]> {

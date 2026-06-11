@@ -1922,7 +1922,7 @@ export async function registerRoutes(
       const hours = await storage.getMyAdminHours(adminId, startDate, endDate);
 
       const totalSeconds = hours.reduce((sum, h) => sum + h.secondsWorked, 0);
-      res.json({ hours, totalSeconds, admin: { id: admin.id, name: admin.name, email: admin.email, bankName: admin.bankName, bankCode: admin.bankCode, accountNumber: admin.accountNumber, accountName: admin.accountName } });
+      res.json({ hours, totalSeconds, admin: { id: admin.id, name: admin.name, email: admin.email, walletBalance: admin.walletBalance, bankName: admin.bankName, bankCode: admin.bankCode, accountNumber: admin.accountNumber, accountName: admin.accountName } });
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch hours" });
     }
@@ -1970,6 +1970,110 @@ export async function registerRoutes(
       res.json(payments);
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch payments" });
+    }
+  });
+
+  // Staff admin: request a withdrawal from wallet to registered salary bank
+  app.post('/api/admin/my-withdraw', async (req, res) => {
+    try {
+      const adminId = (req.session as any)?.adminId;
+      if (!adminId) return res.status(401).json({ message: "Not authenticated" });
+      const admin = await storage.getAdminUser(adminId);
+      if (!admin || !admin.isActive) return res.status(401).json({ message: "Not authenticated" });
+
+      if (!admin.bankName || !admin.accountNumber) {
+        return res.status(400).json({ message: "Please set up your salary bank account first." });
+      }
+
+      const amount = parseFloat(req.body?.amount);
+      if (!isFinite(amount) || amount <= 0) {
+        return res.status(400).json({ message: "Enter a valid amount." });
+      }
+      if (amount > parseFloat(admin.walletBalance)) {
+        return res.status(400).json({ message: "Insufficient wallet balance." });
+      }
+
+      const withdrawal = await storage.requestAdminWithdrawal(adminId, {
+        amount: amount.toFixed(2),
+        bankName: admin.bankName,
+        bankCode: admin.bankCode,
+        accountNumber: admin.accountNumber,
+        accountName: admin.accountName,
+      });
+
+      try {
+        await storage.createAdminNotification({
+          adminId,
+          title: "Withdrawal Requested",
+          message: `Your withdrawal of \u20A6${amount.toLocaleString()} to ${admin.bankName} (${admin.accountNumber}) is pending owner approval.`,
+          type: "info",
+        });
+      } catch (e) {}
+
+      res.json(withdrawal);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message || "Failed to request withdrawal" });
+    }
+  });
+
+  // Staff admin: own withdrawal history
+  app.get('/api/admin/my-withdrawals', async (req, res) => {
+    try {
+      const adminId = (req.session as any)?.adminId;
+      if (!adminId) return res.status(401).json({ message: "Not authenticated" });
+      const admin = await storage.getAdminUser(adminId);
+      if (!admin || !admin.isActive) return res.status(401).json({ message: "Not authenticated" });
+      const withdrawals = await storage.getAdminWithdrawals(adminId);
+      res.json(withdrawals);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch withdrawals" });
+    }
+  });
+
+  // Owner: list admin withdrawal requests
+  app.get('/api/admin/admin-withdrawals', isAuthenticated, isOwner, async (req, res) => {
+    try {
+      const status = req.query.status as string | undefined;
+      const withdrawals = await storage.getAllAdminWithdrawals(status);
+      res.json(withdrawals);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch admin withdrawals" });
+    }
+  });
+
+  // Owner: approve or reject an admin withdrawal request
+  app.post('/api/admin/admin-withdrawals/:id/process', isAuthenticated, isOwner, async (req, res) => {
+    try {
+      const id = parseInt(String(req.params.id));
+      const { action, adminNote } = req.body;
+      if (!['approved', 'rejected'].includes(action)) {
+        return res.status(400).json({ message: "Action must be 'approved' or 'rejected'." });
+      }
+
+      const ownerAdmin = await storage.getAdminUserByEmail(OWNER_EMAIL);
+      const updated = await storage.processAdminWithdrawal(id, action, ownerAdmin?.id ?? 0, adminNote);
+
+      try {
+        if (action === 'approved') {
+          await storage.createAdminNotification({
+            adminId: updated.adminId,
+            title: "Withdrawal Approved",
+            message: `Your withdrawal of \u20A6${parseFloat(updated.amount).toLocaleString()} to ${updated.bankName} (${updated.accountNumber}) has been approved and paid.`,
+            type: "success",
+          });
+        } else {
+          await storage.createAdminNotification({
+            adminId: updated.adminId,
+            title: "Withdrawal Rejected",
+            message: `Your withdrawal of \u20A6${parseFloat(updated.amount).toLocaleString()} was not approved and the amount has been returned to your wallet.${adminNote ? ` Reason: ${adminNote}` : ''}`,
+            type: "warning",
+          });
+        }
+      } catch (e) {}
+
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message || "Failed to process withdrawal" });
     }
   });
 
@@ -2026,6 +2130,8 @@ export async function registerRoutes(
           note: note ? `${note} (${paymentSource === 'platform_earnings' ? 'Platform Earnings' : 'External Bank'})` : (paymentSource === 'platform_earnings' ? 'Platform Earnings' : 'External Bank'),
           paidBy: 'owner',
         });
+        // Salary lands in the admin's in-app wallet; they withdraw it to their bank later.
+        await storage.creditAdminWallet(adminId, parseFloat(String(amount)));
         results.push(payment);
       }
 
@@ -2041,7 +2147,7 @@ export async function registerRoutes(
           await storage.createAdminNotification({
             adminId: p.adminId,
             title: "Salary Payment Received",
-            message: `You have received a salary payment of \u20A6${amt.toLocaleString()}${p.note ? ` - ${p.note}` : ''}. Source: ${paymentSource === 'platform_earnings' ? 'Platform Earnings' : 'External Bank'}.`,
+            message: `\u20A6${amt.toLocaleString()} has been added to your wallet${p.note ? ` - ${p.note}` : ''}. You can withdraw it to your salary bank account from your profile.`,
             type: "success",
           });
         } catch (e) {}

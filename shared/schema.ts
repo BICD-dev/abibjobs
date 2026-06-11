@@ -136,10 +136,26 @@ export const adminUsers = pgTable("admin_users", {
   name: text("name").notNull(),
   role: text("role").default("staff").notNull(),
   isActive: boolean("is_active").default(true).notNull(),
+  walletBalance: numeric("wallet_balance", { precision: 10, scale: 2 }).default("0").notNull(),
   bankName: text("bank_name"),
   bankCode: text("bank_code"),
   accountNumber: text("account_number"),
   accountName: text("account_name"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const adminWithdrawals = pgTable("admin_withdrawals", {
+  id: serial("id").primaryKey(),
+  adminId: integer("admin_id").notNull(),
+  amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
+  bankName: text("bank_name").notNull(),
+  bankCode: text("bank_code"),
+  accountNumber: text("account_number").notNull(),
+  accountName: text("account_name"),
+  status: text("status").default("pending").notNull(),
+  adminNote: text("admin_note"),
+  processedBy: integer("processed_by"),
+  processedAt: timestamp("processed_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -289,6 +305,7 @@ export const insertScheduledPaymentSchema = createInsertSchema(scheduledPayments
 export const insertSupportTicketSchema = createInsertSchema(supportTickets).omit({ id: true, createdAt: true, updatedAt: true, closedAt: true });
 export const insertSupportMessageSchema = createInsertSchema(supportMessages).omit({ id: true, createdAt: true });
 export const insertWithdrawalRequestSchema = createInsertSchema(withdrawalRequests).omit({ id: true, createdAt: true, processedAt: true });
+export const insertAdminWithdrawalSchema = createInsertSchema(adminWithdrawals).omit({ id: true, createdAt: true, processedAt: true });
 
 // === TYPES ===
 
@@ -312,6 +329,7 @@ export type OwnerSettings = typeof ownerSettings.$inferSelect;
 export type SupportTicket = typeof supportTickets.$inferSelect;
 export type SupportMessage = typeof supportMessages.$inferSelect;
 export type WithdrawalRequest = typeof withdrawalRequests.$inferSelect;
+export type AdminWithdrawal = typeof adminWithdrawals.$inferSelect;
 
 export type CreateJobInput = z.infer<typeof createJobSchema>;
 export type VerificationStatus = 'unverified' | 'pending' | 'verified' | 'declined' | 'redo_requested';

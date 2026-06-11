@@ -1,1 +1,1 @@
-- [Dependency security fixes](dependency-security-fixes.md) — uuid fixed via global override (not storage downgrade); drizzle 0.39→0.45 SQL-injection bump safe because no dynamic SQL identifiers.
+- [Express 5 req.params widening](express5-params-typing.md) — multi-middleware routes widen req.params to string|string[]; wrap parseInt with String().

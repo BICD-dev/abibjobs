@@ -6,7 +6,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Wallet, Clock, Users, Check, AlertCircle, CreditCard, Building2, TrendingUp } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import { Loader2, Wallet, Clock, Users, Check, AlertCircle, CreditCard, Building2, TrendingUp, ArrowDownToLine, CheckCircle2, XCircle, User } from "lucide-react";
 import { useAdminAuth } from "@/hooks/use-admin-auth";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
@@ -50,6 +54,28 @@ function formatNaira(amount: string | number) {
   return new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', minimumFractionDigits: 0 }).format(num);
 }
 
+interface AdminWithdrawal {
+  id: number;
+  adminId: number;
+  amount: string;
+  bankName: string;
+  bankCode: string | null;
+  accountNumber: string;
+  accountName: string | null;
+  status: string;
+  adminNote: string | null;
+  processedBy: number | null;
+  processedAt: string | null;
+  createdAt: string;
+  adminName?: string;
+}
+
+function WithdrawalStatusBadge({ status }: { status: string }) {
+  if (status === 'pending') return <Badge className="bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400"><Clock className="w-3 h-3 mr-1" />Pending</Badge>;
+  if (status === 'approved') return <Badge className="bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-400"><CheckCircle2 className="w-3 h-3 mr-1" />Approved</Badge>;
+  return <Badge className="bg-red-100 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-400"><XCircle className="w-3 h-3 mr-1" />Rejected</Badge>;
+}
+
 export default function AdminPayroll() {
   const { isOwner, isLoading: authLoading } = useAdminAuth();
   const { toast } = useToast();
@@ -59,6 +85,11 @@ export default function AdminPayroll() {
   const [payAmounts, setPayAmounts] = useState<Record<number, string>>({});
   const [payNote, setPayNote] = useState("");
   const [paymentSource, setPaymentSource] = useState<string>("platform_earnings");
+  const [withdrawalStatusFilter, setWithdrawalStatusFilter] = useState("pending");
+  const [selectedWithdrawal, setSelectedWithdrawal] = useState<AdminWithdrawal | null>(null);
+  const [withdrawalAction, setWithdrawalAction] = useState<'approved' | 'rejected' | null>(null);
+  const [withdrawalNote, setWithdrawalNote] = useState("");
+  const [withdrawalDialogOpen, setWithdrawalDialogOpen] = useState(false);
 
   const { data: admins, isLoading } = useQuery<PayrollAdmin[]>({
     queryKey: ["/api/admin/payroll"],
@@ -118,6 +149,60 @@ export default function AdminPayroll() {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     },
   });
+
+  const { data: adminWithdrawals = [], isLoading: withdrawalsLoading } = useQuery<AdminWithdrawal[]>({
+    queryKey: ["/api/admin/admin-withdrawals", withdrawalStatusFilter],
+    queryFn: async () => {
+      const res = await fetch(`/api/admin/admin-withdrawals?status=${withdrawalStatusFilter}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed");
+      return res.json();
+    },
+    enabled: !!isOwner,
+    refetchInterval: 15000,
+  });
+
+  const processWithdrawalMutation = useMutation({
+    mutationFn: async ({ id, action, adminNote }: { id: number; action: string; adminNote: string }) => {
+      const res = await fetch(`/api/admin/admin-withdrawals/${id}/process`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, adminNote }),
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || "Failed to process request");
+      }
+      return res.json();
+    },
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/admin-withdrawals"] });
+      setWithdrawalDialogOpen(false);
+      setSelectedWithdrawal(null);
+      setWithdrawalNote("");
+      toast({
+        title: vars.action === 'approved' ? "Withdrawal Approved" : "Withdrawal Rejected",
+        description: vars.action === 'approved'
+          ? "The admin has been notified that their payout was approved."
+          : "The amount was returned to the admin's wallet and they've been notified.",
+      });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const openWithdrawalDialog = (w: AdminWithdrawal, act: 'approved' | 'rejected') => {
+    setSelectedWithdrawal(w);
+    setWithdrawalAction(act);
+    setWithdrawalNote("");
+    setWithdrawalDialogOpen(true);
+  };
+
+  const handleConfirmWithdrawal = () => {
+    if (!selectedWithdrawal || !withdrawalAction) return;
+    processWithdrawalMutation.mutate({ id: selectedWithdrawal.id, action: withdrawalAction, adminNote: withdrawalNote });
+  };
 
   const activeAdmins = admins?.filter(a => a.isActive) || [];
 
@@ -353,12 +438,12 @@ export default function AdminPayroll() {
                       </Select>
                       {paymentSource === 'platform_earnings' && (
                         <p className="text-xs text-muted-foreground mt-1">
-                          Amount will be deducted from your platform earnings balance
+                          Deducted from your platform earnings and added to each admin's in-app wallet. They withdraw it to their bank from their profile.
                         </p>
                       )}
                       {paymentSource === 'external_bank' && (
                         <p className="text-xs text-muted-foreground mt-1">
-                          Payment recorded as manual transfer from your own bank account
+                          Added to each admin's in-app wallet without touching your platform earnings (you fund it yourself). Don't also transfer to their bank — they withdraw from their wallet.
                         </p>
                       )}
                     </div>
@@ -386,6 +471,101 @@ export default function AdminPayroll() {
                       )}
                       Pay {selectedAdmins.size} Admin{selectedAdmins.size !== 1 ? "s" : ""}
                     </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card data-testid="card-admin-withdrawals">
+              <CardHeader>
+                <div className="flex items-center justify-between gap-4 flex-wrap">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-amber-500/10 flex items-center justify-center flex-shrink-0">
+                      <ArrowDownToLine className="w-4 h-4 text-amber-500" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-lg">Admin Withdrawal Requests</CardTitle>
+                      <p className="text-xs text-muted-foreground mt-0.5">Admins withdrawing salary from their wallet to their bank</p>
+                    </div>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <Tabs value={withdrawalStatusFilter} onValueChange={setWithdrawalStatusFilter} className="mb-4">
+                  <TabsList className="rounded-xl">
+                    <TabsTrigger value="pending" data-testid="tab-wd-pending">Pending</TabsTrigger>
+                    <TabsTrigger value="approved" data-testid="tab-wd-approved">Approved</TabsTrigger>
+                    <TabsTrigger value="rejected" data-testid="tab-wd-rejected">Rejected</TabsTrigger>
+                  </TabsList>
+                </Tabs>
+
+                {withdrawalsLoading ? (
+                  <div className="flex justify-center py-6">
+                    <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                  </div>
+                ) : adminWithdrawals.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-6">No {withdrawalStatusFilter} withdrawal requests</p>
+                ) : (
+                  <div className="space-y-3">
+                    {adminWithdrawals.map((w) => (
+                      <div key={w.id} className="p-4 rounded-xl border border-border" data-testid={`row-admin-withdrawal-${w.id}`}>
+                        <div className="flex flex-col sm:flex-row sm:items-start gap-4">
+                          <div className="flex-1 min-w-0 space-y-2">
+                            <div className="flex items-center gap-3 flex-wrap">
+                              <WithdrawalStatusBadge status={w.status} />
+                              <span className="text-xs text-muted-foreground">{format(new Date(w.createdAt), "MMM d, yyyy p")}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <User className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                              <span className="font-semibold text-foreground" data-testid={`text-wd-admin-${w.id}`}>{w.adminName || `Admin #${w.adminId}`}</span>
+                            </div>
+                            <div className="flex items-start gap-2">
+                              <Building2 className="w-4 h-4 text-muted-foreground mt-0.5 flex-shrink-0" />
+                              <div>
+                                <p className="font-medium text-foreground">{w.bankName}</p>
+                                <p className="text-sm text-muted-foreground">{w.accountNumber}{w.accountName ? ` — ${w.accountName}` : ''}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm text-muted-foreground">Amount:</span>
+                              <span className="font-bold text-primary text-lg" data-testid={`text-wd-amount-${w.id}`}>{formatNaira(w.amount)}</span>
+                            </div>
+                            {w.adminNote && (
+                              <div className="bg-muted/50 rounded-lg p-2 text-sm text-muted-foreground">
+                                <span className="font-medium text-foreground">Note: </span>{w.adminNote}
+                              </div>
+                            )}
+                            {w.processedAt && (
+                              <p className="text-xs text-muted-foreground">Processed: {format(new Date(w.processedAt), "MMM d, yyyy p")}</p>
+                            )}
+                          </div>
+
+                          {w.status === 'pending' && (
+                            <div className="flex flex-col gap-2 flex-shrink-0">
+                              <Button
+                                size="sm"
+                                className="rounded-xl bg-green-600 hover:bg-green-700 text-white"
+                                onClick={() => openWithdrawalDialog(w, 'approved')}
+                                data-testid={`button-wd-approve-${w.id}`}
+                              >
+                                <CheckCircle2 className="w-4 h-4 mr-1" />
+                                Approve & Pay
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="rounded-xl border-red-200 text-red-600 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-950"
+                                onClick={() => openWithdrawalDialog(w, 'rejected')}
+                                data-testid={`button-wd-reject-${w.id}`}
+                              >
+                                <XCircle className="w-4 h-4 mr-1" />
+                                Reject
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
               </CardContent>
@@ -434,6 +614,82 @@ export default function AdminPayroll() {
           </div>
         )}
       </main>
+
+      <Dialog open={withdrawalDialogOpen} onOpenChange={setWithdrawalDialogOpen}>
+        <DialogContent className="rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>
+              {withdrawalAction === 'approved' ? 'Approve Withdrawal' : 'Reject Withdrawal'}
+            </DialogTitle>
+          </DialogHeader>
+
+          {selectedWithdrawal && (
+            <div className="space-y-4">
+              <div className="bg-muted/50 rounded-xl p-4 space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Admin</span>
+                  <span className="font-medium">{selectedWithdrawal.adminName || `Admin #${selectedWithdrawal.adminId}`}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Amount</span>
+                  <span className="font-bold text-primary">{formatNaira(selectedWithdrawal.amount)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">To</span>
+                  <span className="font-medium">{selectedWithdrawal.bankName}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Account</span>
+                  <span className="font-medium">{selectedWithdrawal.accountNumber}</span>
+                </div>
+              </div>
+
+              {withdrawalAction === 'approved' ? (
+                <div className="flex items-start gap-2 p-3 bg-green-50 dark:bg-green-950/30 rounded-xl text-sm text-green-700 dark:text-green-400">
+                  <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <p>The amount was already held from the admin's wallet. Approving confirms you've sent it to their bank account.</p>
+                </div>
+              ) : (
+                <div className="flex items-start gap-2 p-3 bg-amber-50 dark:bg-amber-950/30 rounded-xl text-sm text-amber-700 dark:text-amber-400">
+                  <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <p>Rejecting returns {formatNaira(selectedWithdrawal.amount)} back to the admin's wallet.</p>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Note to admin (optional)</label>
+                <Textarea
+                  placeholder="Add a note explaining the decision..."
+                  value={withdrawalNote}
+                  onChange={(e) => setWithdrawalNote(e.target.value)}
+                  className="rounded-xl resize-none"
+                  rows={3}
+                  data-testid="input-wd-note"
+                />
+              </div>
+
+              <div className="flex gap-3">
+                <Button
+                  variant="outline"
+                  className="flex-1 rounded-xl"
+                  onClick={() => setWithdrawalDialogOpen(false)}
+                  data-testid="button-wd-cancel"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  className={`flex-1 rounded-xl text-white ${withdrawalAction === 'approved' ? 'bg-green-600 hover:bg-green-700' : 'bg-destructive hover:bg-destructive/90'}`}
+                  onClick={handleConfirmWithdrawal}
+                  disabled={processWithdrawalMutation.isPending}
+                  data-testid="button-wd-confirm"
+                >
+                  {processWithdrawalMutation.isPending ? <Loader2 className="animate-spin" /> : withdrawalAction === 'approved' ? 'Confirm & Pay' : 'Reject Request'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
