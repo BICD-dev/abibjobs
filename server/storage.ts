@@ -143,10 +143,11 @@ export interface IStorage {
   getPendingScheduledPayments(): Promise<ScheduledPayment[]>;
   processScheduledPayment(id: number): Promise<void>;
 
-  // Lagos Addresses
+  // Nigeria Addresses
   searchAddresses(query: string): Promise<LagosAddress[]>;
   getAddressCount(): Promise<number>;
-  seedAddresses(addresses: { area: string; lga: string }[]): Promise<void>;
+  deleteAllAddresses(): Promise<void>;
+  seedAddresses(addresses: { area: string; lga: string; state: string }[]): Promise<void>;
 
   // Verification
   getPendingVerifications(): Promise<(Profile & { userName?: string; userEmail?: string })[]>;
@@ -965,8 +966,8 @@ export class DatabaseStorage implements IStorage {
     if (!query || query.length < 2) return [];
     const pattern = `%${query}%`;
     return await db.select().from(lagosAddresses)
-      .where(sql`${lagosAddresses.area} ILIKE ${pattern} OR ${lagosAddresses.lga} ILIKE ${pattern}`)
-      .limit(15);
+      .where(sql`${lagosAddresses.area} ILIKE ${pattern} OR ${lagosAddresses.lga} ILIKE ${pattern} OR ${lagosAddresses.state} ILIKE ${pattern}`)
+      .limit(20);
   }
 
   async getAddressCount(): Promise<number> {
@@ -974,7 +975,11 @@ export class DatabaseStorage implements IStorage {
     return Number(result[0]?.count || 0);
   }
 
-  async seedAddresses(addresses: { area: string; lga: string }[]): Promise<void> {
+  async deleteAllAddresses(): Promise<void> {
+    await db.delete(lagosAddresses);
+  }
+
+  async seedAddresses(addresses: { area: string; lga: string; state: string }[]): Promise<void> {
     const batchSize = 100;
     for (let i = 0; i < addresses.length; i += batchSize) {
       const batch = addresses.slice(i, i + batchSize);

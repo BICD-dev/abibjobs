@@ -6,6 +6,7 @@ interface AddressResult {
   id: number;
   area: string;
   lga: string;
+  state: string;
 }
 
 interface AddressAutocompleteProps {
@@ -59,7 +60,7 @@ export function AddressAutocomplete({ value, onChange, placeholder, className }:
   };
 
   const selectSuggestion = (item: AddressResult) => {
-    onChange(`${item.area}, ${item.lga}, Lagos`);
+    onChange(`${item.area}, ${item.lga}, ${item.state}`);
     setIsOpen(false);
     setSuggestions([]);
   };
@@ -87,7 +88,7 @@ export function AddressAutocomplete({ value, onChange, placeholder, className }:
         onChange={handleInputChange}
         onKeyDown={handleKeyDown}
         onFocus={() => { if (suggestions.length > 0) setIsOpen(true); }}
-        placeholder={placeholder || "Start typing an area in Lagos..."}
+        placeholder={placeholder || "Type an area, city or state in Nigeria..."}
         className={className}
         data-testid="input-location"
       />
@@ -103,7 +104,7 @@ export function AddressAutocomplete({ value, onChange, placeholder, className }:
             >
               <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
               <span className="text-foreground">{item.area}</span>
-              <span className="text-muted-foreground text-xs ml-auto">{item.lga}</span>
+              <span className="text-muted-foreground text-xs ml-auto">{item.lga}, {item.state}</span>
             </button>
           ))}
         </div>

@@ -193,6 +193,7 @@ export const lagosAddresses = pgTable("lagos_addresses", {
   id: serial("id").primaryKey(),
   area: text("area").notNull(),
   lga: text("lga").notNull(),
+  state: text("state").notNull().default("Lagos"),
 });
 
 export const siteVisits = pgTable("site_visits", {

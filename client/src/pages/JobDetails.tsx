@@ -18,7 +18,7 @@ import {
   Loader2, MapPin, Calendar, ArrowLeft, CheckCircle, Shield, Users, XCircle,
   MessageSquare, ArrowUpDown, Send, Check, X, AlertTriangle, Wallet,
   Flag, Scale, ArrowUpCircle, Image as ImageIcon, Navigation, Clock, MapPinCheck, UserX, Lock,
-  RefreshCw, Trash2, CalendarPlus, LocateFixed, Radio, Camera, ChevronLeft, ChevronRight
+  RefreshCw, Trash2, CalendarPlus, LocateFixed, Radio, Camera, ChevronLeft, ChevronRight, Phone
 } from "lucide-react";
 import { Dialog as LightboxDialog, DialogContent as LightboxContent } from "@/components/ui/dialog";
 import {
@@ -69,6 +69,20 @@ export default function JobDetails() {
   const { data: offersData, isLoading: offersLoading } = useOffers(id);
   const { data: disputeData, isLoading: disputeLoading } = useDisputeByJob(id);
   const { user } = useAuth();
+
+  // Contact info for in-app calling (other party's name & phone)
+  const canCall = !!(job?.status === 'in_progress' && (job?.workerProgress === 'on_the_way' || job?.workerProgress === 'at_location') && user);
+  const { data: contactInfo } = useQuery<{ name: string; phone: string; role: string } | null>({
+    queryKey: ['/api/jobs', id, 'contact'],
+    queryFn: async () => {
+      const res = await fetch(`/api/jobs/${id}/contact`, { credentials: 'include' });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: canCall,
+    staleTime: 60000,
+    retry: false,
+  });
 
   const { mutate: acceptJob, isPending: isAccepting } = useAcceptJob();
   const { mutate: completeJob, isPending: isCompleting } = useCompleteJob();
@@ -418,6 +432,18 @@ export default function JobDetails() {
                     Open in Maps ↗
                   </a>
                 </section>
+              )}
+
+              {/* Call Worker button — shown to poster when worker is en route */}
+              {isPoster && isInProgress && (job.workerProgress === 'on_the_way' || job.workerProgress === 'at_location') && contactInfo?.phone && (
+                <a
+                  href={`tel:${contactInfo.phone}`}
+                  className="flex items-center justify-center gap-3 w-full p-4 bg-green-600 hover:bg-green-700 active:bg-green-800 text-white rounded-2xl font-semibold text-base transition-colors shadow-md shadow-green-600/20"
+                  data-testid="button-call-worker"
+                >
+                  <Phone className="w-5 h-5" />
+                  Call Worker — {contactInfo.name}
+                </a>
               )}
 
               {/* Worker Live Location (for poster — shown as soon as worker is on the way) */}
@@ -792,6 +818,16 @@ export default function JobDetails() {
                                   workerProgress={job.workerProgress}
                                   onLocationUpdate={() => queryClientRef.invalidateQueries({ queryKey: ['/api/jobs/:id', id] })}
                                 />
+                                {contactInfo?.phone && (
+                                  <a
+                                    href={`tel:${contactInfo.phone}`}
+                                    className="flex items-center justify-center gap-2 w-full p-3 bg-green-600 hover:bg-green-700 active:bg-green-800 text-white rounded-xl font-semibold text-sm transition-colors"
+                                    data-testid="button-call-poster"
+                                  >
+                                    <Phone className="w-4 h-4" />
+                                    Call Job Poster — {contactInfo.name}
+                                  </a>
+                                )}
                               </div>
                             )}
                             {job.workerProgress === 'at_location' && (
