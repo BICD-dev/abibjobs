@@ -157,6 +157,50 @@ export async function registerRoutes(
     }
   });
 
+  app.post('/api/auth/forgot-password', async (req, res) => {
+    try {
+      const { email } = req.body;
+      if (!email) return res.status(400).json({ message: "Email is required" });
+
+      const user = await storage.getUserByEmail(email.toLowerCase().trim());
+      if (!user || user.authMethod !== 'manual') {
+        return res.json({ message: "If this email exists, a reset link has been generated below." });
+      }
+
+      const token = crypto.randomBytes(32).toString('hex');
+      const expiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+      await storage.setUserResetToken(email.toLowerCase().trim(), token, expiry);
+
+      res.json({ message: "Reset link generated.", resetToken: token });
+    } catch (err) {
+      console.error("Forgot password error:", err);
+      res.status(500).json({ message: "Something went wrong. Please try again." });
+    }
+  });
+
+  app.post('/api/auth/reset-password', async (req, res) => {
+    try {
+      const { token, newPassword } = req.body;
+      if (!token || !newPassword) return res.status(400).json({ message: "Token and new password are required" });
+      if (newPassword.length < 6) return res.status(400).json({ message: "Password must be at least 6 characters" });
+
+      const user = await storage.getUserByResetToken(token);
+      if (!user) return res.status(400).json({ message: "Invalid or expired reset link. Please request a new one." });
+      if (user.authMethod !== 'manual') return res.status(400).json({ message: "This account does not use password login." });
+      if (user.passwordResetExpiry && new Date(user.passwordResetExpiry) < new Date()) {
+        return res.status(400).json({ message: "Reset link has expired. Please request a new one." });
+      }
+
+      const hash = await bcrypt.hash(newPassword, 10);
+      await storage.updateUserPassword(user.id, hash);
+
+      res.json({ message: "Password reset successfully. You can now log in." });
+    } catch (err) {
+      console.error("Reset password error:", err);
+      res.status(500).json({ message: "Something went wrong. Please try again." });
+    }
+  });
+
   // --- JOBS ---
 
   app.get(api.jobs.list.path, async (req, res) => {
@@ -319,57 +363,100 @@ export async function registerRoutes(
   app.post(api.jobs.complete.path, isAuthenticated, async (req, res) => {
     const jobId = Number(req.params.id);
     const userId = (req.user as any).claims.sub;
-    
+
     const job = await storage.getJob(jobId);
     if (!job) return res.status(404).json({ message: "Job not found" });
-
-    if (job.posterId !== userId) {
-      return res.status(403).json({ message: "Only the poster can mark the job as completed" });
-    }
 
     if (job.status !== 'in_progress' || !job.workerId) {
       return res.status(400).json({ message: "Job is not in progress" });
     }
 
-    const price = parseFloat(job.price);
     const workerIds = job.workerId.split(',').filter(Boolean);
-    const totalEscrow = job.priceType === 'per_person' ? price * job.workersNeeded : price;
-    const fee = totalEscrow * 0.22;
-    const totalPayout = totalEscrow - fee;
-    const payoutPerWorker = totalPayout / workerIds.length;
+    const isPoster = job.posterId === userId;
+    const isWorker = workerIds.includes(userId);
 
-    for (const wId of workerIds) {
-      await storage.updateWalletBalance(wId, payoutPerWorker);
-      await storage.createTransaction({
-        userId: wId,
-        amount: payoutPerWorker.toFixed(2),
-        type: 'job_earning',
-        jobId: job.id
-      });
+    if (!isPoster && !isWorker) {
+      return res.status(403).json({ message: "Only the job poster or worker can mark this job as completed" });
     }
 
-    await storage.addPlatformEarning(fee, job.id, job.title);
+    let updateData: any = {};
+    if (isPoster) updateData.posterMarkedComplete = true;
+    if (isWorker) updateData.workerMarkedComplete = true;
 
-    const updated = await storage.updateJob(jobId, { status: 'completed', completedAt: new Date() });
+    const updatedJob = await storage.updateJob(jobId, updateData);
 
-    await storage.createAdminNotification({
-      adminId: 0,
-      title: 'Job Completed',
-      message: `"${job.title}" has been completed. Platform fee earned: ₦${fee.toFixed(2)}. Total payout to ${workerIds.length} worker(s): ₦${totalPayout.toFixed(2)}.`,
-      type: 'success'
-    });
+    const posterDone = isPoster ? true : !!job.posterMarkedComplete;
+    const workerDone = isWorker ? true : !!job.workerMarkedComplete;
 
-    for (const wId of workerIds) {
+    if (posterDone && workerDone) {
+      const price = parseFloat(job.price);
+      const totalEscrow = job.priceType === 'per_person' ? price * job.workersNeeded : price;
+      const fee = totalEscrow * 0.22;
+      const totalPayout = totalEscrow - fee;
+      const payoutPerWorker = totalPayout / workerIds.length;
+
+      for (const wId of workerIds) {
+        await storage.updateWalletBalance(wId, payoutPerWorker);
+        await storage.createTransaction({
+          userId: wId,
+          amount: payoutPerWorker.toFixed(2),
+          type: 'job_earning',
+          jobId: job.id
+        });
+      }
+
+      await storage.addPlatformEarning(fee, job.id, job.title);
+      const completed = await storage.updateJob(jobId, { status: 'completed', completedAt: new Date() });
+
+      await storage.createAdminNotification({
+        adminId: 0,
+        title: 'Job Completed',
+        message: `"${job.title}" has been completed. Platform fee earned: ₦${fee.toFixed(2)}. Total payout to ${workerIds.length} worker(s): ₦${totalPayout.toFixed(2)}.`,
+        type: 'success'
+      });
+
+      for (const wId of workerIds) {
+        storage.createNotification({
+          userId: wId,
+          title: 'Job Completed — Payment Received!',
+          message: `"${job.title}" is complete. ₦${payoutPerWorker.toLocaleString()} has been added to your wallet.`,
+          type: 'success',
+          jobId: job.id,
+        }).catch(() => {});
+      }
+
       storage.createNotification({
-        userId: wId,
-        title: 'Job Completed - Payment Received',
-        message: `"${job.title}" has been marked as completed. ₦${payoutPerWorker.toLocaleString()} has been added to your wallet.`,
+        userId: job.posterId,
+        title: 'Job Completed',
+        message: `"${job.title}" has been completed and payment released to the worker(s).`,
         type: 'success',
+        jobId: job.id,
+      }).catch(() => {});
+
+      return res.json({ ...completed, bothConfirmed: true });
+    }
+
+    if (isPoster && !workerDone) {
+      storage.createNotification({
+        userId: workerIds[0],
+        title: 'Job Completion Requested',
+        message: `The poster has marked "${job.title}" as complete. Please confirm completion to receive your payment.`,
+        type: 'info',
         jobId: job.id,
       }).catch(() => {});
     }
 
-    res.json(updated);
+    if (isWorker && !posterDone) {
+      storage.createNotification({
+        userId: job.posterId,
+        title: 'Worker Confirmed Completion',
+        message: `The worker has confirmed "${job.title}" is done. Please mark it as complete to release their payment.`,
+        type: 'info',
+        jobId: job.id,
+      }).catch(() => {});
+    }
+
+    return res.json({ ...updatedJob, bothConfirmed: false, posterMarkedComplete: posterDone, workerMarkedComplete: workerDone });
   });
 
   app.post(api.jobs.cancel.path, isAuthenticated, async (req, res) => {

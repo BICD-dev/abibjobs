@@ -51,6 +51,9 @@ export interface IStorage {
   // Manual Auth
   getUserByEmail(email: string): Promise<any | undefined>;
   createManualUser(data: { email: string; firstName: string; lastName: string; passwordHash: string }): Promise<any>;
+  setUserResetToken(email: string, token: string, expiry: Date): Promise<void>;
+  getUserByResetToken(token: string): Promise<any | undefined>;
+  updateUserPassword(userId: string, passwordHash: string): Promise<void>;
 
   // Profiles
   getProfile(userId: string): Promise<Profile | undefined>;
@@ -210,6 +213,23 @@ export class DatabaseStorage implements IStorage {
     }).returning();
     await db.insert(profiles).values({ userId: user.id });
     return user;
+  }
+
+  async setUserResetToken(email: string, token: string, expiry: Date): Promise<void> {
+    await db.update(users)
+      .set({ passwordResetToken: token, passwordResetExpiry: expiry })
+      .where(eq(users.email, email));
+  }
+
+  async getUserByResetToken(token: string): Promise<any | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.passwordResetToken, token));
+    return user;
+  }
+
+  async updateUserPassword(userId: string, passwordHash: string): Promise<void> {
+    await db.update(users)
+      .set({ passwordHash, passwordResetToken: null, passwordResetExpiry: null })
+      .where(eq(users.id, userId));
   }
 
   async getProfile(userId: string): Promise<Profile | undefined> {

@@ -7,9 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { Loader2, Mail, UserPlus, LogIn, ArrowLeft, Eye, EyeOff } from "lucide-react";
+import { Loader2, Mail, UserPlus, LogIn, ArrowLeft, Eye, EyeOff, KeyRound, Copy, CheckCircle2 } from "lucide-react";
 
-type AuthView = "choose" | "manual-signup" | "manual-login";
+type AuthView = "choose" | "manual-signup" | "manual-login" | "forgot-password";
 
 export default function AuthPage() {
   const [view, setView] = useState<AuthView>("choose");
@@ -46,7 +46,15 @@ export default function AuthPage() {
           <ManualLogin
             onBack={() => setView("choose")}
             onSwitchToSignup={() => setView("manual-signup")}
+            onForgotPassword={() => setView("forgot-password")}
             onSuccess={() => setLocation("/jobs")}
+          />
+        )}
+
+        {view === "forgot-password" && (
+          <ForgotPassword
+            onBack={() => setView("manual-login")}
+            onGoReset={() => setLocation("/reset-password")}
           />
         )}
       </div>
@@ -290,10 +298,12 @@ function ManualSignup({
 function ManualLogin({
   onBack,
   onSwitchToSignup,
+  onForgotPassword,
   onSuccess,
 }: {
   onBack: () => void;
   onSwitchToSignup: () => void;
+  onForgotPassword: () => void;
   onSuccess: () => void;
 }) {
   const [email, setEmail] = useState("");
@@ -383,13 +393,143 @@ function ManualLogin({
             Log In
           </Button>
 
-          <p className="text-center text-sm text-muted-foreground">
-            Don't have an account?{" "}
-            <button type="button" onClick={onSwitchToSignup} className="text-primary font-medium hover:underline" data-testid="link-switch-to-signup">
-              Sign up
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">
+              Don't have an account?{" "}
+              <button type="button" onClick={onSwitchToSignup} className="text-primary font-medium hover:underline" data-testid="link-switch-to-signup">
+                Sign up
+              </button>
+            </p>
+            <button type="button" onClick={onForgotPassword} className="text-sm text-muted-foreground hover:text-primary hover:underline" data-testid="link-forgot-password">
+              Forgot Password?
             </button>
-          </p>
+          </div>
         </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ForgotPassword({
+  onBack,
+  onGoReset,
+}: {
+  onBack: () => void;
+  onGoReset: () => void;
+}) {
+  const [email, setEmail] = useState("");
+  const [resetToken, setResetToken] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const { toast } = useToast();
+
+  const forgotMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/auth/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Request failed");
+      return data;
+    },
+    onSuccess: (data) => {
+      setResetToken(data.resetToken);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const resetLink = resetToken ? `${window.location.origin}/reset-password?token=${resetToken}` : "";
+
+  const copyLink = () => {
+    navigator.clipboard.writeText(resetLink).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-2">
+          <Button size="icon" variant="ghost" onClick={onBack} data-testid="button-back-forgot">
+            <ArrowLeft className="w-4 h-4" />
+          </Button>
+          <CardTitle className="text-xl">Forgot Password</CardTitle>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {resetToken ? (
+          <div className="space-y-4">
+            <div className="w-14 h-14 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center mx-auto">
+              <CheckCircle2 className="w-7 h-7 text-green-600" />
+            </div>
+            <p className="text-sm text-center text-muted-foreground">
+              Your password reset link is ready. Copy it and open it in your browser.
+            </p>
+            <div className="bg-muted rounded-lg p-3 break-all text-xs font-mono text-foreground select-all" data-testid="text-reset-link">
+              {resetLink}
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={copyLink}
+                data-testid="button-copy-reset-link"
+              >
+                {copied ? <CheckCircle2 className="w-4 h-4 mr-2 text-green-600" /> : <Copy className="w-4 h-4 mr-2" />}
+                {copied ? "Copied!" : "Copy Link"}
+              </Button>
+              <Button
+                className="flex-1"
+                onClick={onGoReset}
+                data-testid="button-open-reset"
+              >
+                <KeyRound className="w-4 h-4 mr-2" />
+                Reset Now
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <form
+            onSubmit={(e) => { e.preventDefault(); forgotMutation.mutate(); }}
+            className="space-y-4"
+          >
+            <p className="text-sm text-muted-foreground">
+              Enter your email address and we'll generate a password reset link for you.
+            </p>
+            <div className="space-y-2">
+              <Label htmlFor="forgot-email">Email Address</Label>
+              <Input
+                id="forgot-email"
+                type="email"
+                placeholder="you@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                data-testid="input-forgot-email"
+              />
+            </div>
+            <Button
+              type="submit"
+              className="w-full"
+              size="lg"
+              disabled={forgotMutation.isPending}
+              data-testid="button-submit-forgot"
+            >
+              {forgotMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <KeyRound className="w-4 h-4 mr-2" />}
+              Get Reset Link
+            </Button>
+            <p className="text-center text-sm text-muted-foreground">
+              Remember your password?{" "}
+              <button type="button" onClick={onBack} className="text-primary font-medium hover:underline" data-testid="link-back-login">
+                Log in
+              </button>
+            </p>
+          </form>
+        )}
       </CardContent>
     </Card>
   );

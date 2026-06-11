@@ -555,15 +555,28 @@ export default function JobDetails() {
                               </div>
                             )}
 
-                            <Button
-                              className="w-full h-12 text-lg bg-green-600 text-white rounded-xl shadow-lg shadow-green-600/20"
-                              onClick={() => completeJob(job.id)}
-                              disabled={isCompleting}
-                              data-testid="button-complete-job"
-                            >
-                              {isCompleting ? <Loader2 className="animate-spin mr-2" /> : <CheckCircle className="mr-2 h-5 w-5" />}
-                              Mark as Completed & Release Funds
-                            </Button>
+                            {job.posterMarkedComplete ? (
+                              <div className="flex items-center text-green-600 bg-green-50 dark:bg-green-950/30 p-3 rounded-xl border border-green-100 dark:border-green-900 text-sm" data-testid="text-poster-marked-complete">
+                                <CheckCircle className="w-4 h-4 mr-2 shrink-0" />
+                                You've confirmed completion. Waiting for the worker to confirm.
+                              </div>
+                            ) : (
+                              <Button
+                                className="w-full h-12 text-lg bg-green-600 text-white rounded-xl shadow-lg shadow-green-600/20"
+                                onClick={() => completeJob(job.id)}
+                                disabled={isCompleting}
+                                data-testid="button-complete-job"
+                              >
+                                {isCompleting ? <Loader2 className="animate-spin mr-2" /> : <CheckCircle className="mr-2 h-5 w-5" />}
+                                Mark as Completed & Release Funds
+                              </Button>
+                            )}
+                            {job.workerMarkedComplete && !job.posterMarkedComplete && (
+                              <div className="flex items-center text-amber-600 bg-amber-50 dark:bg-amber-950/30 p-3 rounded-xl border border-amber-100 dark:border-amber-900 text-sm" data-testid="text-worker-waiting-poster">
+                                <CheckCircle className="w-4 h-4 mr-2 shrink-0" />
+                                The worker has already confirmed — tap above to release their payment!
+                              </div>
+                            )}
                             {!confirmingNoShow ? (
                               noShowAvailability.canReport ? (
                                 <Button
@@ -818,10 +831,50 @@ export default function JobDetails() {
                                 )}
                               </div>
                             )}
+
+                            {/* Worker completion button — dual-confirmation */}
+                            {job.workerMarkedComplete ? (
+                              <div className="flex items-center text-green-600 bg-green-50 dark:bg-green-950/30 p-3 rounded-xl border border-green-100 dark:border-green-900 text-sm" data-testid="text-worker-marked-complete">
+                                <CheckCircle className="w-4 h-4 mr-2 shrink-0" />
+                                You marked this job as complete. Waiting for the poster to confirm.
+                              </div>
+                            ) : (
+                              <Button
+                                className="w-full h-12 text-lg bg-green-600 text-white rounded-xl shadow-lg shadow-green-600/20"
+                                onClick={() => completeJob(job.id)}
+                                disabled={isCompleting}
+                                data-testid="button-worker-complete-job"
+                              >
+                                {isCompleting ? <Loader2 className="animate-spin mr-2" /> : <CheckCircle className="mr-2 h-5 w-5" />}
+                                Mark Job as Done
+                              </Button>
+                            )}
+                            {job.posterMarkedComplete && !job.workerMarkedComplete && (
+                              <div className="flex items-center text-amber-600 bg-amber-50 dark:bg-amber-950/30 p-3 rounded-xl border border-amber-100 dark:border-amber-900 text-sm" data-testid="text-poster-waiting-worker">
+                                <CheckCircle className="w-4 h-4 mr-2 shrink-0" />
+                                The poster already confirmed — tap above to release your payment!
+                              </div>
+                            )}
                           </div>
                         ) : isWorker && isInProgress && workerIds.length > 1 ? (
-                          <div className="text-center p-4 bg-primary/10 rounded-xl text-primary font-medium border border-primary/20">
-                            You are working on this job. Waiting for client to confirm completion.
+                          <div className="space-y-3 p-4 bg-primary/10 rounded-xl border border-primary/20">
+                            <p className="text-primary font-medium text-center">You are working on this job.</p>
+                            {job.workerMarkedComplete ? (
+                              <div className="flex items-center text-green-600 bg-green-50 dark:bg-green-950/30 p-3 rounded-xl border border-green-100 dark:border-green-900 text-sm" data-testid="text-worker-marked-complete-multi">
+                                <CheckCircle className="w-4 h-4 mr-2 shrink-0" />
+                                You marked this job as complete. Waiting for the poster.
+                              </div>
+                            ) : (
+                              <Button
+                                className="w-full rounded-xl bg-green-600 text-white"
+                                onClick={() => completeJob(job.id)}
+                                disabled={isCompleting}
+                                data-testid="button-worker-complete-job-multi"
+                              >
+                                {isCompleting ? <Loader2 className="animate-spin mr-2" /> : <CheckCircle className="mr-2 h-4 w-4" />}
+                                Mark Job as Done
+                              </Button>
+                            )}
                           </div>
                         ) : !isOpen && !isWorker ? (
                           <div className="p-4 bg-blue-50 dark:bg-blue-950/30 rounded-xl border border-blue-100 dark:border-blue-900" data-testid="text-job-taken">

@@ -29,6 +29,7 @@ import AdminWithdrawalRequests from "@/pages/AdminWithdrawalRequests";
 import Notifications from "@/pages/Notifications";
 import MyJobs from "@/pages/MyJobs";
 import NotFound from "@/pages/not-found";
+import ResetPassword from "@/pages/ResetPassword";
 import { SupportChat } from "@/components/SupportChat";
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
@@ -61,6 +62,7 @@ function Router() {
     <Switch>
       <Route path="/" component={Home} />
       <Route path="/auth" component={AuthPage} />
+      <Route path="/reset-password" component={ResetPassword} />
       
       <Route path="/jobs">
         {() => <ProtectedRoute component={Jobs} />}

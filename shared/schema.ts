@@ -40,6 +40,8 @@ export const jobs = pgTable("jobs", {
   images: text("images").array(),
   workerProgress: text("worker_progress"),
   posterConfirmedArrival: boolean("poster_confirmed_arrival").default(false),
+  posterMarkedComplete: boolean("poster_marked_complete").default(false),
+  workerMarkedComplete: boolean("worker_marked_complete").default(false),
   latitude: numeric("latitude", { precision: 10, scale: 7 }),
   longitude: numeric("longitude", { precision: 10, scale: 7 }),
   workerLatitude: numeric("worker_latitude", { precision: 10, scale: 7 }),
