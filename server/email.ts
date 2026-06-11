@@ -234,25 +234,3 @@ export async function sendWithdrawalEmail(to: string, name: string, amount: numb
   );
   await send(to, `Withdrawal of ${fmt(amount)} requested`, body);
 }
-
-export async function sendWithdrawalVerificationCodeEmail(to: string, name: string, code: string, amount: number, bankName: string, accountNumber: string) {
-  const codeBox = `<div style="margin:24px 0;text-align:center;">
-    <div style="display:inline-block;background:#f0fdf4;border:2px dashed #16a34a;border-radius:12px;padding:18px 36px;">
-      <span style="color:#166534;font-size:34px;font-weight:800;letter-spacing:10px;font-family:'Courier New',monospace;">${code}</span>
-    </div>
-  </div>`;
-  const body = wrap("Verify Your Withdrawal",
-    heading("Verify Your Withdrawal") +
-    para(`Hi ${name}, you requested a withdrawal of <strong>${fmt(amount)}</strong> to a new bank account. For your security, this request must be verified before it can be approved.`) +
-    table(
-      infoBox("Bank", bankName),
-      infoBox("Account Number", accountNumber),
-      infoBox("Amount", fmt(amount)),
-    ) +
-    para("Your verification code is:") +
-    codeBox +
-    para("Share this code with our support team <strong>only</strong> when you are confirming this withdrawal. They will enter it to approve your request.") +
-    `<p style="color:#b91c1c;font-size:13px;margin-top:16px;">If you did NOT request this withdrawal, do not share this code with anyone and contact support immediately.</p>`
-  );
-  await send(to, `Your ABIB JOBS withdrawal verification code: ${code}`, body);
-}

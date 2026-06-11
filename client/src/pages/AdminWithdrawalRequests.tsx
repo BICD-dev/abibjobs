@@ -5,13 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, CheckCircle2, XCircle, Clock, ArrowDownToLine, Building2, User, AlertCircle, ShieldCheck, Mail } from "lucide-react";
+import { Loader2, CheckCircle2, XCircle, Clock, ArrowDownToLine, Building2, User, AlertCircle } from "lucide-react";
 import { format } from "date-fns";
 import { useAdminAuth } from "@/hooks/use-admin-auth";
 import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
 
 interface WithdrawalRequest {
   id: number;
@@ -45,7 +45,6 @@ export default function AdminWithdrawalRequests() {
   const [selectedRequest, setSelectedRequest] = useState<WithdrawalRequest | null>(null);
   const [action, setAction] = useState<'approved' | 'rejected' | null>(null);
   const [adminNote, setAdminNote] = useState("");
-  const [code, setCode] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
 
   const { data: requests = [], isLoading } = useQuery<WithdrawalRequest[]>({
@@ -59,15 +58,13 @@ export default function AdminWithdrawalRequests() {
   });
 
   const { mutate: processRequest, isPending: isProcessing } = useMutation({
-    mutationFn: async ({ id, action, adminNote, code }: { id: number; action: string; adminNote: string; code: string }) => {
-      const res = await fetch(`/api/admin/withdrawal-requests/${id}/process`, {
+    mutationFn: async ({ id, action, adminNote }: { id: number; action: string; adminNote: string }) => {
+      const res = await apiRequest(`/api/admin/withdrawal-requests/${id}/process`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, adminNote, code }),
-        credentials: 'include',
+        body: JSON.stringify({ action, adminNote }),
       });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
+        const err = await res.json();
         throw new Error(err.message || 'Failed to process request');
       }
       return res.json();
@@ -77,7 +74,6 @@ export default function AdminWithdrawalRequests() {
       setDialogOpen(false);
       setSelectedRequest(null);
       setAdminNote("");
-      setCode("");
       toast({
         title: vars.action === 'approved' ? 'Request Approved' : 'Request Rejected',
         description: vars.action === 'approved'
@@ -90,43 +86,16 @@ export default function AdminWithdrawalRequests() {
     },
   });
 
-  const { mutate: resendCode, isPending: isResending } = useMutation({
-    mutationFn: async (id: number) => {
-      const res = await fetch(`/api/admin/withdrawal-requests/${id}/resend-code`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-        credentials: 'include',
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.message || 'Failed to resend code');
-      }
-      return res.json();
-    },
-    onSuccess: () => {
-      toast({ title: 'Code Sent', description: "A fresh verification code has been emailed to the user. Ask them for the new code." });
-    },
-    onError: (err: Error) => {
-      toast({ title: 'Error', description: err.message, variant: 'destructive' });
-    },
-  });
-
   const openDialog = (request: WithdrawalRequest, act: 'approved' | 'rejected') => {
     setSelectedRequest(request);
     setAction(act);
     setAdminNote("");
-    setCode("");
     setDialogOpen(true);
   };
 
   const handleConfirm = () => {
     if (!selectedRequest || !action) return;
-    if (action === 'approved' && !code.trim()) {
-      toast({ title: 'Verification code required', description: "Enter the code the user received by email before approving.", variant: 'destructive' });
-      return;
-    }
-    processRequest({ id: selectedRequest.id, action, adminNote, code: code.trim() });
+    processRequest({ id: selectedRequest.id, action, adminNote });
   };
 
   if (authLoading) return (
@@ -289,41 +258,10 @@ export default function AdminWithdrawalRequests() {
               </div>
 
               {action === 'approved' && (
-                <>
-                  <div className="flex items-start gap-2 p-3 bg-amber-50 dark:bg-amber-950/30 rounded-xl text-sm text-amber-700 dark:text-amber-400">
-                    <ShieldCheck className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                    <p>A verification code was emailed to this user. Ask them for the code and enter it below — it must match before you can approve.</p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Verification code <span className="text-destructive">*</span></label>
-                    <Input
-                      inputMode="numeric"
-                      autoComplete="off"
-                      placeholder="Enter the 6-digit code from the user"
-                      value={code}
-                      onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                      className="rounded-xl text-center text-lg tracking-[0.4em] font-mono"
-                      maxLength={6}
-                      data-testid="input-verification-code"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => resendCode(selectedRequest.id)}
-                      disabled={isResending}
-                      className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline disabled:opacity-50"
-                      data-testid="button-resend-code"
-                    >
-                      {isResending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Mail className="w-3 h-3" />}
-                      Resend code to user's email
-                    </button>
-                  </div>
-
-                  <div className="flex items-start gap-2 p-3 bg-green-50 dark:bg-green-950/30 rounded-xl text-sm text-green-700 dark:text-green-400">
-                    <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                    <p>This will deduct N{parseFloat(selectedRequest.amount).toLocaleString()} from the user's wallet and record it as a withdrawal transaction.</p>
-                  </div>
-                </>
+                <div className="flex items-start gap-2 p-3 bg-green-50 dark:bg-green-950/30 rounded-xl text-sm text-green-700 dark:text-green-400">
+                  <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <p>This will deduct N{parseFloat(selectedRequest.amount).toLocaleString()} from the user's wallet and record it as a withdrawal transaction.</p>
+                </div>
               )}
 
               <div className="space-y-2">
@@ -350,7 +288,7 @@ export default function AdminWithdrawalRequests() {
                 <Button
                   className={`flex-1 rounded-xl text-white ${action === 'approved' ? 'bg-green-600 hover:bg-green-700' : 'bg-destructive hover:bg-destructive/90'}`}
                   onClick={handleConfirm}
-                  disabled={isProcessing || (action === 'approved' && code.trim().length < 6)}
+                  disabled={isProcessing}
                   data-testid="button-confirm-process"
                 >
                   {isProcessing ? <Loader2 className="animate-spin" /> : action === 'approved' ? 'Confirm & Pay' : 'Reject Request'}
