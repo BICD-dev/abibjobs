@@ -1,3 +1,1 @@
-- [Dev vs Prod database](dev-vs-prod-database.md) — published app uses a SEPARATE prod DB (read-only to tools); dev-side fixes do NOT reach production; app uses bcryptjs not bcrypt.
-- [WebSocket + Vite HMR](websocket-vite-hmr.md) — never `new WebSocketServer({server})` (kills HMR); use noServer + path-scoped httpServer.on(upgrade), destroy stray upgrades only in prod.
-- [Live UI needs polling](live-data-no-autorefetch.md) — global react-query disables all auto-refetch (staleTime Infinity, no interval/focus); cross-user live UIs MUST add explicit refetchInterval.
+- [Dependency security fixes](dependency-security-fixes.md) — uuid fixed via global override (not storage downgrade); drizzle 0.39→0.45 SQL-injection bump safe because no dynamic SQL identifiers.
