@@ -1822,8 +1822,8 @@ export async function registerRoutes(
 
       await storage.createNotification({
         userId: parsed.data.workerId,
-        title: 'Dispute Filed Against You',
-        message: `The poster has filed a dispute for job "${job.title}". Please review and respond in the job details.`,
+        title: 'A Concern Has Been Raised',
+        message: `The poster has raised a concern about job "${job.title}". Please review and respond in the job details.`,
         type: 'warning',
         jobId: job.id,
       });
@@ -1969,6 +1969,38 @@ export async function registerRoutes(
           proposedAmount: parsed.data.amount!.toFixed(2),
         });
       }
+
+      // Notify the other party about the new message
+      try {
+        const disputeJob = await storage.getJob(dispute.jobId);
+        const jobTitle = disputeJob?.title || 'a job';
+        if (isAdminUser) {
+          // Admin message — notify both poster and worker
+          const notifMsg = `An admin has sent a message in the dispute for "${jobTitle}".`;
+          await storage.createNotification({ userId: dispute.posterId, title: 'Admin Message in Dispute', message: notifMsg, type: 'info', jobId: dispute.jobId });
+          await storage.createNotification({ userId: dispute.workerId, title: 'Admin Message in Dispute', message: notifMsg, type: 'info', jobId: dispute.jobId });
+        } else if (userId === dispute.posterId) {
+          // Poster sent a message — notify worker
+          const msgLabel = parsed.data.type === 'proposal' ? 'made a settlement proposal' : 'sent a message';
+          await storage.createNotification({
+            userId: dispute.workerId,
+            title: 'New Message in Your Dispute',
+            message: `The job poster ${msgLabel} in the dispute for "${jobTitle}". Open the job to respond.`,
+            type: 'warning',
+            jobId: dispute.jobId,
+          });
+        } else if (userId === dispute.workerId) {
+          // Worker sent a message — notify poster
+          const msgLabel = parsed.data.type === 'proposal' ? 'made a settlement proposal' : 'sent a message';
+          await storage.createNotification({
+            userId: dispute.posterId,
+            title: 'New Message in Your Dispute',
+            message: `The worker ${msgLabel} in the dispute for "${jobTitle}". Open the job to respond.`,
+            type: 'warning',
+            jobId: dispute.jobId,
+          });
+        }
+      } catch (e) {}
 
       const full = await storage.getDispute(disputeId);
       res.status(201).json(full);
