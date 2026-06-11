@@ -7,6 +7,7 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { setupAuth, isAuthenticated, registerAuthRoutes } from "./replit_integrations/auth";
 import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
+import { setupCallSignaling } from "./call";
 import { db } from "./db";
 import { users } from "@shared/schema";
 import { eq } from "drizzle-orm";
@@ -77,6 +78,9 @@ export async function registerRoutes(
   
   // Setup Object Storage
   registerObjectStorageRoutes(app);
+
+  // Setup in-app voice call signaling (WebSocket on /ws/call)
+  setupCallSignaling(httpServer);
 
   // Helper to ensure profile exists for logged-in user
   const ensureProfile = async (req: any, res: any, next: any) => {
@@ -1377,6 +1381,56 @@ export async function registerRoutes(
       console.error("Contact route error:", e);
       res.status(500).json({ message: "Internal server error" });
     }
+  });
+
+  // Returns the other party/parties (userId + display name) for an in-app call.
+  // Unlike /contact, this does NOT depend on a phone number, so the call button
+  // is always available to both poster and worker(s).
+  app.get('/api/jobs/:id/call-peers', isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
+      const jobId = Number(req.params.id);
+      const job = await storage.getJob(jobId);
+      if (!job) return res.status(404).json({ message: "Job not found" });
+
+      const workerIds = job.workerId ? job.workerId.split(',').map(s => s.trim()).filter(Boolean) : [];
+      const isPoster = job.posterId === userId;
+      const isWorker = workerIds.includes(userId);
+      if (!isPoster && !isWorker) return res.status(403).json({ message: "Not authorized" });
+
+      const peers: { userId: string; name: string; role: string }[] = [];
+      if (isPoster) {
+        for (const wid of workerIds) {
+          const u = await storage.getUser(wid);
+          const name = u?.name || (u?.firstName ? `${u.firstName} ${u.lastName || ''}`.trim() : 'Worker');
+          peers.push({ userId: wid, name, role: 'worker' });
+        }
+      } else {
+        const u = await storage.getUser(job.posterId);
+        const name = u?.name || (u?.firstName ? `${u.firstName} ${u.lastName || ''}`.trim() : 'Job Poster');
+        peers.push({ userId: job.posterId, name, role: 'poster' });
+      }
+      res.json(peers);
+    } catch (e) {
+      console.error("Call peers route error:", e);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // ICE servers for WebRTC. STUN is always available; TURN is added only when
+  // configured via env (never exposed as VITE_ vars so creds stay server-side).
+  app.get('/api/call/ice-servers', isAuthenticated, (_req, res) => {
+    const iceServers: any[] = [
+      { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+    ];
+    if (process.env.TURN_URL && process.env.TURN_USERNAME && process.env.TURN_CREDENTIAL) {
+      iceServers.push({
+        urls: process.env.TURN_URL,
+        username: process.env.TURN_USERNAME,
+        credential: process.env.TURN_CREDENTIAL,
+      });
+    }
+    res.json({ iceServers });
   });
 
   // --- OFFERS ---

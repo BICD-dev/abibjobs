@@ -26,6 +26,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
+import { useCall } from "@/components/CallProvider";
 import { format } from "date-fns";
 import type { OfferWithSender, DisputeMessageWithSender } from "@shared/schema";
 
@@ -70,13 +71,15 @@ export default function JobDetails() {
   const { data: disputeData, isLoading: disputeLoading } = useDisputeByJob(id);
   const { user } = useAuth();
 
-  // Contact info for in-app calling (other party's name & phone)
+  // In-app voice calling — resolve the other party (poster <-> worker[s]) for
+  // this job. Phone number is NOT required, so the button shows for both sides.
+  const { startCall } = useCall();
   const canCall = !!(job?.status === 'in_progress' && (job?.workerProgress === 'on_the_way' || job?.workerProgress === 'at_location') && user);
-  const { data: contactInfo } = useQuery<{ name: string; phone: string; role: string } | null>({
-    queryKey: ['/api/jobs', id, 'contact'],
+  const { data: callPeers } = useQuery<{ userId: string; name: string; role: string }[]>({
+    queryKey: ['/api/jobs', id, 'call-peers'],
     queryFn: async () => {
-      const res = await fetch(`/api/jobs/${id}/contact`, { credentials: 'include' });
-      if (!res.ok) return null;
+      const res = await fetch(`/api/jobs/${id}/call-peers`, { credentials: 'include' });
+      if (!res.ok) return [];
       return res.json();
     },
     enabled: canCall,
@@ -434,16 +437,22 @@ export default function JobDetails() {
                 </section>
               )}
 
-              {/* Call Worker button — shown to poster when worker is en route */}
-              {isPoster && isInProgress && (job.workerProgress === 'on_the_way' || job.workerProgress === 'at_location') && contactInfo?.phone && (
-                <a
-                  href={`tel:${contactInfo.phone}`}
-                  className="flex items-center justify-center gap-3 w-full p-4 bg-green-600 hover:bg-green-700 active:bg-green-800 text-white rounded-2xl font-semibold text-base transition-colors shadow-md shadow-green-600/20"
-                  data-testid="button-call-worker"
-                >
-                  <Phone className="w-5 h-5" />
-                  Call Worker — {contactInfo.name}
-                </a>
+              {/* In-app call button(s) — shown to poster when worker is en route.
+                  One button per accepted worker (multi-worker jobs). */}
+              {isPoster && isInProgress && (job.workerProgress === 'on_the_way' || job.workerProgress === 'at_location') && callPeers && callPeers.length > 0 && (
+                <div className="space-y-2">
+                  {callPeers.map((p) => (
+                    <button
+                      key={p.userId}
+                      onClick={() => startCall({ userId: p.userId, name: p.name }, job.id)}
+                      className="flex items-center justify-center gap-3 w-full p-4 bg-green-600 hover:bg-green-700 active:bg-green-800 text-white rounded-2xl font-semibold text-base transition-colors shadow-md shadow-green-600/20"
+                      data-testid={`button-call-worker-${p.userId}`}
+                    >
+                      <Phone className="w-5 h-5" />
+                      Call {p.name}
+                    </button>
+                  ))}
+                </div>
               )}
 
               {/* Worker Live Location (for poster — shown as soon as worker is on the way) */}
@@ -818,15 +827,15 @@ export default function JobDetails() {
                                   workerProgress={job.workerProgress}
                                   onLocationUpdate={() => queryClientRef.invalidateQueries({ queryKey: ['/api/jobs/:id', id] })}
                                 />
-                                {contactInfo?.phone && (
-                                  <a
-                                    href={`tel:${contactInfo.phone}`}
+                                {callPeers && callPeers.length > 0 && (
+                                  <button
+                                    onClick={() => startCall({ userId: callPeers[0].userId, name: callPeers[0].name }, job.id)}
                                     className="flex items-center justify-center gap-2 w-full p-3 bg-green-600 hover:bg-green-700 active:bg-green-800 text-white rounded-xl font-semibold text-sm transition-colors"
                                     data-testid="button-call-poster"
                                   >
                                     <Phone className="w-4 h-4" />
-                                    Call Job Poster — {contactInfo.name}
-                                  </a>
+                                    Call Job Poster — {callPeers[0].name}
+                                  </button>
                                 )}
                               </div>
                             )}

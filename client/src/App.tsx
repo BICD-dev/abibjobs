@@ -35,6 +35,7 @@ import MyJobs from "@/pages/MyJobs";
 import NotFound from "@/pages/not-found";
 import ResetPassword from "@/pages/ResetPassword";
 import { SupportChat } from "@/components/SupportChat";
+import { CallProvider } from "@/components/CallProvider";
 
 // Redirects OIDC (non-manual) new users to /verify once per browser session.
 // Manual-signup users are already redirected inline on the AuthPage.
@@ -153,12 +154,14 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <Toaster />
-        <AdminPingTracker />
-        <VisitorTracker />
-        <OidcVerifyGuard />
-        <Router />
-        <SupportChat />
+        <CallProvider>
+          <Toaster />
+          <AdminPingTracker />
+          <VisitorTracker />
+          <OidcVerifyGuard />
+          <Router />
+          <SupportChat />
+        </CallProvider>
       </TooltipProvider>
     </QueryClientProvider>
   );
