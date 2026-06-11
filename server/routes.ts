@@ -2033,6 +2033,56 @@ export async function registerRoutes(
       if (!job) return res.status(404).json({ message: "Job not found" });
 
       const resolvedAmount = parseFloat(dispute.proposedAmount);
+
+      await storage.createDisputeMessage({
+        disputeId,
+        senderId: userId,
+        message: `Accepted the proposed amount of \u20A6${resolvedAmount.toLocaleString()}. Waiting for poster to confirm payment.`,
+        type: 'acceptance',
+        amount: resolvedAmount.toFixed(2),
+      });
+
+      await storage.updateDispute(disputeId, { status: 'awaiting_payment' });
+
+      await storage.createNotification({
+        userId: dispute.posterId,
+        title: 'Worker Accepted Your Proposal',
+        message: `The worker agreed to your proposed price of \u20A6${resolvedAmount.toLocaleString()} for "${job.title}". Please confirm payment to release funds.`,
+        type: 'info',
+        jobId: dispute.jobId,
+      });
+
+      const full = await storage.getDispute(disputeId);
+      res.json(full);
+    } catch (err) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post('/api/disputes/:id/confirm-payment', isAuthenticated, async (req, res) => {
+    try {
+      const disputeId = Number(req.params.id);
+      const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
+
+      const dispute = await storage.getDispute(disputeId);
+      if (!dispute) return res.status(404).json({ message: "Dispute not found" });
+
+      if (dispute.posterId !== userId) {
+        return res.status(403).json({ message: "Only the job poster can confirm payment" });
+      }
+
+      if (dispute.status !== 'awaiting_payment') {
+        return res.status(400).json({ message: "This dispute is not awaiting payment confirmation" });
+      }
+
+      if (!dispute.proposedAmount) {
+        return res.status(400).json({ message: "No agreed amount found" });
+      }
+
+      const job = await storage.getJob(dispute.jobId);
+      if (!job) return res.status(404).json({ message: "Job not found" });
+
+      const resolvedAmount = parseFloat(dispute.proposedAmount);
       const originalPrice = job.priceType === 'per_person' ? parseFloat(job.price) * job.workersNeeded : parseFloat(job.price);
       const fee = resolvedAmount * 0.22;
       const workerPayout = resolvedAmount - fee;
@@ -2066,8 +2116,8 @@ export async function registerRoutes(
       await storage.createDisputeMessage({
         disputeId,
         senderId: userId,
-        message: `Accepted the proposed amount of \u20A6${resolvedAmount.toLocaleString()}`,
-        type: 'acceptance',
+        message: `Payment confirmed. \u20A6${resolvedAmount.toLocaleString()} released to worker (platform fee: \u20A6${fee.toFixed(2)}).`,
+        type: 'system',
         amount: resolvedAmount.toFixed(2),
       });
 
@@ -2079,10 +2129,18 @@ export async function registerRoutes(
 
       await storage.updateJob(dispute.jobId, { status: 'completed', completedAt: new Date() });
 
+      await storage.createNotification({
+        userId: dispute.workerId,
+        title: 'Payment Released!',
+        message: `The poster confirmed payment of \u20A6${workerPayout.toFixed(2)} for "${job.title}" has been added to your wallet.`,
+        type: 'success',
+        jobId: dispute.jobId,
+      });
+
       await storage.createAdminNotification({
         adminId: 0,
         title: 'Dispute Resolved - Job Completed',
-        message: `"${job.title}" completed via dispute resolution. Resolved amount: ₦${resolvedAmount.toLocaleString()}. Platform fee: ₦${fee.toFixed(2)}.`,
+        message: `"${job.title}" completed via dispute resolution. Resolved amount: \u20A6${resolvedAmount.toLocaleString()}. Platform fee: \u20A6${fee.toFixed(2)}.`,
         type: 'success'
       });
 

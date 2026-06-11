@@ -135,6 +135,35 @@ export function useAcceptProposal() {
   });
 }
 
+export function useConfirmDisputePayment() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async ({ disputeId, jobId }: { disputeId: number; jobId: number }) => {
+      const res = await fetch(`/api/disputes/${disputeId}/confirm-payment`, {
+        method: 'POST',
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || "Failed to confirm payment");
+      }
+      return res.json();
+    },
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/jobs', vars.jobId, 'dispute'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/disputes', vars.disputeId] });
+      queryClient.invalidateQueries({ queryKey: [api.jobs.get.path, vars.jobId] });
+      queryClient.invalidateQueries({ queryKey: [api.wallet.get.path] });
+      toast({ title: "Payment Confirmed", description: "Funds have been released to the worker." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+}
+
 export function useEscalateDispute() {
   const queryClient = useQueryClient();
   const { toast } = useToast();

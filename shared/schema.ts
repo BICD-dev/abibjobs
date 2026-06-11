@@ -316,7 +316,7 @@ export type CreateOfferInput = z.infer<typeof createOfferSchema>;
 
 export type UserRole = "user" | "admin";
 export type JobStatus = "open" | "in_progress" | "completed" | "cancelled" | "disputed";
-export type DisputeStatus = "open" | "negotiating" | "escalated" | "resolved";
+export type DisputeStatus = "open" | "negotiating" | "escalated" | "awaiting_payment" | "resolved";
 
 // === API CONTRACT TYPES ===
 

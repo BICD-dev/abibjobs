@@ -4,7 +4,7 @@ import WorkerLocationTracker from "@/components/WorkerLocationTracker";
 import { useRoute, useLocation } from "wouter";
 import { useJob, useAcceptJob, useCompleteJob, useCancelJob, useUpdateJobProgress, useConfirmArrival, useReportNoShow } from "@/hooks/use-jobs";
 import { useOffers, useCreateOffer, useAcceptOffer, useDeclineOffer, useCounterOffer } from "@/hooks/use-offers";
-import { useDisputeByJob, useCreateDispute, useDisputeMessage, useAcceptProposal, useEscalateDispute, useUploadDisputeImage } from "@/hooks/use-disputes";
+import { useDisputeByJob, useCreateDispute, useDisputeMessage, useAcceptProposal, useConfirmDisputePayment, useEscalateDispute, useUploadDisputeImage } from "@/hooks/use-disputes";
 import { useAuth } from "@/hooks/use-auth";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Navbar } from "@/components/Navbar";
@@ -87,6 +87,7 @@ export default function JobDetails() {
   const { mutate: sendDisputeMessage, isPending: isSendingMessage } = useDisputeMessage();
   const { mutateAsync: uploadDisputeImage, isPending: isUploadingImage } = useUploadDisputeImage();
   const { mutate: acceptProposal, isPending: isAcceptingProposal } = useAcceptProposal();
+  const { mutate: confirmDisputePayment, isPending: isConfirmingPayment } = useConfirmDisputePayment();
   const { mutate: escalateDispute, isPending: isEscalating } = useEscalateDispute();
 
   const [offerAmount, setOfferAmount] = useState("");
@@ -273,6 +274,7 @@ export default function JobDetails() {
     switch (status) {
       case 'open': return <Badge variant="outline" className="text-amber-600 border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-400">Open</Badge>;
       case 'negotiating': return <Badge variant="outline" className="text-blue-600 border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-800 dark:text-blue-400">Negotiating</Badge>;
+      case 'awaiting_payment': return <Badge variant="outline" className="text-purple-600 border-purple-200 bg-purple-50 dark:bg-purple-950/30 dark:border-purple-800 dark:text-purple-400">Awaiting Payment</Badge>;
       case 'escalated': return <Badge variant="outline" className="text-red-600 border-red-200 bg-red-50 dark:bg-red-950/30 dark:border-red-800 dark:text-red-400">Escalated to Admin</Badge>;
       case 'resolved': return <Badge variant="outline" className="text-green-600 border-green-200 bg-green-50 dark:bg-green-950/30 dark:border-green-800 dark:text-green-400">Resolved</Badge>;
       default: return null;
@@ -998,119 +1000,169 @@ export default function JobDetails() {
 
                   {dispute.status !== 'resolved' && (
                     <div className="space-y-3">
-                      {dispute.proposedAmount && dispute.workerId === user?.id && dispute.status === 'negotiating' && (
-                        <Card className="p-4 border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-800">
-                          <div className="flex items-start gap-3">
-                            <Scale className="w-5 h-5 text-blue-600 mt-0.5 shrink-0" />
-                            <div className="space-y-2 w-full">
-                              <p className="font-medium text-blue-800 dark:text-blue-200">Price Proposal</p>
-                              <p className="text-sm text-blue-700 dark:text-blue-300">
-                                The poster is proposing {"\u20A6"}{Number(dispute.proposedAmount).toLocaleString()} instead of the original {"\u20A6"}{Number(job.price).toLocaleString()}.
-                              </p>
-                              <div className="flex flex-wrap gap-2">
-                                <Button
-                                  size="sm"
-                                  className="bg-green-600 text-white"
-                                  onClick={() => acceptProposal({ disputeId: dispute.id, jobId: job.id })}
-                                  disabled={isAcceptingProposal}
-                                  data-testid="button-accept-proposal"
-                                >
-                                  {isAcceptingProposal ? <Loader2 className="animate-spin mr-1 h-3 w-3" /> : <Check className="mr-1 h-3 w-3" />}
-                                  Accept Proposal
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => escalateDispute({ disputeId: dispute.id, jobId: job.id })}
-                                  disabled={isEscalating}
-                                  data-testid="button-escalate-from-proposal"
-                                >
-                                  <ArrowUpCircle className="mr-1 h-3 w-3" />
-                                  Escalate to Admin
-                                </Button>
+                      {/* ── AWAITING PAYMENT STATE ── */}
+                      {dispute.status === 'awaiting_payment' && dispute.proposedAmount && (
+                        <>
+                          {/* Worker view: waiting */}
+                          {dispute.workerId === user?.id && (
+                            <Card className="p-4 border-purple-200 bg-purple-50 dark:bg-purple-950/30 dark:border-purple-800">
+                              <div className="flex items-start gap-3">
+                                <Loader2 className="w-5 h-5 text-purple-600 mt-0.5 shrink-0 animate-spin" />
+                                <div>
+                                  <p className="font-medium text-purple-800 dark:text-purple-200">Agreement Reached!</p>
+                                  <p className="text-sm text-purple-700 dark:text-purple-300 mt-1">
+                                    You accepted {"\u20A6"}{Number(dispute.proposedAmount).toLocaleString()}. Waiting for the poster to confirm payment and release your funds.
+                                  </p>
+                                </div>
                               </div>
+                            </Card>
+                          )}
+                          {/* Poster view: confirm payment */}
+                          {isPoster && (
+                            <Card className="p-4 border-green-200 bg-green-50 dark:bg-green-950/30 dark:border-green-800">
+                              <div className="flex items-start gap-3">
+                                <Check className="w-5 h-5 text-green-600 mt-0.5 shrink-0" />
+                                <div className="space-y-3 w-full">
+                                  <div>
+                                    <p className="font-medium text-green-800 dark:text-green-200">Worker Accepted Your Proposal</p>
+                                    <p className="text-sm text-green-700 dark:text-green-300 mt-1">
+                                      The worker agreed to {"\u20A6"}{Number(dispute.proposedAmount).toLocaleString()}. Confirm payment to release funds from escrow.
+                                    </p>
+                                  </div>
+                                  <Button
+                                    className="bg-green-600 hover:bg-green-700 text-white w-full sm:w-auto"
+                                    onClick={() => confirmDisputePayment({ disputeId: dispute.id, jobId: job.id })}
+                                    disabled={isConfirmingPayment}
+                                    data-testid="button-confirm-dispute-payment"
+                                  >
+                                    {isConfirmingPayment ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : <Check className="mr-2 h-4 w-4" />}
+                                    Confirm Payment of {"\u20A6"}{Number(dispute.proposedAmount).toLocaleString()}
+                                  </Button>
+                                </div>
+                              </div>
+                            </Card>
+                          )}
+                        </>
+                      )}
+
+                      {/* ── ACTIVE CHAT (not awaiting_payment) ── */}
+                      {dispute.status !== 'awaiting_payment' && (
+                        <>
+                          {dispute.proposedAmount && dispute.workerId === user?.id && dispute.status === 'negotiating' && (
+                            <Card className="p-4 border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-800">
+                              <div className="flex items-start gap-3">
+                                <Scale className="w-5 h-5 text-blue-600 mt-0.5 shrink-0" />
+                                <div className="space-y-2 w-full">
+                                  <p className="font-medium text-blue-800 dark:text-blue-200">Price Proposal</p>
+                                  <p className="text-sm text-blue-700 dark:text-blue-300">
+                                    The poster is proposing {"\u20A6"}{Number(dispute.proposedAmount).toLocaleString()} instead of the original {"\u20A6"}{Number(job.price).toLocaleString()}.
+                                  </p>
+                                  <div className="flex flex-wrap gap-2">
+                                    <Button
+                                      size="sm"
+                                      className="bg-green-600 text-white"
+                                      onClick={() => acceptProposal({ disputeId: dispute.id, jobId: job.id })}
+                                      disabled={isAcceptingProposal}
+                                      data-testid="button-accept-proposal"
+                                    >
+                                      {isAcceptingProposal ? <Loader2 className="animate-spin mr-1 h-3 w-3" /> : <Check className="mr-1 h-3 w-3" />}
+                                      Accept Proposal
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => escalateDispute({ disputeId: dispute.id, jobId: job.id })}
+                                      disabled={isEscalating}
+                                      data-testid="button-escalate-from-proposal"
+                                    >
+                                      <ArrowUpCircle className="mr-1 h-3 w-3" />
+                                      Escalate to Admin
+                                    </Button>
+                                  </div>
+                                </div>
+                              </div>
+                            </Card>
+                          )}
+
+                          {disputeImagePreview && (
+                            <div className="relative inline-block">
+                              <img src={disputeImagePreview} alt="Preview" className="h-16 rounded-lg border border-border" />
+                              <button
+                                onClick={() => { setDisputeImage(null); setDisputeImagePreview(null); }}
+                                className="absolute -top-2 -right-2 bg-destructive text-destructive-foreground rounded-full w-5 h-5 flex items-center justify-center text-xs"
+                              >
+                                x
+                              </button>
                             </div>
+                          )}
+                          <div className="flex gap-2">
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              id="dispute-file-input"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file && file.type.startsWith('image/')) {
+                                  setDisputeImage(file);
+                                  setDisputeImagePreview(URL.createObjectURL(file));
+                                }
+                              }}
+                            />
+                            <Button
+                              size="icon"
+                              variant="outline"
+                              onClick={() => document.getElementById('dispute-file-input')?.click()}
+                              disabled={isUploadingImage}
+                              data-testid="button-attach-dispute-image"
+                            >
+                              {isUploadingImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImageIcon className="h-4 w-4" />}
+                            </Button>
+                            <Input
+                              placeholder="Type your message..."
+                              value={disputeReplyMessage}
+                              onChange={(e) => setDisputeReplyMessage(e.target.value)}
+                              onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendDisputeReply()}
+                              data-testid="input-dispute-reply"
+                            />
+                            <Button
+                              size="icon"
+                              onClick={handleSendDisputeReply}
+                              disabled={isSendingMessage || isUploadingImage || (!disputeReplyMessage.trim() && !disputeImage)}
+                              data-testid="button-send-dispute-reply"
+                            >
+                              {(isSendingMessage || isUploadingImage) ? <Loader2 className="animate-spin h-4 w-4" /> : <Send className="h-4 w-4" />}
+                            </Button>
                           </div>
-                        </Card>
-                      )}
 
-                      {disputeImagePreview && (
-                        <div className="relative inline-block">
-                          <img src={disputeImagePreview} alt="Preview" className="h-16 rounded-lg border border-border" />
-                          <button
-                            onClick={() => { setDisputeImage(null); setDisputeImagePreview(null); }}
-                            className="absolute -top-2 -right-2 bg-destructive text-destructive-foreground rounded-full w-5 h-5 flex items-center justify-center text-xs"
-                          >
-                            x
-                          </button>
-                        </div>
+                          <div className="flex flex-wrap gap-2">
+                            {isPoster && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setShowProposalForm(!showProposalForm)}
+                                data-testid="button-toggle-proposal"
+                              >
+                                <Scale className="mr-1 h-3 w-3" />
+                                {showProposalForm ? "Cancel" : "Propose Adjusted Price"}
+                              </Button>
+                            )}
+                            {dispute.status !== 'escalated' && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="text-red-600 border-red-200 dark:border-red-800"
+                                onClick={() => escalateDispute({ disputeId: dispute.id, jobId: job.id })}
+                                disabled={isEscalating}
+                                data-testid="button-escalate"
+                              >
+                                {isEscalating ? <Loader2 className="animate-spin mr-1 h-3 w-3" /> : <ArrowUpCircle className="mr-1 h-3 w-3" />}
+                                Escalate to Admin
+                              </Button>
+                            )}
+                          </div>
+                        </>
                       )}
-                      <div className="flex gap-2">
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          id="dispute-file-input"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (file && file.type.startsWith('image/')) {
-                              setDisputeImage(file);
-                              setDisputeImagePreview(URL.createObjectURL(file));
-                            }
-                          }}
-                        />
-                        <Button
-                          size="icon"
-                          variant="outline"
-                          onClick={() => document.getElementById('dispute-file-input')?.click()}
-                          disabled={isUploadingImage}
-                          data-testid="button-attach-dispute-image"
-                        >
-                          {isUploadingImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImageIcon className="h-4 w-4" />}
-                        </Button>
-                        <Input
-                          placeholder="Type your message..."
-                          value={disputeReplyMessage}
-                          onChange={(e) => setDisputeReplyMessage(e.target.value)}
-                          onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendDisputeReply()}
-                          data-testid="input-dispute-reply"
-                        />
-                        <Button
-                          size="icon"
-                          onClick={handleSendDisputeReply}
-                          disabled={isSendingMessage || isUploadingImage || (!disputeReplyMessage.trim() && !disputeImage)}
-                          data-testid="button-send-dispute-reply"
-                        >
-                          {(isSendingMessage || isUploadingImage) ? <Loader2 className="animate-spin h-4 w-4" /> : <Send className="h-4 w-4" />}
-                        </Button>
-                      </div>
-
-                      <div className="flex flex-wrap gap-2">
-                        {isPoster && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => setShowProposalForm(!showProposalForm)}
-                            data-testid="button-toggle-proposal"
-                          >
-                            <Scale className="mr-1 h-3 w-3" />
-                            {showProposalForm ? "Cancel" : "Propose Adjusted Price"}
-                          </Button>
-                        )}
-                        {dispute.status !== 'escalated' && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="text-red-600 border-red-200 dark:border-red-800"
-                            onClick={() => escalateDispute({ disputeId: dispute.id, jobId: job.id })}
-                            disabled={isEscalating}
-                            data-testid="button-escalate"
-                          >
-                            {isEscalating ? <Loader2 className="animate-spin mr-1 h-3 w-3" /> : <ArrowUpCircle className="mr-1 h-3 w-3" />}
-                            Escalate to Admin
-                          </Button>
-                        )}
-                      </div>
 
                       {showProposalForm && isPoster && (
                         <Card className="p-4">
