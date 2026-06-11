@@ -781,10 +781,37 @@ export default function JobDetails() {
                               </div>
                             )}
                             {job.workerProgress === 'at_location' && (
-                              <div className="flex items-center text-blue-600 bg-blue-50 dark:bg-blue-950/30 p-3 rounded-xl border border-blue-100 dark:border-blue-900 text-sm">
-                                <MapPinCheck className="w-4 h-4 mr-2 shrink-0" />
-                                {job.posterConfirmedArrival ? "The poster has confirmed your arrival." : "Waiting for the poster to confirm your arrival."}
-                              </div>
+                              job.posterConfirmedArrival ? (
+                                <div className="flex items-center text-green-600 bg-green-50 dark:bg-green-950/30 p-3 rounded-xl border border-green-100 dark:border-green-900 text-sm">
+                                  <CheckCircle className="w-4 h-4 mr-2 shrink-0" />
+                                  The poster has confirmed your arrival. Job is in progress!
+                                </div>
+                              ) : isPoster ? (
+                                <div className="bg-blue-600 text-white rounded-xl p-4 space-y-3">
+                                  <div className="flex items-center gap-2">
+                                    <MapPinCheck className="w-5 h-5 shrink-0" />
+                                    <span className="font-semibold text-sm">Worker is at your location!</span>
+                                  </div>
+                                  <p className="text-xs text-blue-100">
+                                    Confirm they have arrived to lock in the job. You will not be able to cancel after this.
+                                  </p>
+                                  <Button
+                                    size="sm"
+                                    className="w-full bg-white text-blue-600 hover:bg-blue-50 font-semibold"
+                                    onClick={() => setShowConfirmArrivalDialog(true)}
+                                    disabled={isConfirmingArrival}
+                                    data-testid="button-confirm-arrival-inline"
+                                  >
+                                    {isConfirmingArrival ? <Loader2 className="animate-spin mr-2 w-4 h-4" /> : <MapPinCheck className="mr-2 w-4 h-4" />}
+                                    Confirm Worker Has Arrived
+                                  </Button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center text-blue-600 bg-blue-50 dark:bg-blue-950/30 p-3 rounded-xl border border-blue-100 dark:border-blue-900 text-sm">
+                                  <MapPinCheck className="w-4 h-4 mr-2 shrink-0" />
+                                  Waiting for the poster to confirm your arrival.
+                                </div>
+                              )
                             )}
 
                             {/* Worker completion button — dual-confirmation */}
