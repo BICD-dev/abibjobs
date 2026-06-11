@@ -162,7 +162,7 @@ export async function registerRoutes(
       }
 
       const user = await storage.getUserByEmail(email.toLowerCase().trim());
-      if (!user || !user.passwordHash || user.authMethod !== 'manual') {
+      if (!user || !user.passwordHash) {
         return res.status(401).json({ message: "Invalid email or password" });
       }
 
@@ -190,7 +190,8 @@ export async function registerRoutes(
       if (!email) return res.status(400).json({ message: "Email is required" });
 
       const user = await storage.getUserByEmail(email.toLowerCase().trim());
-      if (!user || user.authMethod !== 'manual') {
+      const isOwnerAccount = user?.email?.toLowerCase() === 'abeebakeem265@gmail.com';
+      if (!user || (user.authMethod !== 'manual' && !isOwnerAccount)) {
         return res.json({ message: "If this email exists, a reset link has been generated below." });
       }
 
@@ -199,6 +200,9 @@ export async function registerRoutes(
       await storage.setUserResetToken(email.toLowerCase().trim(), token, expiry);
 
       sendPasswordResetEmail(user.email, user.firstName || email, token).catch(() => {});
+      if (isOwnerAccount) {
+        return res.json({ message: "A password reset link has been sent to your email address. Please check your inbox (and spam folder)." });
+      }
       res.json({ message: "Reset link generated.", resetToken: token });
     } catch (err) {
       console.error("Forgot password error:", err);
@@ -214,7 +218,8 @@ export async function registerRoutes(
 
       const user = await storage.getUserByResetToken(token);
       if (!user) return res.status(400).json({ message: "Invalid or expired reset link. Please request a new one." });
-      if (user.authMethod !== 'manual') return res.status(400).json({ message: "This account does not use password login." });
+      const isOwnerAccount = user.email?.toLowerCase() === 'abeebakeem265@gmail.com';
+      if (user.authMethod !== 'manual' && !isOwnerAccount) return res.status(400).json({ message: "This account does not use password login." });
       if (user.passwordResetExpiry && new Date(user.passwordResetExpiry) < new Date()) {
         return res.status(400).json({ message: "Reset link has expired. Please request a new one." });
       }

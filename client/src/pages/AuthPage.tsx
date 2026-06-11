@@ -431,6 +431,7 @@ function ForgotPassword({
 }) {
   const [email, setEmail] = useState("");
   const [resetToken, setResetToken] = useState<string | null>(null);
+  const [emailSent, setEmailSent] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const { toast } = useToast();
 
@@ -446,7 +447,11 @@ function ForgotPassword({
       return data;
     },
     onSuccess: (data) => {
-      setResetToken(data.resetToken);
+      if (data.resetToken) {
+        setResetToken(data.resetToken);
+      } else {
+        setEmailSent(data.message || "A password reset link has been sent to your email address.");
+      }
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -473,7 +478,23 @@ function ForgotPassword({
         </div>
       </CardHeader>
       <CardContent>
-        {resetToken ? (
+        {emailSent ? (
+          <div className="space-y-4">
+            <div className="w-14 h-14 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center mx-auto">
+              <CheckCircle2 className="w-7 h-7 text-green-600" />
+            </div>
+            <p className="text-sm text-center text-muted-foreground" data-testid="text-email-sent">
+              {emailSent}
+            </p>
+            <Button className="w-full" onClick={onGoReset} data-testid="button-open-reset-email">
+              <KeyRound className="w-4 h-4 mr-2" />
+              I have the link — Reset Now
+            </Button>
+            <button type="button" onClick={onBack} className="w-full text-center text-sm text-primary font-medium hover:underline" data-testid="link-back-login-email">
+              Back to log in
+            </button>
+          </div>
+        ) : resetToken ? (
           <div className="space-y-4">
             <div className="w-14 h-14 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center mx-auto">
               <CheckCircle2 className="w-7 h-7 text-green-600" />

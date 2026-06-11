@@ -1,0 +1,1 @@
+- [Dev vs Prod database](dev-vs-prod-database.md) — published app uses a SEPARATE prod DB (read-only to tools); dev-side fixes do NOT reach production; app uses bcryptjs not bcrypt.
