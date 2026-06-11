@@ -11,7 +11,6 @@ import { Loader2, CheckCircle2, XCircle, Clock, ArrowDownToLine, Building2, User
 import { format } from "date-fns";
 import { useAdminAuth } from "@/hooks/use-admin-auth";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
 
 interface WithdrawalRequest {
   id: number;
@@ -59,12 +58,14 @@ export default function AdminWithdrawalRequests() {
 
   const { mutate: processRequest, isPending: isProcessing } = useMutation({
     mutationFn: async ({ id, action, adminNote }: { id: number; action: string; adminNote: string }) => {
-      const res = await apiRequest(`/api/admin/withdrawal-requests/${id}/process`, {
+      const res = await fetch(`/api/admin/withdrawal-requests/${id}/process`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ action, adminNote }),
       });
       if (!res.ok) {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({}));
         throw new Error(err.message || 'Failed to process request');
       }
       return res.json();
