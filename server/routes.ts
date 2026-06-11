@@ -530,6 +530,10 @@ export async function registerRoutes(
       return res.status(400).json({ message: "Job is already " + job.status });
     }
 
+    if (job.posterConfirmedArrival) {
+      return res.status(403).json({ message: "You cannot cancel this job after confirming the worker has arrived on site." });
+    }
+
     const price = parseFloat(job.price);
     const escrowAmount = job.priceType === 'per_person' ? price * job.workersNeeded : price;
     const workerIsEnRoute = job.workerProgress === 'on_the_way' || job.workerProgress === 'at_location';

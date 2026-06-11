@@ -21,6 +21,10 @@ import {
   RefreshCw, Trash2, CalendarPlus, LocateFixed, Radio, Camera, ChevronLeft, ChevronRight
 } from "lucide-react";
 import { Dialog as LightboxDialog, DialogContent as LightboxContent } from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import type { OfferWithSender, DisputeMessageWithSender } from "@shared/schema";
@@ -72,6 +76,7 @@ export default function JobDetails() {
   const { mutate: updateProgress, isPending: isUpdatingProgress } = useUpdateJobProgress();
   const { mutate: confirmArrival, isPending: isConfirmingArrival } = useConfirmArrival();
   const { mutate: reportNoShow, isPending: isReportingNoShow } = useReportNoShow();
+  const [showConfirmArrivalDialog, setShowConfirmArrivalDialog] = useState(false);
 
   const { mutate: createOffer, isPending: isCreatingOffer } = useCreateOffer();
   const { mutate: acceptOffer, isPending: isAcceptingOffer } = useAcceptOffer();
@@ -505,7 +510,7 @@ export default function JobDetails() {
                             {workerIds.length === 1 && job.workerProgress === 'at_location' && !job.posterConfirmedArrival && (
                               <Button
                                 className="w-full h-12 text-lg bg-blue-600 text-white rounded-xl shadow-lg shadow-blue-600/20"
-                                onClick={() => confirmArrival(job.id)}
+                                onClick={() => setShowConfirmArrivalDialog(true)}
                                 disabled={isConfirmingArrival}
                                 data-testid="button-confirm-arrival"
                               >
@@ -1430,6 +1435,37 @@ export default function JobDetails() {
           </LightboxContent>
         </LightboxDialog>
       )}
+
+      {/* Confirm Arrival Warning Dialog */}
+      <AlertDialog open={showConfirmArrivalDialog} onOpenChange={setShowConfirmArrivalDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-amber-500" />
+              Are you sure the job has started?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2 text-sm">
+              <span className="block">
+                Once you confirm the worker has arrived, <strong>you will no longer be able to cancel this job.</strong>
+              </span>
+              <span className="block text-muted-foreground">
+                Only tap confirm if the worker is physically on site and the job is about to begin. This action cannot be undone.
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-arrival-cancel">Go Back</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+              onClick={() => { setShowConfirmArrivalDialog(false); confirmArrival(job!.id); }}
+              data-testid="button-arrival-confirm"
+            >
+              <MapPinCheck className="w-4 h-4 mr-2" />
+              Yes, Worker Has Arrived
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
