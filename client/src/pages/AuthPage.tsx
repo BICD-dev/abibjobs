@@ -7,12 +7,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { Loader2, Mail, UserPlus, LogIn, ArrowLeft, Eye, EyeOff, KeyRound, Copy, CheckCircle2 } from "lucide-react";
+import { Loader2, Mail, UserPlus, LogIn, ArrowLeft, Eye, EyeOff, KeyRound, Copy, CheckCircle2, ShieldCheck, SkipForward } from "lucide-react";
+import { VerificationCard } from "@/components/VerificationForm";
+import { useProfile } from "@/hooks/use-profile";
 
-type AuthView = "choose" | "manual-signup" | "manual-login" | "forgot-password";
+type AuthView = "choose" | "manual-signup" | "manual-login" | "forgot-password" | "verify";
 
 export default function AuthPage() {
   const [view, setView] = useState<AuthView>("choose");
+  const [newUserName, setNewUserName] = useState("");
   const [, setLocation] = useLocation();
 
   return (
@@ -38,7 +41,7 @@ export default function AuthPage() {
           <ManualSignup
             onBack={() => setView("choose")}
             onSwitchToLogin={() => setView("manual-login")}
-            onSuccess={() => setLocation("/jobs")}
+            onSuccess={(firstName) => { setNewUserName(firstName); setView("verify"); }}
           />
         )}
 
@@ -55,6 +58,13 @@ export default function AuthPage() {
           <ForgotPassword
             onBack={() => setView("manual-login")}
             onGoReset={() => setLocation("/reset-password")}
+          />
+        )}
+
+        {view === "verify" && (
+          <VerifyStep
+            firstName={newUserName}
+            onDone={() => setLocation("/jobs")}
           />
         )}
       </div>
@@ -129,7 +139,7 @@ function ManualSignup({
 }: {
   onBack: () => void;
   onSwitchToLogin: () => void;
-  onSuccess: () => void;
+  onSuccess: (firstName: string) => void;
 }) {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -148,8 +158,8 @@ function ManualSignup({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
-      toast({ title: "Account Created", description: "Welcome to ABIB JOBS!" });
-      onSuccess();
+      toast({ title: "Account Created", description: "Welcome to ABIB JOBS! Let's verify your identity." });
+      onSuccess(firstName.trim());
     },
     onError: (err: Error) => {
       toast({ title: "Registration Failed", description: err.message.replace(/^\d+:\s*/, ''), variant: "destructive" });
@@ -532,5 +542,37 @@ function ForgotPassword({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function VerifyStep({ firstName, onDone }: { firstName: string; onDone: () => void }) {
+  const { data: profile } = useProfile();
+  return (
+    <div className="space-y-4">
+      <div className="text-center space-y-1">
+        <div className="flex items-center justify-center gap-2">
+          <ShieldCheck className="w-5 h-5 text-primary" />
+          <h2 className="text-xl font-semibold text-foreground">Verify Your Identity</h2>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Hi {firstName || "there"}! To keep ABIB JOBS safe, please verify your identity before posting or accepting jobs.
+        </p>
+      </div>
+
+      <VerificationCard profile={profile} onSubmitted={onDone} />
+
+      <Button
+        variant="ghost"
+        className="w-full text-muted-foreground"
+        onClick={onDone}
+        data-testid="button-skip-verification"
+      >
+        <SkipForward className="w-4 h-4 mr-2" />
+        Skip for now — I'll verify later
+      </Button>
+      <p className="text-xs text-center text-muted-foreground">
+        You need to be verified before you can post or accept jobs.
+      </p>
+    </div>
   );
 }

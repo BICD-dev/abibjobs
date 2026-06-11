@@ -1,11 +1,13 @@
-import { Switch, Route } from "wouter";
+import { Switch, Route, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/use-auth";
+import { useProfile } from "@/hooks/use-profile";
 import { useAdminAuth, useAdminPing } from "@/hooks/use-admin-auth";
 import { Loader2 } from "lucide-react";
+import { useEffect } from "react";
 
 import { useGlobalVisitorTracking } from "@/hooks/use-visitor-tracking";
 import Home from "@/pages/Home";
@@ -14,6 +16,7 @@ import Jobs from "@/pages/Jobs";
 import JobDetails from "@/pages/JobDetails";
 import Wallet from "@/pages/Wallet";
 import Profile from "@/pages/Profile";
+import VerifyPage from "@/pages/VerifyPage";
 import AdminEarnings from "@/pages/AdminEarnings";
 import AdminDisputes from "@/pages/AdminDisputes";
 import AdminLogin from "@/pages/AdminLogin";
@@ -31,6 +34,38 @@ import MyJobs from "@/pages/MyJobs";
 import NotFound from "@/pages/not-found";
 import ResetPassword from "@/pages/ResetPassword";
 import { SupportChat } from "@/components/SupportChat";
+
+// Redirects OIDC (non-manual) new users to /verify once per browser session.
+// Manual-signup users are already redirected inline on the AuthPage.
+function OidcVerifyGuard() {
+  const { user, isLoading: authLoading } = useAuth();
+  const { data: profile, isLoading: profileLoading } = useProfile();
+  const [location, setLocation] = useLocation();
+
+  useEffect(() => {
+    if (authLoading || profileLoading) return;
+    if (!user) return;
+
+    // Only redirect OIDC users (manual-signup users get the inline verify step on AuthPage)
+    const isManual = (user as any).authMethod === "manual";
+    if (isManual) return;
+
+    // Only redirect from protected routes, not auth/verify itself
+    const skipPaths = ["/", "/auth", "/verify", "/reset-password", "/admin"];
+    if (skipPaths.some((p) => location === p || location.startsWith("/admin"))) return;
+
+    // Only once per browser session
+    const flagKey = `verified_redirect_${user.id}`;
+    if (sessionStorage.getItem(flagKey)) return;
+
+    if (profile?.verificationStatus === "unverified") {
+      sessionStorage.setItem(flagKey, "1");
+      setLocation("/verify");
+    }
+  }, [user, profile, authLoading, profileLoading, location]);
+
+  return null;
+}
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const { user, isLoading } = useAuth();
@@ -63,7 +98,10 @@ function Router() {
       <Route path="/" component={Home} />
       <Route path="/auth" component={AuthPage} />
       <Route path="/reset-password" component={ResetPassword} />
-      
+      <Route path="/verify">
+        {() => <ProtectedRoute component={VerifyPage} />}
+      </Route>
+
       <Route path="/jobs">
         {() => <ProtectedRoute component={Jobs} />}
       </Route>
@@ -116,6 +154,7 @@ function App() {
         <Toaster />
         <AdminPingTracker />
         <VisitorTracker />
+        <OidcVerifyGuard />
         <Router />
         <SupportChat />
       </TooltipProvider>
