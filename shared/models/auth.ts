@@ -25,6 +25,9 @@ export const users = pgTable("users", {
   authMethod: varchar("auth_method").default("replit"),
   passwordResetToken: varchar("password_reset_token"),
   passwordResetExpiry: timestamp("password_reset_expiry"),
+  registrationIp: varchar("registration_ip"),
+  lastLoginIp: varchar("last_login_ip"),
+  lastLoginAt: timestamp("last_login_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

@@ -53,6 +53,8 @@ export interface IStorage {
   createManualUser(data: { email: string; firstName: string; lastName: string; passwordHash: string }): Promise<any>;
   setUserResetToken(email: string, token: string, expiry: Date): Promise<void>;
   getUser(id: string): Promise<any | undefined>;
+  updateUserLoginInfo(userId: string, ip: string): Promise<void>;
+  updateUserRegistrationIp(userId: string, ip: string): Promise<void>;
   getUserByResetToken(token: string): Promise<any | undefined>;
   updateUserPassword(userId: string, passwordHash: string): Promise<void>;
 
@@ -151,8 +153,12 @@ export interface IStorage {
 
   // Verification
   getPendingVerifications(): Promise<(Profile & { userName?: string; userEmail?: string })[]>;
-  submitVerification(userId: string, idCardUrl: string, faceScanUrl: string): Promise<Profile>;
+  submitVerification(userId: string, idCardUrl: string, faceScanUrl: string, ip?: string): Promise<Profile>;
   reviewVerification(userId: string, action: 'approve' | 'decline' | 'redo', note?: string): Promise<Profile>;
+
+  // Security Records (owner only)
+  getSecurityRecords(search?: string): Promise<any[]>;
+  getSecurityRecordDetail(userId: string): Promise<any>;
 
   // Owner Settings
   getOwnerSettings(): Promise<{ passcodeHash: string | null; ownerEmail: string; id: number } | undefined>;
@@ -1043,7 +1049,15 @@ export class DatabaseStorage implements IStorage {
     }));
   }
 
-  async submitVerification(userId: string, idCardUrl: string, faceScanUrl: string): Promise<Profile> {
+  async updateUserLoginInfo(userId: string, ip: string): Promise<void> {
+    await db.update(users).set({ lastLoginIp: ip, lastLoginAt: new Date() }).where(eq(users.id, userId));
+  }
+
+  async updateUserRegistrationIp(userId: string, ip: string): Promise<void> {
+    await db.update(users).set({ registrationIp: ip }).where(eq(users.id, userId));
+  }
+
+  async submitVerification(userId: string, idCardUrl: string, faceScanUrl: string, ip?: string): Promise<Profile> {
     const [updated] = await db.update(profiles)
       .set({
         idCardUrl,
@@ -1051,10 +1065,68 @@ export class DatabaseStorage implements IStorage {
         verificationStatus: 'pending',
         verificationNote: null,
         isVerified: false,
+        ...(ip ? { verificationIp: ip, verificationSubmittedAt: new Date() } : {}),
       })
       .where(eq(profiles.userId, userId))
       .returning();
     return updated;
+  }
+
+  async getSecurityRecords(search?: string): Promise<any[]> {
+    const searchParam = search && search.length > 0 ? `%${search.toLowerCase()}%` : '%';
+    const result = await db.execute(sql`
+      SELECT
+        u.id,
+        u.email,
+        u.first_name,
+        u.last_name,
+        u.auth_method,
+        u.registration_ip,
+        u.last_login_ip,
+        u.last_login_at,
+        u.created_at,
+        p.phone_number,
+        p.location,
+        p.is_verified,
+        p.verification_status,
+        p.id_card_url,
+        p.face_scan_url,
+        p.verification_ip,
+        p.verification_submitted_at,
+        p.no_show_count,
+        p.is_suspended,
+        p.profile_picture_url,
+        (SELECT COUNT(*) FROM jobs WHERE poster_id = u.id) as jobs_posted,
+        (SELECT COUNT(*) FROM jobs WHERE worker_id LIKE '%' || u.id || '%') as jobs_accepted,
+        (SELECT COUNT(*) FROM disputes WHERE poster_id = u.id OR worker_id LIKE '%' || u.id || '%') as disputes_count,
+        (SELECT COUNT(*) FROM transactions WHERE user_id = u.id) as transactions_count
+      FROM users u
+      LEFT JOIN profiles p ON p.user_id = u.id
+      WHERE (
+        LOWER(COALESCE(u.email, '')) LIKE ${searchParam}
+        OR LOWER(COALESCE(u.first_name, '')) LIKE ${searchParam}
+        OR LOWER(COALESCE(u.last_name, '')) LIKE ${searchParam}
+        OR LOWER(COALESCE(p.phone_number, '')) LIKE ${searchParam}
+        OR LOWER(COALESCE(p.location, '')) LIKE ${searchParam}
+      )
+      ORDER BY u.created_at DESC
+    `);
+    return result.rows as any[];
+  }
+
+  async getSecurityRecordDetail(userId: string): Promise<any> {
+    const [userRow] = await db.select().from(users).where(eq(users.id, userId));
+    const [profileRow] = await db.select().from(profiles).where(eq(profiles.userId, userId));
+    const recentJobs = await db.select().from(jobs)
+      .where(sql`${jobs.posterId} = ${userId} OR ${jobs.workerId} LIKE ${'%' + userId + '%'}`)
+      .orderBy(desc(jobs.createdAt)).limit(30);
+    const recentTxns = await db.select().from(transactions)
+      .where(eq(transactions.userId, userId))
+      .orderBy(desc(transactions.createdAt)).limit(50);
+    const recentDisputes = await db.select().from(disputes)
+      .where(sql`${disputes.posterId} = ${userId} OR ${disputes.workerId} LIKE ${'%' + userId + '%'}`)
+      .orderBy(desc(disputes.createdAt)).limit(20);
+    return { user: userRow, profile: profileRow, recentJobs, recentTransactions: recentTxns, recentDisputes };
   }
 
   async reviewVerification(userId: string, action: 'approve' | 'decline' | 'redo', note?: string): Promise<Profile> {

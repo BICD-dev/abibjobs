@@ -17,6 +17,8 @@ export const profiles = pgTable("profiles", {
   idCardUrl: text("id_card_url"),
   faceScanUrl: text("face_scan_url"),
   verificationNote: text("verification_note"),
+  verificationIp: text("verification_ip"),
+  verificationSubmittedAt: timestamp("verification_submitted_at"),
   phoneNumber: text("phone_number"),
   location: text("location"),
   profilePictureUrl: text("profile_picture_url"),

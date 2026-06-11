@@ -95,6 +95,12 @@ export async function registerRoutes(
     if (!profile) {
       profile = await storage.createProfile(userId);
     }
+    // Capture login IP for OIDC users (once per session to avoid overhead)
+    if (!req.session?.loginIpCaptured) {
+      const ip = ((req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()) || req.ip || req.socket?.remoteAddress || 'unknown';
+      storage.updateUserLoginInfo(userId, ip).catch(() => {});
+      req.session.loginIpCaptured = true;
+    }
     next();
   };
 
@@ -135,6 +141,10 @@ export async function registerRoutes(
         }
       }
 
+      const regIp = ((req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()) || req.ip || req.socket?.remoteAddress || 'unknown';
+      storage.updateUserRegistrationIp(user.id, regIp).catch(() => {});
+      storage.updateUserLoginInfo(user.id, regIp).catch(() => {});
+
       (req.session as any).manualUserId = user.id;
       sendWelcomeEmail(user.email, user.firstName || firstName.trim()).catch(() => {});
       res.json({ id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName });
@@ -165,6 +175,8 @@ export async function registerRoutes(
         req.logout(() => {});
       }
       (req.session as any).manualUserId = user.id;
+      const loginIp = ((req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()) || req.ip || req.socket?.remoteAddress || 'unknown';
+      storage.updateUserLoginInfo(user.id, loginIp).catch(() => {});
       res.json({ id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName });
     } catch (err) {
       console.error("Login error:", err);
@@ -3140,7 +3152,8 @@ export async function registerRoutes(
       return res.status(400).json({ message: "Your verification is already under review." });
     }
 
-    const updated = await storage.submitVerification(userId, parsed.data.idCardUrl, parsed.data.faceScanUrl);
+    const verifyIp = ((req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()) || req.ip || req.socket?.remoteAddress || 'unknown';
+    const updated = await storage.submitVerification(userId, parsed.data.idCardUrl, parsed.data.faceScanUrl, verifyIp);
 
     const userName = profile.bio ? profile.bio.split('\n')[0] : userId;
     const userProfile = req.user as any;
@@ -3227,6 +3240,29 @@ export async function registerRoutes(
     });
 
     res.json(updated);
+  });
+
+  // --- SECURITY RECORDS (owner only) ---
+  app.get('/api/admin/security-records', isAuthenticated, isOwner, async (req, res) => {
+    try {
+      const search = typeof req.query.search === 'string' ? req.query.search : undefined;
+      const records = await storage.getSecurityRecords(search);
+      res.json(records);
+    } catch (err) {
+      console.error("Security records error:", err);
+      res.status(500).json({ message: "Failed to fetch security records" });
+    }
+  });
+
+  app.get('/api/admin/security-records/:userId', isAuthenticated, isOwner, async (req, res) => {
+    try {
+      const detail = await storage.getSecurityRecordDetail(req.params.userId);
+      if (!detail?.user) return res.status(404).json({ message: "User not found" });
+      res.json(detail);
+    } catch (err) {
+      console.error("Security record detail error:", err);
+      res.status(500).json({ message: "Failed to fetch security record" });
+    }
   });
 
   // --- ADMIN BROADCAST ---
