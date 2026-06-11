@@ -66,3 +66,15 @@ id = "haGhUOO2alZjPgmpYOEj7"
 uri = "file://attached_assets/generated_videos/wallet_earnings_happy.mp4"
 type = "video"
 title = "Clip 6 — Wallet & Earnings (8s)"
+
+[[outputs]]
+id = "wqBY4cA0D7QsYBE1rXfOW"
+uri = "file://attached_assets/generated_audio/verification_voiceover.mp3"
+type = "audio"
+title = "verification_voiceover"
+
+[[outputs]]
+id = "KrYIPRyjexKtOKEKMN0o4"
+uri = "file://attached_assets/generated_audio/verification_background_music.mp3"
+type = "audio"
+title = "verification_bg_music"
