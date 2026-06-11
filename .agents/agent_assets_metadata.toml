@@ -1,0 +1,20 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "CKQ8OykeCrqF--wTL1cXD"
+uri = "file://attached_assets/generated_videos/abib_jobs_intro.mp4"
+type = "video"
+title = "Clip 1 — ABIB JOBS Intro"
+
+[[outputs]]
+id = "Tje-JVDWW9g-caJ6N9I81"
+uri = "file://attached_assets/generated_videos/abib_jobs_post_and_accept.mp4"
+type = "video"
+title = "Clip 2 — Post a Job & Escrow Payment"
+
+[[outputs]]
+id = "fyPhY16eYHO1rMBQaLkDI"
+uri = "file://attached_assets/generated_videos/abib_jobs_live_tracking_payment.mp4"
+type = "video"
+title = "Clip 3 — Live Worker Tracking & Payout"
