@@ -1610,9 +1610,23 @@ export async function registerRoutes(
 
   const OWNER_EMAIL = 'abeebakeem265@gmail.com';
 
+  // Resolve the authenticated user's email — works for both OIDC and manual auth
+  const resolveUserEmail = async (req: any): Promise<string | null> => {
+    // OIDC session: email is in the claims
+    const claimsEmail = (req.user as any)?.claims?.email;
+    if (claimsEmail) return claimsEmail.toLowerCase();
+    // Manual session: look up the user in the DB
+    const manualUserId = (req.session as any)?.manualUserId;
+    if (manualUserId) {
+      const u = await storage.getUser(manualUserId);
+      if (u?.email) return u.email.toLowerCase();
+    }
+    return null;
+  };
+
   const isOwner = async (req: any, res: any, next: any) => {
-    const email = (req.user as any)?.claims?.email;
-    if (email && email.toLowerCase() === OWNER_EMAIL) {
+    const email = await resolveUserEmail(req);
+    if (email === OWNER_EMAIL) {
       (req as any).adminRole = 'owner';
       return next();
     }
@@ -1620,9 +1634,9 @@ export async function registerRoutes(
   };
 
   const isAdminOrOwner = async (req: any, res: any, next: any) => {
-    // Check if owner via Replit Auth
-    const email = (req.user as any)?.claims?.email;
-    if (email && email.toLowerCase() === OWNER_EMAIL) {
+    // Check if owner (supports both OIDC and manual auth)
+    const email = await resolveUserEmail(req);
+    if (email === OWNER_EMAIL) {
       (req as any).adminRole = 'owner';
       return next();
     }
@@ -1667,12 +1681,10 @@ export async function registerRoutes(
   });
 
   app.get('/api/admin/me', async (req, res) => {
-    // Check owner via Replit Auth
-    if (req.isAuthenticated && req.isAuthenticated()) {
-      const email = (req.user as any)?.claims?.email;
-      if (email && email.toLowerCase() === OWNER_EMAIL) {
-        return res.json({ id: 0, email: OWNER_EMAIL, name: "Owner", role: "owner", isActive: true });
-      }
+    // Check owner (supports both OIDC and manual auth)
+    const userEmail = await resolveUserEmail(req);
+    if (userEmail === OWNER_EMAIL) {
+      return res.json({ id: 0, email: OWNER_EMAIL, name: "Owner", role: "owner", isActive: true });
     }
     // Check staff admin via session
     const adminId = (req.session as any)?.adminId;
