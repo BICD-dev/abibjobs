@@ -23,10 +23,46 @@ title = "Clip 3 — Live Worker Tracking & Payout"
 id = "KUDJUAUPNztuuUH68Lzmx"
 uri = "file://attached_assets/generated_audio/abib_jobs_voiceover.mp3"
 type = "audio"
-title = "abib_jobs_voiceover"
+title = "Voiceover — Full 7-min narration (George voice)"
 
 [[outputs]]
 id = "HOHRSO26RNkyU0vv43h_d"
 uri = "file://attached_assets/generated_audio/abib_jobs_background_music.mp3"
 type = "audio"
-title = "abib_jobs_bg_music"
+title = "Background Music — Afrobeats instrumental (7 min)"
+
+[[outputs]]
+id = "JqbUttdd7dqvTMbEb4HOa"
+uri = "file://attached_assets/generated_videos/lagos_hero_intro.mp4"
+type = "video"
+title = "Clip 1 — Lagos Hero Intro (8s)"
+
+[[outputs]]
+id = "OEAGcPSj3sfKvImTvexdt"
+uri = "file://attached_assets/generated_videos/posting_job_phone.mp4"
+type = "video"
+title = "Clip 2 — Posting a Job (8s)"
+
+[[outputs]]
+id = "DsNKtli1jh0GEF2pcnOvd"
+uri = "file://attached_assets/generated_videos/worker_browsing_jobs.mp4"
+type = "video"
+title = "Clip 3 — Worker Browsing Jobs (8s)"
+
+[[outputs]]
+id = "BlxCgaXriT7vWho-yxDuK"
+uri = "file://attached_assets/generated_videos/escrow_secure_vault.mp4"
+type = "video"
+title = "Clip 4 — Escrow / Secure Vault (8s)"
+
+[[outputs]]
+id = "v1eJsFhpwCXghCAtlZRVS"
+uri = "file://attached_assets/generated_videos/job_completion_happy.mp4"
+type = "video"
+title = "Clip 5 — Job Completion (8s)"
+
+[[outputs]]
+id = "haGhUOO2alZjPgmpYOEj7"
+uri = "file://attached_assets/generated_videos/wallet_earnings_happy.mp4"
+type = "video"
+title = "Clip 6 — Wallet & Earnings (8s)"
