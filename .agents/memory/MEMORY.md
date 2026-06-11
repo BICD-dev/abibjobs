@@ -1,1 +1,2 @@
 - [Express 5 req.params widening](express5-params-typing.md) — multi-middleware routes widen req.params to string|string[]; wrap parseInt with String().
+- [Admin vs user sessions](admin-vs-user-sessions.md) — user session & staff-admin session coexist in one browser (can be different people); admin gate is admin_users/OWNER_EMAIL, NOT profiles.role.
