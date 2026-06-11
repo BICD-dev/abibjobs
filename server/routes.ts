@@ -1426,12 +1426,30 @@ export async function registerRoutes(
     if (process.env.TURN_URL && process.env.TURN_USERNAME && process.env.TURN_CREDENTIAL) {
       // TURN_URL may hold several comma-separated relay URLs sharing the same
       // credentials (e.g. UDP:3478 + TCP:443 for firewall/CGNAT traversal).
-      const turnUrls = process.env.TURN_URL.split(',').map((u) => u.trim()).filter(Boolean);
-      iceServers.push({
-        urls: turnUrls.length === 1 ? turnUrls[0] : turnUrls,
-        username: process.env.TURN_USERNAME,
-        credential: process.env.TURN_CREDENTIAL,
-      });
+      const turnUrls = process.env.TURN_URL.split(',')
+        .map((u) => u.trim())
+        .filter(Boolean)
+        .map((u) => {
+          // WebRTC requires a turn:/turns: scheme. Leave valid ones untouched.
+          if (/^turns?:/i.test(u)) return u;
+          // A different scheme (stun:, https:, ...) is invalid for TURN and
+          // would throw in the client's RTCPeerConnection — drop it so calling
+          // degrades to STUN-only instead of breaking entirely.
+          if (/^[a-z][a-z0-9+.-]*:/i.test(u)) {
+            console.warn(`[ice-servers] ignoring TURN_URL entry with non-TURN scheme: ${u}`);
+            return null;
+          }
+          // Bare host:port (a common dashboard format) — add the turn: scheme.
+          return `turn:${u}`;
+        })
+        .filter((u): u is string => Boolean(u));
+      if (turnUrls.length > 0) {
+        iceServers.push({
+          urls: turnUrls.length === 1 ? turnUrls[0] : turnUrls,
+          username: process.env.TURN_USERNAME,
+          credential: process.env.TURN_CREDENTIAL,
+        });
+      }
     }
     res.json({ iceServers });
   });
