@@ -94,13 +94,16 @@ export function JobCard({ job }: JobCardProps) {
           )}
 
           <div className="mt-auto flex items-center justify-between gap-2 border-t border-border/50 pt-4">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-xs">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-xs shrink-0">
                 {job.poster?.firstName?.[0] || 'U'}
               </div>
-              <span className="text-sm font-medium text-foreground/80">
-                {job.poster?.firstName || "User"}
-              </span>
+              <div className="min-w-0">
+                <p className="text-xs text-muted-foreground leading-none mb-0.5">Posted by</p>
+                <span className="text-sm font-medium text-foreground/80 truncate block" data-testid={`text-poster-name-${job.id}`}>
+                  {[job.poster?.firstName, job.poster?.lastName].filter(Boolean).join(' ') || "User"}
+                </span>
+              </div>
             </div>
             
             <div className="text-right">

@@ -1356,12 +1356,33 @@ export default function JobDetails() {
                     </AvatarFallback>
                   </Avatar>
                   <div>
-                    <p className="font-medium text-foreground">
-                      {job.poster?.firstName} {job.poster?.lastName}
+                    <p className="text-xs text-muted-foreground mb-0.5">Job poster</p>
+                    <p className="font-medium text-foreground" data-testid="text-poster-fullname">
+                      {[job.poster?.firstName, job.poster?.lastName].filter(Boolean).join(' ') || "Unknown"}
                     </p>
                   </div>
                 </div>
               </section>
+
+              {(job.status === 'in_progress' || job.status === 'completed') && job.worker && (
+                <section>
+                  <h3 className="text-lg font-bold font-display mb-4">Accepted By</h3>
+                  <div className="flex items-center gap-3">
+                    <Avatar className="h-10 w-10 border border-border">
+                      <AvatarImage src={job.worker?.profileImageUrl || undefined} />
+                      <AvatarFallback className="bg-green-500/10 text-green-600 font-bold">
+                        {job.worker?.firstName?.[0] || "?"}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-0.5">Worker</p>
+                      <p className="font-medium text-foreground" data-testid="text-worker-fullname">
+                        {[job.worker?.firstName, job.worker?.lastName].filter(Boolean).join(' ') || "Unknown"}
+                      </p>
+                    </div>
+                  </div>
+                </section>
+              )}
             </div>
           </div>
         </div>
