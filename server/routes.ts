@@ -1838,7 +1838,7 @@ export async function registerRoutes(
   app.get('/api/jobs/:id/dispute', isAuthenticated, async (req, res) => {
     try {
       const jobId = Number(req.params.id);
-      const userId = (req.user as any).claims.sub;
+      const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
 
       const dispute = await storage.getDisputeByJob(jobId);
       if (!dispute) return res.status(404).json({ message: "No dispute found for this job" });
@@ -1917,7 +1917,7 @@ export async function registerRoutes(
   app.post('/api/disputes/:id/message', async (req, res) => {
     try {
       const disputeId = Number(req.params.id);
-      const userId = (req.user as any)?.claims?.sub;
+      const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
       const adminId = (req.session as any)?.adminId;
       const senderId = userId || (adminId ? `admin_${adminId}` : null);
       if (!senderId) return res.status(401).json({ message: "Not authenticated" });
@@ -2012,7 +2012,7 @@ export async function registerRoutes(
   app.post('/api/disputes/:id/accept-proposal', isAuthenticated, async (req, res) => {
     try {
       const disputeId = Number(req.params.id);
-      const userId = (req.user as any).claims.sub;
+      const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
 
       const dispute = await storage.getDispute(disputeId);
       if (!dispute) return res.status(404).json({ message: "Dispute not found" });
@@ -2096,7 +2096,7 @@ export async function registerRoutes(
   app.post('/api/disputes/:id/escalate', isAuthenticated, async (req, res) => {
     try {
       const disputeId = Number(req.params.id);
-      const userId = (req.user as any).claims.sub;
+      const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
 
       const dispute = await storage.getDispute(disputeId);
       if (!dispute) return res.status(404).json({ message: "Dispute not found" });
