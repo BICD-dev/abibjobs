@@ -100,13 +100,11 @@ Schema changes use `drizzle-kit push` (not migrations). Run `npm run db:push` to
 ### Cancellation Penalty System
 - Poster can cancel a job at any stage (open, in_progress, even when worker is en route)
 - If worker has NOT started traveling (no progress or only getting_ready): full escrow refund to poster
-- If worker IS en route (on_the_way or at_location): 10% cancellation penalty applies
+- If worker IS en route (on_the_way or at_location): 10% cancellation fee applies
   - Poster receives 90% refund immediately
-  - Worker receives 10% compensation within 24 hours via scheduled_payments table
-  - Worker gets notification about pending compensation
-- Scheduled payment processor runs hourly to process due payments
-- For multi-worker jobs, penalty is split equally among workers (with remainder to last worker)
-- Transaction type: cancellation_compensation
+  - Worker receives 10% compensation immediately (credited to wallet instantly — app owner gains nothing)
+  - For multi-worker jobs, the 10% is split equally among accepted workers (remainder goes to last worker)
+  - Transaction type: cancellation_compensation
 
 ### Escrow / Wallet System
 - Users have a wallet balance stored in `profiles.walletBalance`

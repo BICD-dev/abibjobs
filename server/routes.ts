@@ -548,8 +548,6 @@ export async function registerRoutes(
           jobId: job.id,
         });
 
-        const paymentTime = new Date(Date.now() + 24 * 60 * 60 * 1000);
-
         const workerIds = job.workerId!.includes(',') ? job.workerId!.split(',').map(id => id.trim()) : [job.workerId!];
         let remaining = penalty;
         for (let i = 0; i < workerIds.length; i++) {
@@ -557,19 +555,20 @@ export async function registerRoutes(
           const share = isLast ? remaining : Math.floor((penalty / workerIds.length) * 100) / 100;
           remaining = Math.round((remaining - share) * 100) / 100;
 
-          await storage.createScheduledPayment({
+          // Pay worker immediately — no delay, owner gains nothing
+          await storage.updateWalletBalance(workerIds[i], share);
+          await storage.createTransaction({
             userId: workerIds[i],
             amount: share.toString(),
+            type: 'cancellation_compensation',
             jobId: job.id,
-            reason: 'cancellation_compensation',
-            scheduledFor: paymentTime,
           });
 
           await storage.createNotification({
             userId: workerIds[i],
-            title: "Job Cancelled - Compensation Pending",
-            message: `The poster cancelled "${job.title}" while you were en route. You will receive ₦${share.toLocaleString()} compensation within 24 hours.`,
-            type: "warning",
+            title: "Compensation Received",
+            message: `The poster cancelled "${job.title}" while you were on the way. ₦${share.toLocaleString()} has been added to your wallet.`,
+            type: "success",
             jobId: job.id,
           });
 
@@ -605,7 +604,7 @@ export async function registerRoutes(
     await storage.createAdminNotification({
       adminId: 0,
       title: 'Job Cancelled',
-      message: `"${job.title}" was cancelled by the poster.${workerIsEnRoute ? ` 10% penalty applied (₦${(Math.round(escrowAmount * 0.1 * 100) / 100).toLocaleString()} to worker compensation).` : ' Full escrow refunded.'}`,
+      message: `"${job.title}" was cancelled by the poster.${workerIsEnRoute ? ` 10% cancellation fee (₦${(Math.round(escrowAmount * 0.1 * 100) / 100).toLocaleString()}) paid immediately to worker. Poster refunded 90%.` : ' Full escrow refunded to poster.'}`,
       type: 'warning'
     });
 
