@@ -10,6 +10,20 @@ import { registerObjectStorageRoutes } from "./replit_integrations/object_storag
 import { db } from "./db";
 import { users } from "@shared/schema";
 import { eq } from "drizzle-orm";
+import {
+  sendWelcomeEmail,
+  sendPasswordResetEmail,
+  sendJobPostedEmail,
+  sendJobAcceptedToPosterEmail,
+  sendJobAcceptedToWorkerEmail,
+  sendJobCompletedToPosterEmail,
+  sendJobCompletedToWorkerEmail,
+  sendCompletionRequestedEmail,
+  sendJobCancelledToWorkerEmail,
+  sendNoShowWarningEmail,
+  sendWalletDepositEmail,
+  sendWithdrawalEmail,
+} from "./email";
 
 interface PaystackSession {
   userId: string;
@@ -122,6 +136,7 @@ export async function registerRoutes(
       }
 
       (req.session as any).manualUserId = user.id;
+      sendWelcomeEmail(user.email, user.firstName || firstName.trim()).catch(() => {});
       res.json({ id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName });
     } catch (err: any) {
       console.error("Registration error:", err);
@@ -171,6 +186,7 @@ export async function registerRoutes(
       const expiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
       await storage.setUserResetToken(email.toLowerCase().trim(), token, expiry);
 
+      sendPasswordResetEmail(user.email, user.firstName || email, token).catch(() => {});
       res.json({ message: "Reset link generated.", resetToken: token });
     } catch (err) {
       console.error("Forgot password error:", err);
@@ -270,6 +286,14 @@ export async function registerRoutes(
         excludeUserId: userId,
       }).catch(() => {});
 
+      // Email the poster a confirmation
+      storage.getUser(userId).then(poster => {
+        if (poster?.email) {
+          const priceDisplay = `₦${parseFloat(job.price).toLocaleString()}${job.priceType === 'per_person' ? '/person' : ''}`;
+          sendJobPostedEmail(poster.email, poster.firstName || poster.email, job.title, job.id, priceDisplay, job.location, job.category).catch(() => {});
+        }
+      }).catch(() => {});
+
       res.status(201).json(job);
     } catch (err) {
       if (err instanceof z.ZodError) {
@@ -357,6 +381,20 @@ export async function registerRoutes(
       jobId: job.id,
     });
 
+    // Email poster and worker about the acceptance
+    Promise.all([
+      storage.getUser(job.posterId),
+      storage.getUser(userId),
+    ]).then(([poster, worker]) => {
+      if (poster?.email) {
+        sendJobAcceptedToPosterEmail(poster.email, poster.firstName || poster.email, job.title, job.id, newAccepted, job.workersNeeded).catch(() => {});
+      }
+      if (worker?.email) {
+        const priceDisplay = `₦${parseFloat(job.price).toLocaleString()}${job.priceType === 'per_person' ? '/person' : ''}`;
+        sendJobAcceptedToWorkerEmail(worker.email, worker.firstName || worker.email, job.title, job.id, priceDisplay, job.location).catch(() => {});
+      }
+    }).catch(() => {});
+
     res.json(updated);
   });
 
@@ -433,6 +471,16 @@ export async function registerRoutes(
         jobId: job.id,
       }).catch(() => {});
 
+      // Email all parties
+      storage.getUser(job.posterId).then(poster => {
+        if (poster?.email) sendJobCompletedToPosterEmail(poster.email, poster.firstName || poster.email, job.title, job.id, totalPayout).catch(() => {});
+      }).catch(() => {});
+      for (const wId of workerIds) {
+        storage.getUser(wId).then(worker => {
+          if (worker?.email) sendJobCompletedToWorkerEmail(worker.email, worker.firstName || worker.email, job.title, job.id, payoutPerWorker).catch(() => {});
+        }).catch(() => {});
+      }
+
       return res.json({ ...completed, bothConfirmed: true });
     }
 
@@ -444,6 +492,10 @@ export async function registerRoutes(
         type: 'info',
         jobId: job.id,
       }).catch(() => {});
+      // Email worker
+      storage.getUser(workerIds[0]).then(worker => {
+        if (worker?.email) sendCompletionRequestedEmail(worker.email, worker.firstName || worker.email, job.title, job.id, 'poster').catch(() => {});
+      }).catch(() => {});
     }
 
     if (isWorker && !posterDone) {
@@ -453,6 +505,10 @@ export async function registerRoutes(
         message: `The worker has confirmed "${job.title}" is done. Please mark it as complete to release their payment.`,
         type: 'info',
         jobId: job.id,
+      }).catch(() => {});
+      // Email poster
+      storage.getUser(job.posterId).then(poster => {
+        if (poster?.email) sendCompletionRequestedEmail(poster.email, poster.firstName || poster.email, job.title, job.id, 'worker').catch(() => {});
       }).catch(() => {});
     }
 
@@ -516,6 +572,11 @@ export async function registerRoutes(
             type: "warning",
             jobId: job.id,
           });
+
+          // Email worker about compensation
+          storage.getUser(workerIds[i]).then(worker => {
+            if (worker?.email) sendJobCancelledToWorkerEmail(worker.email, worker.firstName || worker.email, job.title, share).catch(() => {});
+          }).catch(() => {});
         }
       } else {
         await storage.updateWalletBalance(userId, escrowAmount);
@@ -525,6 +586,16 @@ export async function registerRoutes(
           type: 'escrow_refund',
           jobId: job.id,
         });
+
+        // Email workers that job was cancelled (no compensation)
+        if (job.workerId) {
+          const wIds = job.workerId.split(',').filter(Boolean);
+          for (const wId of wIds) {
+            storage.getUser(wId).then(worker => {
+              if (worker?.email) sendJobCancelledToWorkerEmail(worker.email, worker.firstName || worker.email, job.title, null).catch(() => {});
+            }).catch(() => {});
+          }
+        }
       }
     }
     // If no worker has accepted yet, no escrow was held — nothing to refund
@@ -714,6 +785,11 @@ export async function registerRoutes(
             jobId: job.id,
           });
         }
+
+        // Email the worker about the no-show
+        storage.getUser(wId).then(worker => {
+          if (worker?.email) sendNoShowWarningEmail(worker.email, worker.firstName || worker.email, job.title, remainingChances, willBeSuspended).catch(() => {});
+        }).catch(() => {});
       }
 
       if (action === 'repost') {
@@ -2233,6 +2309,10 @@ export async function registerRoutes(
     });
 
     const profile = await storage.getProfile(userId);
+    const newBalance = parseFloat(profile?.walletBalance || "0");
+    storage.getUser(userId).then(u => {
+      if (u?.email) sendWalletDepositEmail(u.email, u.firstName || u.email, amount, newBalance).catch(() => {});
+    }).catch(() => {});
     res.json({ newBalance: profile?.walletBalance || "0" });
   });
 
@@ -2316,6 +2396,11 @@ export async function registerRoutes(
           accountNumber: maskedInfo,
           accountName: paymentMethod === 'card' ? 'Debit Card' : 'Bank Account',
         });
+
+        const newBal = parseFloat(profile?.walletBalance || "0");
+        storage.getUser(userId).then(u => {
+          if (u?.email) sendWalletDepositEmail(u.email, u.firstName || u.email, amount, newBal).catch(() => {});
+        }).catch(() => {});
 
         return res.json({
           sessionId: reference,
@@ -2418,6 +2503,10 @@ export async function registerRoutes(
 
         paystackSessions.delete(sessionId);
         const profile = await storage.getProfile(userId);
+        const newBal2 = parseFloat(profile?.walletBalance || "0");
+        storage.getUser(userId).then(u => {
+          if (u?.email) sendWalletDepositEmail(u.email, u.firstName || u.email, session.amount, newBal2).catch(() => {});
+        }).catch(() => {});
         return res.json({
           newBalance: profile?.walletBalance || "0",
           message: "Deposit successful!",
@@ -2495,6 +2584,10 @@ export async function registerRoutes(
       accountName: accountName || null,
       reason: reason || null,
     });
+
+    if (userRecord?.email) {
+      sendWithdrawalEmail(userRecord.email, userRecord.firstName || userRecord.email, val).catch(() => {});
+    }
 
     res.json(request);
   });
