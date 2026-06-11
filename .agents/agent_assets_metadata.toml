@@ -18,3 +18,15 @@ id = "fyPhY16eYHO1rMBQaLkDI"
 uri = "file://attached_assets/generated_videos/abib_jobs_live_tracking_payment.mp4"
 type = "video"
 title = "Clip 3 — Live Worker Tracking & Payout"
+
+[[outputs]]
+id = "KUDJUAUPNztuuUH68Lzmx"
+uri = "file://attached_assets/generated_audio/abib_jobs_voiceover.mp3"
+type = "audio"
+title = "abib_jobs_voiceover"
+
+[[outputs]]
+id = "HOHRSO26RNkyU0vv43h_d"
+uri = "file://attached_assets/generated_audio/abib_jobs_background_music.mp3"
+type = "audio"
+title = "abib_jobs_bg_music"
