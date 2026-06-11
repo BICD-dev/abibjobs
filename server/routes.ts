@@ -233,13 +233,13 @@ export async function registerRoutes(
   });
 
   app.get(api.jobs.myJobs.path, isAuthenticated, async (req, res) => {
-    const userId = (req.user as any).claims.sub;
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
     const myJobs = await storage.getMyJobs(userId);
     res.json(myJobs);
   });
 
   app.get(api.jobs.history.path, isAuthenticated, async (req, res) => {
-    const userId = (req.user as any).claims.sub;
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
     const role = req.query.role as 'posted' | 'accepted' | undefined;
     const history = await storage.getJobHistory(userId, role);
     res.json(history);
@@ -256,7 +256,7 @@ export async function registerRoutes(
   app.post(api.jobs.create.path, isAuthenticated, async (req, res) => {
     try {
       const input = api.jobs.create.input.parse(req.body);
-      const userId = (req.user as any).claims.sub;
+      const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
       const profile = await storage.getProfile(userId);
 
       if (!profile) return res.status(404).json({ message: "Profile not found" });
@@ -305,7 +305,7 @@ export async function registerRoutes(
 
   app.post(api.jobs.accept.path, isAuthenticated, async (req, res) => {
     const jobId = Number(req.params.id);
-    const userId = (req.user as any).claims.sub;
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
 
     const acceptorProfile = await storage.getProfile(userId);
     if (acceptorProfile && acceptorProfile.verificationStatus !== 'verified') {
@@ -400,7 +400,7 @@ export async function registerRoutes(
 
   app.post(api.jobs.complete.path, isAuthenticated, async (req, res) => {
     const jobId = Number(req.params.id);
-    const userId = (req.user as any).claims.sub;
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
 
     const job = await storage.getJob(jobId);
     if (!job) return res.status(404).json({ message: "Job not found" });
@@ -517,7 +517,7 @@ export async function registerRoutes(
 
   app.post(api.jobs.cancel.path, isAuthenticated, async (req, res) => {
     const jobId = Number(req.params.id);
-    const userId = (req.user as any).claims.sub;
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
     
     const job = await storage.getJob(jobId);
     if (!job) return res.status(404).json({ message: "Job not found" });
@@ -620,7 +620,7 @@ export async function registerRoutes(
   app.post(api.jobs.updateProgress.path, isAuthenticated, async (req, res) => {
     try {
       const jobId = Number(req.params.id);
-      const userId = (req.user as any).claims.sub;
+      const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
       const { progress } = req.body;
 
       if (!['getting_ready', 'on_the_way', 'at_location'].includes(progress)) {
@@ -660,7 +660,7 @@ export async function registerRoutes(
   app.post(api.jobs.confirmArrival.path, isAuthenticated, async (req, res) => {
     try {
       const jobId = Number(req.params.id);
-      const userId = (req.user as any).claims.sub;
+      const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
 
       const job = await storage.getJob(jobId);
       if (!job) return res.status(404).json({ message: "Job not found" });
@@ -688,7 +688,7 @@ export async function registerRoutes(
   app.post('/api/jobs/:id/worker-location', isAuthenticated, async (req, res) => {
     try {
       const jobId = Number(req.params.id);
-      const userId = (req.user as any).claims.sub;
+      const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
       const { latitude, longitude } = req.body;
 
       if (!latitude || !longitude) {
@@ -718,7 +718,7 @@ export async function registerRoutes(
   app.post(api.jobs.noShow.path, isAuthenticated, async (req, res) => {
     try {
       const jobId = Number(req.params.id);
-      const userId = (req.user as any).claims.sub;
+      const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
       const action = req.body?.action as string | undefined;
       if (!action || !['repost', 'delete'].includes(action)) {
         return res.status(400).json({ message: "Please choose to repost or delete the job" });
@@ -818,26 +818,26 @@ export async function registerRoutes(
   // --- NOTIFICATIONS ---
 
   app.get(api.notifications.list.path, isAuthenticated, async (req, res) => {
-    const userId = (req.user as any).claims.sub;
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
     const notificationsList = await storage.getNotifications(userId);
     res.json(notificationsList);
   });
 
   app.get(api.notifications.unreadCount.path, isAuthenticated, async (req, res) => {
-    const userId = (req.user as any).claims.sub;
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
     const count = await storage.getUnreadNotificationCount(userId);
     res.json({ count });
   });
 
   app.post(api.notifications.markRead.path, isAuthenticated, async (req, res) => {
-    const userId = (req.user as any).claims.sub;
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
     const notificationId = Number(req.params.id);
     await storage.markNotificationRead(notificationId, userId);
     res.json({ message: "Notification marked as read" });
   });
 
   app.post(api.notifications.markAllRead.path, isAuthenticated, async (req, res) => {
-    const userId = (req.user as any).claims.sub;
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
     await storage.markAllNotificationsRead(userId);
     res.json({ message: "All notifications marked as read" });
   });
@@ -1029,7 +1029,7 @@ export async function registerRoutes(
 
   app.get('/api/jobs/:id/offers', isAuthenticated, async (req, res) => {
     const jobId = Number(req.params.id);
-    const userId = (req.user as any).claims.sub;
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
 
     const job = await storage.getJob(jobId);
     if (!job) return res.status(404).json({ message: "Job not found" });
@@ -1048,7 +1048,7 @@ export async function registerRoutes(
   app.post('/api/jobs/:id/offers', isAuthenticated, async (req, res) => {
     try {
       const jobId = Number(req.params.id);
-      const userId = (req.user as any).claims.sub;
+      const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
       const parsed = api.offers.create.input.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
 
@@ -1073,7 +1073,7 @@ export async function registerRoutes(
   app.post('/api/offers/:id/accept', isAuthenticated, async (req, res) => {
     try {
       const offerId = Number(req.params.id);
-      const userId = (req.user as any).claims.sub;
+      const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
 
       const offer = await storage.getOffer(offerId);
       if (!offer) return res.status(404).json({ message: "Offer not found" });
@@ -1152,7 +1152,7 @@ export async function registerRoutes(
   app.post('/api/offers/:id/decline', isAuthenticated, async (req, res) => {
     try {
       const offerId = Number(req.params.id);
-      const userId = (req.user as any).claims.sub;
+      const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
 
       const offer = await storage.getOffer(offerId);
       if (!offer) return res.status(404).json({ message: "Offer not found" });
@@ -1186,7 +1186,7 @@ export async function registerRoutes(
   app.post('/api/offers/:id/counter', isAuthenticated, async (req, res) => {
     try {
       const offerId = Number(req.params.id);
-      const userId = (req.user as any).claims.sub;
+      const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
       const parsed = api.offers.counter.input.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
 
@@ -1230,7 +1230,7 @@ export async function registerRoutes(
   // --- PROFILE ---
 
   app.get(api.profile.get.path, isAuthenticated, async (req, res) => {
-    const userId = (req.user as any).claims.sub;
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
     let profile = await storage.getProfile(userId);
     if (!profile) {
       profile = await storage.createProfile(userId);
@@ -1239,7 +1239,7 @@ export async function registerRoutes(
   });
 
   app.patch(api.profile.update.path, isAuthenticated, async (req, res) => {
-    const userId = (req.user as any).claims.sub;
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
     const data = req.body;
     
     delete data.role;
@@ -1771,7 +1771,7 @@ export async function registerRoutes(
   app.post('/api/jobs/:id/dispute', isAuthenticated, async (req, res) => {
     try {
       const jobId = Number(req.params.id);
-      const userId = (req.user as any).claims.sub;
+      const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
       const parsed = api.disputes.create.input.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
 
@@ -2372,7 +2372,7 @@ export async function registerRoutes(
   // --- WALLET ---
 
   app.get(api.wallet.get.path, isAuthenticated, async (req, res) => {
-    const userId = (req.user as any).claims.sub;
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
     const profile = await storage.getProfile(userId);
     const transactions = await storage.getTransactions(userId);
     
@@ -2385,7 +2385,7 @@ export async function registerRoutes(
   });
 
   app.post(api.wallet.deposit.path, isAuthenticated, async (req, res) => {
-    const userId = (req.user as any).claims.sub;
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
     const parsed = api.wallet.deposit.input.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
     const { amount, bankCode, bankName, accountNumber, accountName } = parsed.data;
@@ -2410,7 +2410,7 @@ export async function registerRoutes(
   });
 
   app.post(api.wallet.cardDeposit.path, isAuthenticated, async (req, res) => {
-    const userId = (req.user as any).claims.sub;
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
     const parsed = api.wallet.cardDeposit.input.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
 
@@ -2539,7 +2539,7 @@ export async function registerRoutes(
   });
 
   app.post(api.wallet.verifyOtp.path, isAuthenticated, async (req, res) => {
-    const userId = (req.user as any).claims.sub;
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
     const parsed = api.wallet.verifyOtp.input.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
 
@@ -2618,7 +2618,7 @@ export async function registerRoutes(
   });
 
   app.post(api.wallet.resendOtp.path, isAuthenticated, async (req, res) => {
-    const userId = (req.user as any).claims.sub;
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
     const parsed = api.wallet.resendOtp.input.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
 
@@ -2642,14 +2642,14 @@ export async function registerRoutes(
   });
 
   app.get(api.wallet.depositMethods.path, isAuthenticated, async (req, res) => {
-    const userId = (req.user as any).claims.sub;
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
     const methods = await storage.getDepositMethods(userId);
     res.json({ methods, hasDeposits: methods.length > 0 });
   });
 
   // User: submit withdrawal request (when they want a different account)
   app.post('/api/wallet/withdrawal-requests', isAuthenticated, async (req, res) => {
-    const userId = (req.user as any).claims.sub;
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
     const { amount, bankName, bankCode, accountNumber, accountName, reason } = req.body;
     if (!amount || !bankName || !accountNumber) {
       return res.status(400).json({ message: "Amount, bank name, and account number are required." });
@@ -2687,7 +2687,7 @@ export async function registerRoutes(
 
   // User: view their own withdrawal requests
   app.get('/api/wallet/withdrawal-requests', isAuthenticated, async (req, res) => {
-    const userId = (req.user as any).claims.sub;
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
     const requests = await storage.getUserWithdrawalRequests(userId);
     res.json(requests);
   });
@@ -2753,7 +2753,7 @@ export async function registerRoutes(
   });
 
   app.post(api.wallet.withdraw.path, isAuthenticated, async (req, res) => {
-    const userId = (req.user as any).claims.sub;
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
     const parsed = api.wallet.withdraw.input.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
     const { amount, bankCode, bankName, accountNumber, accountName } = parsed.data;
@@ -2790,7 +2790,7 @@ export async function registerRoutes(
   // --- VERIFICATION ---
 
   app.post(api.verification.submit.path, isAuthenticated, async (req, res) => {
-    const userId = (req.user as any).claims.sub;
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
     const parsed = api.verification.submit.input.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
 
@@ -2821,7 +2821,7 @@ export async function registerRoutes(
   });
 
   app.post('/api/verification/cancel', isAuthenticated, async (req, res) => {
-    const userId = (req.user as any).claims.sub;
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
     const profile = await storage.getProfile(userId);
     if (!profile) return res.status(404).json({ message: "Profile not found" });
     if (profile.verificationStatus !== 'pending') {
