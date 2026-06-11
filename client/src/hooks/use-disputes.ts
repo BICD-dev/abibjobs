@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
 
-export function useDisputeByJob(jobId: number) {
+export function useDisputeByJob(jobId: number, enablePolling = false) {
   return useQuery({
     queryKey: ['/api/jobs', jobId, 'dispute'],
     queryFn: async () => {
@@ -12,6 +12,15 @@ export function useDisputeByJob(jobId: number) {
       return res.json();
     },
     enabled: !!jobId,
+    // Live-sync the dispute so both poster AND worker see it appear the moment
+    // a concern is raised, and see new chat messages without reloading. We stop
+    // once the dispute is resolved (nothing left to update).
+    refetchInterval: (query) => {
+      if (!enablePolling) return false;
+      const data = query.state.data as any;
+      if (data && data.status === 'resolved') return false;
+      return 5000;
+    },
   });
 }
 

@@ -64,8 +64,12 @@ export function useJob(id: number) {
     enabled: !!id,
     refetchInterval: (query) => {
       const data = query.state.data as any;
-      const workerMoving = data?.workerProgress === 'on_the_way' || data?.workerProgress === 'at_location';
-      return data?.status === 'in_progress' && workerMoving ? 4000 : false;
+      // Keep the page in sync while the job is active so both parties see live
+      // updates (worker location, and the status flipping to "disputed" the
+      // moment a concern is raised).
+      if (data?.status === 'in_progress') return 4000;
+      if (data?.status === 'disputed') return 5000;
+      return false;
     },
   });
 }

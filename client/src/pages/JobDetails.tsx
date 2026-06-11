@@ -68,7 +68,10 @@ export default function JobDetails() {
   const id = parseInt(params?.id || "0");
   const { data: job, isLoading, error } = useJob(id);
   const { data: offersData, isLoading: offersLoading } = useOffers(id);
-  const { data: disputeData, isLoading: disputeLoading } = useDisputeByJob(id);
+  // Poll the dispute while the job is active so the worker sees the chat appear
+  // (and new messages) the moment the poster raises a concern — no reload needed.
+  const disputeCanBeActive = !!job && (job.status === 'in_progress' || job.status === 'disputed' || job.status === 'completed');
+  const { data: disputeData, isLoading: disputeLoading } = useDisputeByJob(id, disputeCanBeActive);
   const { user } = useAuth();
 
   // In-app voice calling — resolve the other party (poster <-> worker[s]) for
