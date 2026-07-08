@@ -1,23 +1,42 @@
-import type { Express } from "express";
+import type { Express, RequestHandler } from "express";
 import { ObjectStorageService, ObjectNotFoundError } from "./objectStorage";
+
+interface UploadIntent {
+  userId: string;
+  expiresAt: number;
+}
 
 /**
  * Register object storage routes for file uploads.
  *
- * This provides example routes for the presigned URL upload flow:
- * 1. POST /api/uploads/request-url - Get a presigned URL for uploading
- * 2. The client then uploads directly to the presigned URL
+ * Upload URL minting requires authentication — anonymous callers must not be
+ * able to write arbitrary files into the application's private storage bucket.
  *
- * IMPORTANT: These are example routes. Customize based on your use case:
- * - Add authentication middleware for protected uploads
- * - Add file metadata storage (save to database after upload)
- * - Add ACL policies for access control
+ * When a signed upload URL is issued, the requesting user's ID is recorded
+ * in the shared uploadIntents map (keyed by object path). Routes that later
+ * accept object paths (verification docs, dispute evidence) must validate that
+ * an unconsumed intent exists for the submitted path and that it belongs to the
+ * requesting user. This prevents one user from claiming another user's object
+ * path and gaining unauthorized access or ACL ownership.
+ *
+ * Object serving is intentionally NOT registered here. The domain-aware
+ * authorization check for private documents lives in the application's main
+ * route file where it has access to storage, session context, and business-level
+ * ownership rules.
  */
-export function registerObjectStorageRoutes(app: Express): void {
+export function registerObjectStorageRoutes(
+  app: Express,
+  isAuthenticated: RequestHandler,
+  uploadIntents: Map<string, UploadIntent>
+): void {
   const objectStorageService = new ObjectStorageService();
 
   /**
    * Request a presigned URL for file upload.
+   *
+   * Requires authentication — only logged-in users may mint upload URLs.
+   * Records an upload intent server-side (objectPath → userId) so that
+   * subsequent persist routes can prove the submitter actually uploaded the file.
    *
    * Request body (JSON):
    * {
@@ -35,7 +54,7 @@ export function registerObjectStorageRoutes(app: Express): void {
    * IMPORTANT: The client should NOT send the file to this endpoint.
    * Send JSON metadata only, then upload the file directly to uploadURL.
    */
-  app.post("/api/uploads/request-url", async (req, res) => {
+  app.post("/api/uploads/request-url", isAuthenticated, async (req: any, res) => {
     try {
       const { name, size, contentType } = req.body;
 
@@ -45,15 +64,25 @@ export function registerObjectStorageRoutes(app: Express): void {
         });
       }
 
-      const uploadURL = await objectStorageService.getObjectEntityUploadURL();
+      const userId: string =
+        req.user?.claims?.sub || req.session?.manualUserId;
+      if (!userId) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
 
-      // Extract object path from the presigned URL for later reference
+      const uploadURL = await objectStorageService.getObjectEntityUploadURL();
       const objectPath = objectStorageService.normalizeObjectEntityPath(uploadURL);
+
+      // Bind this object path to the requesting user for 30 minutes.
+      // Persist routes must consume this intent before accepting the path.
+      uploadIntents.set(objectPath, {
+        userId,
+        expiresAt: Date.now() + 30 * 60 * 1000,
+      });
 
       res.json({
         uploadURL,
         objectPath,
-        // Echo back the metadata for client convenience
         metadata: { name, size, contentType },
       });
     } catch (error) {
@@ -61,26 +90,4 @@ export function registerObjectStorageRoutes(app: Express): void {
       res.status(500).json({ error: "Failed to generate upload URL" });
     }
   });
-
-  /**
-   * Serve uploaded objects.
-   *
-   * GET /objects/:objectPath(*)
-   *
-   * This serves files from object storage. For public files, no auth needed.
-   * For protected files, add authentication middleware and ACL checks.
-   */
-  app.get(/^\/objects\/(.*)/, async (req, res) => {
-    try {
-      const objectFile = await objectStorageService.getObjectEntityFile(req.path);
-      await objectStorageService.downloadObject(objectFile, res);
-    } catch (error) {
-      console.error("Error serving object:", error);
-      if (error instanceof ObjectNotFoundError) {
-        return res.status(404).json({ error: "Object not found" });
-      }
-      return res.status(500).json({ error: "Failed to serve object" });
-    }
-  });
 }
-

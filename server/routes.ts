@@ -6,10 +6,10 @@ import { z } from "zod";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { setupAuth, isAuthenticated, registerAuthRoutes } from "./replit_integrations/auth";
-import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
+import { registerObjectStorageRoutes, ObjectStorageService, ObjectNotFoundError, getObjectAclPolicy } from "./replit_integrations/object_storage";
 import { setupCallSignaling } from "./call";
 import { db } from "./db";
-import { users } from "@shared/schema";
+import { users, disputeMessages } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import {
   sendWelcomeEmail,
@@ -40,6 +40,22 @@ interface PaystackSession {
 }
 
 const paystackSessions = new Map<string, PaystackSession>();
+
+// Upload intents track which user requested each presigned upload URL.
+// When the client later submits a path (verification docs, dispute evidence),
+// we validate it exists here — proving the caller actually uploaded the file
+// and preventing one user from claiming another user's object path.
+interface UploadIntent {
+  userId: string;
+  expiresAt: number;
+}
+const uploadIntents = new Map<string, UploadIntent>();
+setInterval(() => {
+  const now = Date.now();
+  for (const [path, intent] of uploadIntents) {
+    if (intent.expiresAt < now) uploadIntents.delete(path);
+  }
+}, 60_000);
 
 function verificationBlockMessage(status: string | null | undefined, action: 'posting' | 'accepting'): string {
   const doing = action === 'posting' ? 'post a job' : 'accept a job';
@@ -90,8 +106,95 @@ export async function registerRoutes(
   await setupAuth(app);
   registerAuthRoutes(app);
   
-  // Setup Object Storage
-  registerObjectStorageRoutes(app);
+  // Setup Object Storage (auth middleware + intent recording enforced inside)
+  registerObjectStorageRoutes(app, isAuthenticated, uploadIntents);
+
+  // --- Domain-aware private object serving ---
+  // Requires either a regular user session OR an admin session.
+  // Authorization is enforced per-object based on ACL metadata (set at upload
+  // persist time) with a DB fallback for legacy files that predate ACL tagging.
+  const isAuthenticatedOrAdmin = async (req: any, res: any, next: any) => {
+    if (req.session?.manualUserId) return next();
+    if (req.isAuthenticated && req.isAuthenticated() && (req.user as any)?.claims?.sub) return next();
+    if (req.session?.adminId) return next();
+    return res.status(401).json({ error: "Unauthorized" });
+  };
+
+  app.get(/^\/objects\/(.*)/, isAuthenticatedOrAdmin, async (req: any, res) => {
+    const objectService = new ObjectStorageService();
+    try {
+      const objectPath: string = req.path; // e.g. /objects/uploads/<uuid>
+      const objectFile = await objectService.getObjectEntityFile(objectPath);
+
+      const userId: string | undefined =
+        req.user?.claims?.sub || req.session?.manualUserId;
+      const adminId: number | undefined = req.session?.adminId;
+      const userEmail: string | undefined = req.user?.claims?.email;
+      const isAdmin =
+        !!adminId || (userEmail && userEmail.toLowerCase() === OWNER_EMAIL);
+
+      // Admins and owner bypass per-object authorization (they need access to
+      // all ID cards, face scans, and dispute evidence for moderation).
+      if (isAdmin) {
+        return await objectService.downloadObject(objectFile, res);
+      }
+
+      if (!userId) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      // Check whether this object has ACL metadata set.
+      // When ACL is present it is authoritative — the result is final and we
+      // do NOT fall through to the DB check, which would let an attacker
+      // reference the path in their own record to override an ACL denial.
+      const aclPolicy = await getObjectAclPolicy(objectFile);
+      if (aclPolicy !== null) {
+        const canAccess = await objectService.canAccessObjectEntity({
+          userId,
+          objectFile,
+        });
+        if (canAccess) return await objectService.downloadObject(objectFile, res);
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      // No ACL metadata — legacy file uploaded before ACL tagging was introduced.
+      // DB lookup is safe here because new persist routes validate upload intents,
+      // preventing arbitrary path injection into profile or dispute records.
+      // 1. User's own verification documents
+      const profile = await storage.getProfile(userId);
+      if (
+        profile &&
+        (profile.idCardUrl === objectPath || profile.faceScanUrl === objectPath)
+      ) {
+        return await objectService.downloadObject(objectFile, res);
+      }
+
+      // 2. Dispute evidence where user is a participant (poster or worker)
+      const [disputeMsg] = await db
+        .select()
+        .from(disputeMessages)
+        .where(eq(disputeMessages.imageUrl, objectPath))
+        .limit(1);
+
+      if (disputeMsg) {
+        const dispute = await storage.getDispute(disputeMsg.disputeId);
+        if (
+          dispute &&
+          (dispute.posterId === userId || dispute.workerId === userId)
+        ) {
+          return await objectService.downloadObject(objectFile, res);
+        }
+      }
+
+      return res.status(403).json({ error: "Access denied" });
+    } catch (error) {
+      if (error instanceof ObjectNotFoundError) {
+        return res.status(404).json({ error: "Object not found" });
+      }
+      console.error("Error serving object:", error);
+      return res.status(500).json({ error: "Failed to serve object" });
+    }
+  });
 
   // Setup in-app voice call signaling (WebSocket on /ws/call)
   setupCallSignaling(httpServer);
@@ -2625,6 +2728,25 @@ export async function registerRoutes(
         return res.status(400).json({ message: "A proposal must include an amount" });
       }
 
+      // Validate upload intent BEFORE persisting the message.
+      // This proves the submitter actually uploaded the image via the authenticated
+      // /api/uploads/request-url endpoint, preventing path injection.
+      // Admin-originated images are skipped: admin session IDs are not real user
+      // IDs for ACL ownership, and admins bypass ACL checks in the serve route.
+      if (parsed.data.imageUrl && !isAdminUser && userId) {
+        const nowTs = Date.now();
+        const imageIntent = uploadIntents.get(parsed.data.imageUrl);
+        if (!imageIntent || imageIntent.userId !== userId || imageIntent.expiresAt < nowTs) {
+          return res.status(400).json({ message: "Image upload is invalid or expired. Please upload again." });
+        }
+        uploadIntents.delete(parsed.data.imageUrl);
+
+        const _disputeObjectService = new ObjectStorageService();
+        _disputeObjectService
+          .trySetObjectEntityAclPolicy(parsed.data.imageUrl, { owner: userId, visibility: 'private' })
+          .catch(err => console.error('Failed to set object ACL for dispute image:', err));
+      }
+
       const msg = await storage.createDisputeMessage({
         disputeId,
         senderId: senderId,
@@ -3473,6 +3595,30 @@ export async function registerRoutes(
     if (profile.verificationStatus === 'pending') {
       return res.status(400).json({ message: "Your verification is already under review." });
     }
+
+    // Validate upload intents — ensures each submitted object path was actually
+    // uploaded by this user via POST /api/uploads/request-url.  This prevents
+    // one user from claiming another user's object path and gaining ACL ownership.
+    const now = Date.now();
+    const idCardIntent = uploadIntents.get(parsed.data.idCardUrl);
+    if (!idCardIntent || idCardIntent.userId !== userId || idCardIntent.expiresAt < now) {
+      return res.status(400).json({ message: "ID card upload is invalid or expired. Please upload again." });
+    }
+    const faceScanIntent = uploadIntents.get(parsed.data.faceScanUrl);
+    if (!faceScanIntent || faceScanIntent.userId !== userId || faceScanIntent.expiresAt < now) {
+      return res.status(400).json({ message: "Face scan upload is invalid or expired. Please upload again." });
+    }
+
+    // Set ACL ownership metadata now that we've confirmed this user owns the uploads.
+    const _verifyObjectService = new ObjectStorageService();
+    await Promise.all([
+      _verifyObjectService.trySetObjectEntityAclPolicy(parsed.data.idCardUrl, { owner: userId, visibility: 'private' }),
+      _verifyObjectService.trySetObjectEntityAclPolicy(parsed.data.faceScanUrl, { owner: userId, visibility: 'private' }),
+    ]).catch(err => console.error('Failed to set object ACL for verification docs:', err));
+
+    // Consume intents so they cannot be reused or re-bound to a different user.
+    uploadIntents.delete(parsed.data.idCardUrl);
+    uploadIntents.delete(parsed.data.faceScanUrl);
 
     const verifyIp = ((req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()) || req.ip || req.socket?.remoteAddress || 'unknown';
     const updated = await storage.submitVerification(userId, parsed.data.idCardUrl, parsed.data.faceScanUrl, verifyIp);
