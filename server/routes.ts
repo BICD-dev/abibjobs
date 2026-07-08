@@ -41,6 +41,20 @@ interface PaystackSession {
 
 const paystackSessions = new Map<string, PaystackSession>();
 
+function verificationBlockMessage(status: string | null | undefined, action: 'posting' | 'accepting'): string {
+  const doing = action === 'posting' ? 'post a job' : 'accept a job';
+  switch (status) {
+    case 'pending':
+      return `Your verification is still awaiting admin approval. Please wait for an admin to accept your verification before you can ${doing}.`;
+    case 'declined':
+      return `Your verification was declined. Please submit a new verification and wait for admin approval before you can ${doing}.`;
+    case 'redo_requested':
+      return `An admin asked you to redo your verification. Please resubmit it and wait for approval before you can ${doing}.`;
+    default:
+      return `You must complete identity verification before you can ${doing}. Go to your Profile to get verified.`;
+  }
+}
+
 async function paystackRequest(method: string, path: string, body?: any): Promise<any> {
   const secretKey = process.env.PAYSTACK_SECRET_KEY;
   if (!secretKey) throw new Error("PAYSTACK_SECRET_KEY is not configured");
@@ -313,7 +327,7 @@ export async function registerRoutes(
 
       if (!profile) return res.status(404).json({ message: "Profile not found" });
       if (profile.verificationStatus !== 'verified') {
-        return res.status(403).json({ message: "You must complete identity verification before posting a job." });
+        return res.status(403).json({ message: verificationBlockMessage(profile.verificationStatus, 'posting') });
       }
 
       const jobInput = {
@@ -361,7 +375,7 @@ export async function registerRoutes(
 
     const acceptorProfile = await storage.getProfile(userId);
     if (acceptorProfile && acceptorProfile.verificationStatus !== 'verified') {
-      return res.status(403).json({ message: "You must complete identity verification before accepting a job." });
+      return res.status(403).json({ message: verificationBlockMessage(acceptorProfile.verificationStatus, 'accepting') });
     }
     
     const job = await storage.getJob(jobId);
