@@ -24,6 +24,9 @@ export const profiles = pgTable("profiles", {
   profilePictureUrl: text("profile_picture_url"),
   noShowCount: integer("no_show_count").default(0).notNull(),
   isSuspended: boolean("is_suspended").default(false).notNull(),
+  lastSeenAt: timestamp("last_seen_at"),
+  lastSeenPage: text("last_seen_page"),
+  lastSeenIp: text("last_seen_ip"),
 });
 
 export const jobs = pgTable("jobs", {

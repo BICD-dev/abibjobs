@@ -81,11 +81,13 @@ export function Navbar() {
     adminLinks.push({ href: "/admin/verifications", label: "Verifications", icon: ShieldCheck });
     adminLinks.push({ href: "/admin/disputes", label: "Disputes", icon: Scale });
     adminLinks.push({ href: "/admin/staff", label: "Admin Staff", icon: Users });
+    adminLinks.push({ href: "/admin/security", label: "Investigations", icon: Shield });
     adminLinks.push({ href: "/admin/support", label: "Live Support", icon: Headphones });
     adminLinks.push({ href: "/admin/withdrawal-requests", label: "Withdrawals", icon: ArrowDownToLine });
   } else if (isStaff) {
     adminLinks.push({ href: "/admin/verifications", label: "Verifications", icon: ShieldCheck });
     adminLinks.push({ href: "/admin/disputes", label: "Disputes", icon: Scale });
+    adminLinks.push({ href: "/admin/security", label: "Investigations", icon: Shield });
     adminLinks.push({ href: "/admin/support", label: "Live Support", icon: Headphones });
     adminLinks.push({ href: "/admin/withdrawal-requests", label: "Withdrawals", icon: ArrowDownToLine });
     adminLinks.push({ href: "/admin/profile", label: "My Profile", icon: User });

@@ -3520,8 +3520,8 @@ export async function registerRoutes(
     res.json(updated);
   });
 
-  // --- SECURITY RECORDS (owner only) ---
-  app.get('/api/admin/security-records', isAuthenticated, isOwner, async (req, res) => {
+  // --- SECURITY RECORDS (all admins) ---
+  app.get('/api/admin/security-records', isAdminOrOwner, async (req, res) => {
     try {
       const search = typeof req.query.search === 'string' ? req.query.search : undefined;
       const records = await storage.getSecurityRecords(search);
@@ -3532,11 +3532,13 @@ export async function registerRoutes(
     }
   });
 
-  app.get('/api/admin/security-records/:userId', isAuthenticated, isOwner, async (req, res) => {
+  app.get('/api/admin/security-records/:userId', isAdminOrOwner, async (req, res) => {
     try {
       const detail = await storage.getSecurityRecordDetail(req.params.userId);
       if (!detail?.user) return res.status(404).json({ message: "User not found" });
-      res.json(detail);
+      // Never expose credentials or reset tokens to admins
+      const { passwordHash, passwordResetToken, passwordResetExpiry, ...safeUser } = detail.user;
+      res.json({ ...detail, user: safeUser });
     } catch (err) {
       console.error("Security record detail error:", err);
       res.status(500).json({ message: "Failed to fetch security record" });
@@ -3641,6 +3643,14 @@ export async function registerRoutes(
       if (!visitorId || !page) return res.status(400).json({ message: "Missing visitorId or page" });
       const userAgent = req.headers['user-agent'] || undefined;
       await storage.trackVisit(visitorId, page, userAgent);
+
+      // Record "last seen" info for logged-in users (for admin investigations)
+      const seenUserId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
+      if (seenUserId) {
+        const seenIp = ((req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()) || req.ip || req.socket?.remoteAddress || 'unknown';
+        storage.updateLastSeen(String(seenUserId), String(page).slice(0, 200), seenIp).catch(() => {});
+      }
+
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ message: "Failed to track visit" });

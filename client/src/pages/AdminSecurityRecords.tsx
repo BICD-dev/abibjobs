@@ -113,24 +113,31 @@ function UserDetailModal({ user, onClose }: { user: any; onClose: () => void }) 
               <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
                 <div>
                   <span className="text-muted-foreground">Registration IP</span>
-                  <div className="font-mono font-medium text-foreground">{detail.user?.registration_ip || "—"}</div>
+                  <div className="font-mono font-medium text-foreground">{detail.user?.registrationIp || "—"}</div>
                 </div>
                 <div>
                   <span className="text-muted-foreground">Last Login IP</span>
-                  <div className="font-mono font-medium text-foreground">{detail.user?.last_login_ip || "—"}</div>
+                  <div className="font-mono font-medium text-foreground">{detail.user?.lastLoginIp || "—"}</div>
                 </div>
                 <div>
                   <span className="text-muted-foreground">Last Seen</span>
-                  <div className="font-medium text-foreground">{fmtDateTime(detail.user?.last_login_at)}</div>
+                  <div className="font-medium text-foreground">{fmtDateTime(detail.profile?.lastSeenAt || detail.user?.lastLoginAt)}</div>
+                  {detail.profile?.lastSeenPage && (
+                    <div className="text-xs text-muted-foreground mt-0.5">Page: {detail.profile.lastSeenPage}</div>
+                  )}
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Last Seen IP</span>
+                  <div className="font-mono font-medium text-foreground">{detail.profile?.lastSeenIp || "—"}</div>
                 </div>
                 <div>
                   <span className="text-muted-foreground">Verification IP</span>
-                  <div className="font-mono font-medium text-foreground">{detail.profile?.verification_ip || "—"}</div>
+                  <div className="font-mono font-medium text-foreground">{detail.profile?.verificationIp || "—"}</div>
                 </div>
-                {detail.profile?.verification_submitted_at && (
+                {detail.profile?.verificationSubmittedAt && (
                   <div>
                     <span className="text-muted-foreground">Verification Submitted</span>
-                    <div className="font-medium text-foreground">{fmtDateTime(detail.profile?.verification_submitted_at)}</div>
+                    <div className="font-medium text-foreground">{fmtDateTime(detail.profile?.verificationSubmittedAt)}</div>
                   </div>
                 )}
               </div>
@@ -175,11 +182,11 @@ function UserDetailModal({ user, onClose }: { user: any; onClose: () => void }) 
               </h3>
               <div className="grid grid-cols-4 gap-3">
                 <div className="bg-muted/50 rounded-lg p-3 text-center">
-                  <div className="text-xl font-bold text-foreground">{detail.recentJobs?.filter((j: any) => j.poster_id === user.id).length ?? 0}</div>
+                  <div className="text-xl font-bold text-foreground">{detail.recentJobs?.filter((j: any) => j.posterId === user.id).length ?? 0}</div>
                   <div className="text-xs text-muted-foreground mt-1">Jobs Posted</div>
                 </div>
                 <div className="bg-muted/50 rounded-lg p-3 text-center">
-                  <div className="text-xl font-bold text-foreground">{detail.recentJobs?.filter((j: any) => j.poster_id !== user.id).length ?? 0}</div>
+                  <div className="text-xl font-bold text-foreground">{detail.recentJobs?.filter((j: any) => j.posterId !== user.id).length ?? 0}</div>
                   <div className="text-xs text-muted-foreground mt-1">Jobs Accepted</div>
                 </div>
                 <div className="bg-muted/50 rounded-lg p-3 text-center">
@@ -204,7 +211,7 @@ function UserDetailModal({ user, onClose }: { user: any; onClose: () => void }) 
                       <div key={j.id} className="flex items-center justify-between text-sm py-1.5 border-b border-border/50 last:border-0">
                         <div>
                           <span className="font-medium text-foreground">{j.title}</span>
-                          <span className="ml-2 text-xs text-muted-foreground">{j.poster_id === user.id ? "Posted" : "Accepted"}</span>
+                          <span className="ml-2 text-xs text-muted-foreground">{j.posterId === user.id ? "Posted" : "Accepted"}</span>
                         </div>
                         <div className="flex items-center gap-2">
                           <Badge variant="outline" className="text-xs">{j.status}</Badge>
@@ -230,7 +237,7 @@ function UserDetailModal({ user, onClose }: { user: any; onClose: () => void }) 
                       <div key={t.id} className="flex items-center justify-between text-sm py-1.5 border-b border-border/50 last:border-0">
                         <div>
                           <span className="font-medium text-foreground capitalize">{t.type?.replace(/_/g, " ")}</span>
-                          <span className="ml-2 text-xs text-muted-foreground">{fmtDate(t.created_at)}</span>
+                          <span className="ml-2 text-xs text-muted-foreground">{fmtDate(t.createdAt)}</span>
                         </div>
                         <span className={`font-semibold ${Number(t.amount) >= 0 ? "text-green-600" : "text-red-600"}`}>
                           {Number(t.amount) >= 0 ? "+" : ""}₦{Math.abs(Number(t.amount)).toLocaleString()}
@@ -252,6 +259,7 @@ export default function AdminSecurityRecords() {
   const { user } = useAuth();
   const { isStaff } = useAdminAuth();
   const isOwner = user?.email?.toLowerCase() === "abeebakeem265@gmail.com";
+  const canView = isOwner || isStaff;
 
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
@@ -267,7 +275,7 @@ export default function AdminSecurityRecords() {
       if (!res.ok) return [];
       return res.json();
     },
-    enabled: isOwner,
+    enabled: canView,
   });
 
   const filtered = records.filter((r) => {
@@ -278,14 +286,14 @@ export default function AdminSecurityRecords() {
     return true;
   });
 
-  if (!isOwner) {
+  if (!canView) {
     return (
       <div className="min-h-screen bg-background">
         <Navbar />
         <div className="max-w-4xl mx-auto px-4 py-20 text-center">
           <Shield className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
           <h2 className="text-2xl font-bold mb-2 text-foreground">Access Denied</h2>
-          <p className="text-muted-foreground">Owner access required to view security records.</p>
+          <p className="text-muted-foreground">Admin access required to view security records.</p>
         </div>
       </div>
     );
@@ -425,8 +433,8 @@ export default function AdminSecurityRecords() {
                         <td className="px-4 py-3">
                           <div className="text-xs font-mono space-y-0.5">
                             <div className="text-foreground">{record.registration_ip || <span className="text-muted-foreground not-italic font-sans">No IP</span>}</div>
-                            {record.last_login_at && (
-                              <div className="text-muted-foreground not-italic font-sans">Last: {fmtDate(record.last_login_at)}</div>
+                            {(record.last_seen_at || record.last_login_at) && (
+                              <div className="text-muted-foreground not-italic font-sans">Seen: {fmtDate(record.last_seen_at || record.last_login_at)}</div>
                             )}
                           </div>
                         </td>

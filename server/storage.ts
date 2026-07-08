@@ -169,6 +169,7 @@ export interface IStorage {
   // Security Records (owner only)
   getSecurityRecords(search?: string): Promise<any[]>;
   getSecurityRecordDetail(userId: string): Promise<any>;
+  updateLastSeen(userId: string, page: string, ip: string): Promise<void>;
 
   // Owner Settings
   getOwnerSettings(): Promise<{ passcodeHash: string | null; ownerEmail: string; id: number } | undefined>;
@@ -1226,6 +1227,9 @@ export class DatabaseStorage implements IStorage {
         p.no_show_count,
         p.is_suspended,
         p.profile_picture_url,
+        p.last_seen_at,
+        p.last_seen_page,
+        p.last_seen_ip,
         (SELECT COUNT(*) FROM jobs WHERE poster_id = u.id) as jobs_posted,
         (SELECT COUNT(*) FROM jobs WHERE worker_id LIKE '%' || u.id || '%') as jobs_accepted,
         (SELECT COUNT(*) FROM disputes WHERE poster_id = u.id OR worker_id LIKE '%' || u.id || '%') as disputes_count,
@@ -1325,6 +1329,12 @@ export class DatabaseStorage implements IStorage {
 
   async trackVisit(visitorId: string, page: string, userAgent?: string): Promise<void> {
     await db.insert(siteVisits).values({ visitorId, page, userAgent });
+  }
+
+  async updateLastSeen(userId: string, page: string, ip: string): Promise<void> {
+    await db.update(profiles)
+      .set({ lastSeenAt: new Date(), lastSeenPage: page, lastSeenIp: ip })
+      .where(eq(profiles.userId, userId));
   }
 
   async getDashboardAnalytics() {

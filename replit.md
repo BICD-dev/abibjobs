@@ -113,6 +113,14 @@ Schema changes use `drizzle-kit push` (not migrations). Run `npm run db:push` to
 - Poster can cancel a job (open or in_progress) to get escrow refund
 - Transaction types: deposit, withdrawal, escrow_hold, escrow_refund, job_earning, fee, cancellation_compensation
 
+### Security Records / Investigations (All Admins)
+- Investigations page at /admin/security accessible to owner AND staff admins ("Investigations" nav link)
+- Lists all users with: email, phone, location, registration/last-login/verification IPs, ID card + face selfie images, job/transaction/dispute counts, suspension and no-show status
+- Detail modal shows full identity info, network records, ID photos, recent jobs, and recent transactions
+- Last-seen tracking: profiles has lastSeenAt/lastSeenPage/lastSeenIp, updated via POST /api/track-visit when the visitor is logged in
+- Detail endpoint strips passwordHash and password reset tokens before responding (never expose credentials to admins)
+- Routes: GET /api/admin/security-records (list + search), GET /api/admin/security-records/:userId (detail) — both guarded by isAdminOrOwner
+
 ### Admin Dashboard Analytics
 - Dashboard at /admin/dashboard accessible to both owner and staff admins
 - Stats: total visitors (unique), total sign-ups, total user top-ups (deposits), total paid out (earnings + withdrawals)

@@ -1,4 +1,5 @@
 - [Express 5 req.params widening](express5-params-typing.md) — multi-middleware routes widen req.params to string|string[]; wrap parseInt with String().
+- [Mixed snake_case/camelCase API keys](mixed-case-api-keys.md) — raw-SQL endpoints return snake_case, Drizzle selects camelCase; curl the real response before wiring the frontend, and strip credential fields from full users rows.
 - [Admin vs user sessions](admin-vs-user-sessions.md) — user session & staff-admin session coexist in one browser (can be different people); admin gate is admin_users/OWNER_EMAIL, NOT profiles.role.
 - [Dependency security fixes](dependency-security-fixes.md) — how transitive/breaking dep vulnerabilities were resolved and why those choices are safe here.
 - [Live UI needs explicit polling](live-data-no-autorefetch.md) — global react-query config disables ALL auto-refetch; cross-user "live" UI must set refetchInterval.
