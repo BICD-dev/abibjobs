@@ -2074,6 +2074,41 @@ export async function registerRoutes(
     }
   });
 
+  // Owner: recall funds from an admin's wallet back into platform earnings
+  app.post('/api/admin/payroll/recall', isAuthenticated, isOwner, async (req, res) => {
+    try {
+      const adminId = parseInt(String(req.body?.adminId));
+      const amount = parseFloat(String(req.body?.amount));
+      const note = typeof req.body?.note === 'string' ? req.body.note.trim().slice(0, 500) : undefined;
+
+      if (!isFinite(adminId) || adminId <= 0) return res.status(400).json({ message: "Invalid admin." });
+      if (!isFinite(amount) || amount <= 0) return res.status(400).json({ message: "Enter a valid amount." });
+
+      const admin = await storage.getAdminUser(adminId);
+      if (!admin) return res.status(404).json({ message: "Admin not found." });
+
+      const result = await storage.recallAdminFunds(adminId, amount, note || undefined);
+
+      try {
+        await storage.createAdminNotification({
+          adminId,
+          title: "Payment Recalled",
+          message: `\u20A6${amount.toLocaleString()} was recalled from your wallet by the owner${note ? `. Note: ${note}` : '.'}`,
+          type: "warning",
+        });
+      } catch (e) {}
+
+      res.json({
+        success: true,
+        recalled: result.recalled,
+        adminName: result.admin.name,
+        newWalletBalance: result.admin.walletBalance,
+      });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message || "Failed to recall payment" });
+    }
+  });
+
   // Owner: view payroll summary (all admins with hours and bank info)
   app.get('/api/admin/payroll', isAuthenticated, isOwner, async (req, res) => {
     try {

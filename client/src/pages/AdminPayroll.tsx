@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Wallet, Clock, Users, Check, AlertCircle, CreditCard, Building2, TrendingUp, ArrowDownToLine, CheckCircle2, XCircle, User } from "lucide-react";
+import { Loader2, Wallet, Clock, Users, Check, AlertCircle, CreditCard, Building2, TrendingUp, ArrowDownToLine, CheckCircle2, XCircle, User, RotateCcw } from "lucide-react";
 import { useAdminAuth } from "@/hooks/use-admin-auth";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
@@ -68,6 +68,7 @@ interface AdminWithdrawal {
   processedAt: string | null;
   createdAt: string;
   adminName?: string;
+  adminWalletBalance?: string;
 }
 
 function WithdrawalStatusBadge({ status }: { status: string }) {
@@ -90,6 +91,10 @@ export default function AdminPayroll() {
   const [withdrawalAction, setWithdrawalAction] = useState<'approved' | 'rejected' | null>(null);
   const [withdrawalNote, setWithdrawalNote] = useState("");
   const [withdrawalDialogOpen, setWithdrawalDialogOpen] = useState(false);
+  const [recallDialogOpen, setRecallDialogOpen] = useState(false);
+  const [recallTarget, setRecallTarget] = useState<AdminWithdrawal | null>(null);
+  const [recallAmount, setRecallAmount] = useState("");
+  const [recallNote, setRecallNote] = useState("");
 
   const { data: admins, isLoading } = useQuery<PayrollAdmin[]>({
     queryKey: ["/api/admin/payroll"],
@@ -191,6 +196,55 @@ export default function AdminPayroll() {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     },
   });
+
+  const recallMutation = useMutation({
+    mutationFn: async ({ adminId, amount, note }: { adminId: number; amount: string; note: string }) => {
+      const res = await fetch("/api/admin/payroll/recall", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adminId, amount, note }),
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || "Failed to recall payment");
+      }
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/admin-withdrawals"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/earnings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/payroll/history"] });
+      setRecallDialogOpen(false);
+      setRecallTarget(null);
+      setRecallAmount("");
+      setRecallNote("");
+      toast({
+        title: "Payment Recalled",
+        description: `${formatNaira(data.recalled)} moved from ${data.adminName}'s wallet back to your platform earnings.`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const openRecallDialog = (w: AdminWithdrawal) => {
+    setRecallTarget(w);
+    setRecallAmount("");
+    setRecallNote("");
+    setRecallDialogOpen(true);
+  };
+
+  const handleConfirmRecall = () => {
+    if (!recallTarget) return;
+    const amt = parseFloat(recallAmount);
+    if (!isFinite(amt) || amt <= 0) {
+      toast({ title: "Invalid Amount", description: "Enter a valid amount to recall.", variant: "destructive" });
+      return;
+    }
+    recallMutation.mutate({ adminId: recallTarget.adminId, amount: recallAmount, note: recallNote });
+  };
 
   const openWithdrawalDialog = (w: AdminWithdrawal, act: 'approved' | 'rejected') => {
     setSelectedWithdrawal(w);
@@ -561,6 +615,16 @@ export default function AdminPayroll() {
                                 <XCircle className="w-4 h-4 mr-1" />
                                 Reject
                               </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="rounded-xl border-amber-200 text-amber-600 hover:bg-amber-50 dark:border-amber-900 dark:hover:bg-amber-950"
+                                onClick={() => openRecallDialog(w)}
+                                data-testid={`button-wd-recall-${w.id}`}
+                              >
+                                <RotateCcw className="w-4 h-4 mr-1" />
+                                Recall Payment
+                              </Button>
                             </div>
                           )}
                         </div>
@@ -598,7 +662,7 @@ export default function AdminPayroll() {
                           </p>
                         </div>
                         <div className="text-right flex-shrink-0">
-                          <span className="text-xs font-medium text-green-600 bg-green-500/10 px-2 py-1 rounded-md">{p.status}</span>
+                          <span className={`text-xs font-medium px-2 py-1 rounded-md ${p.status === 'recalled' ? 'text-amber-600 bg-amber-500/10' : 'text-green-600 bg-green-500/10'}`}>{p.status}</span>
                           <p className="text-xs text-muted-foreground mt-1">
                             {p.createdAt ? format(new Date(p.createdAt), "MMM d, yyyy") : ""}
                           </p>
@@ -684,6 +748,81 @@ export default function AdminPayroll() {
                   data-testid="button-wd-confirm"
                 >
                   {processWithdrawalMutation.isPending ? <Loader2 className="animate-spin" /> : withdrawalAction === 'approved' ? 'Confirm & Pay' : 'Reject Request'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={recallDialogOpen} onOpenChange={setRecallDialogOpen}>
+        <DialogContent className="rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>Recall Payment</DialogTitle>
+          </DialogHeader>
+
+          {recallTarget && (
+            <div className="space-y-4">
+              <div className="bg-muted/50 rounded-xl p-4 space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Admin</span>
+                  <span className="font-medium" data-testid="text-recall-admin">{recallTarget.adminName || `Admin #${recallTarget.adminId}`}</span>
+                </div>
+                {recallTarget.adminWalletBalance !== undefined && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Their wallet balance</span>
+                    <span className="font-bold text-primary" data-testid="text-recall-balance">{formatNaira(recallTarget.adminWalletBalance)}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-start gap-2 p-3 bg-amber-50 dark:bg-amber-950/30 rounded-xl text-sm text-amber-700 dark:text-amber-400">
+                <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                <p>This takes money out of the admin's wallet and returns it to your platform earnings. It only works on funds currently in their wallet — money held in this pending withdrawal request is not included unless you reject the request first.</p>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Amount to recall (₦)</label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="e.g., 5000"
+                  value={recallAmount}
+                  onChange={(e) => setRecallAmount(e.target.value)}
+                  className="rounded-xl"
+                  data-testid="input-recall-amount"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Note to admin (optional)</label>
+                <Textarea
+                  placeholder="Explain why the payment is being recalled..."
+                  value={recallNote}
+                  onChange={(e) => setRecallNote(e.target.value)}
+                  className="rounded-xl resize-none"
+                  rows={3}
+                  data-testid="input-recall-note"
+                />
+              </div>
+
+              <div className="flex gap-3">
+                <Button
+                  variant="outline"
+                  className="flex-1 rounded-xl"
+                  onClick={() => setRecallDialogOpen(false)}
+                  data-testid="button-recall-cancel"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  className="flex-1 rounded-xl text-white bg-amber-600 hover:bg-amber-700"
+                  onClick={handleConfirmRecall}
+                  disabled={recallMutation.isPending || !recallAmount || parseFloat(recallAmount) <= 0}
+                  data-testid="button-recall-confirm"
+                >
+                  {recallMutation.isPending ? <Loader2 className="animate-spin" /> : 'Recall Funds'}
                 </Button>
               </div>
             </div>

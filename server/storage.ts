@@ -130,8 +130,9 @@ export interface IStorage {
   creditAdminWallet(adminId: number, amount: number): Promise<AdminUser>;
   requestAdminWithdrawal(adminId: number, data: { amount: string; bankName: string; bankCode?: string | null; accountNumber: string; accountName?: string | null }): Promise<AdminWithdrawal>;
   getAdminWithdrawals(adminId: number): Promise<AdminWithdrawal[]>;
-  getAllAdminWithdrawals(status?: string): Promise<(AdminWithdrawal & { adminName?: string })[]>;
+  getAllAdminWithdrawals(status?: string): Promise<(AdminWithdrawal & { adminName?: string; adminWalletBalance?: string })[]>;
   processAdminWithdrawal(id: number, status: 'approved' | 'rejected', processedBy: number, adminNote?: string): Promise<AdminWithdrawal>;
+  recallAdminFunds(adminId: number, amount: number, note?: string): Promise<{ admin: AdminUser; recalled: string }>;
 
   // Notifications
   createNotification(data: { userId: string; title: string; message: string; type: string; jobId?: number }): Promise<Notification>;
@@ -911,7 +912,7 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(adminWithdrawals).where(eq(adminWithdrawals.adminId, adminId)).orderBy(desc(adminWithdrawals.createdAt));
   }
 
-  async getAllAdminWithdrawals(status?: string): Promise<(AdminWithdrawal & { adminName?: string })[]> {
+  async getAllAdminWithdrawals(status?: string): Promise<(AdminWithdrawal & { adminName?: string; adminWalletBalance?: string })[]> {
     return db.select({
       id: adminWithdrawals.id,
       adminId: adminWithdrawals.adminId,
@@ -926,6 +927,7 @@ export class DatabaseStorage implements IStorage {
       processedAt: adminWithdrawals.processedAt,
       createdAt: adminWithdrawals.createdAt,
       adminName: adminUsers.name,
+      adminWalletBalance: adminUsers.walletBalance,
     })
     .from(adminWithdrawals)
     .innerJoin(adminUsers, eq(adminWithdrawals.adminId, adminUsers.id))
@@ -949,6 +951,45 @@ export class DatabaseStorage implements IStorage {
           .where(eq(adminUsers.id, updated.adminId));
       }
       return updated;
+    });
+  }
+
+  // Owner recall: pull funds from an admin's wallet back into platform earnings.
+  // Conditional deduct (WHERE balance >= amount) prevents recalling more than the admin holds.
+  async recallAdminFunds(adminId: number, amount: number, note?: string): Promise<{ admin: AdminUser; recalled: string }> {
+    if (!isFinite(amount) || amount <= 0) throw new Error("Invalid amount");
+
+    return db.transaction(async (tx) => {
+      const [admin] = await tx.update(adminUsers)
+        .set({ walletBalance: sql`${adminUsers.walletBalance} - ${amount}` })
+        .where(and(eq(adminUsers.id, adminId), sql`${adminUsers.walletBalance} >= ${amount}`))
+        .returning();
+      if (!admin) throw new Error("The admin's wallet balance is lower than this amount. If their funds are held in a pending withdrawal, reject it first to return the money to their wallet.");
+
+      let [earnings] = await tx.select().from(platformEarnings);
+      if (!earnings) {
+        [earnings] = await tx.insert(platformEarnings).values({ totalBalance: "0" }).returning();
+      }
+      // Atomic in-place credit avoids lost updates against concurrent fee credits.
+      await tx.update(platformEarnings)
+        .set({ totalBalance: sql`${platformEarnings.totalBalance} + ${amount}` })
+        .where(eq(platformEarnings.id, earnings.id));
+
+      await tx.insert(platformTransactions).values({
+        amount: amount.toFixed(2),
+        type: 'salary_recall',
+        jobTitle: `Recalled from ${admin.name}${note ? ` — ${note}` : ''}`,
+      });
+
+      await tx.insert(adminPayments).values({
+        adminId,
+        amount: amount.toFixed(2),
+        status: 'recalled',
+        note: note || 'Payment recalled by owner',
+        paidBy: 'owner',
+      });
+
+      return { admin, recalled: amount.toFixed(2) };
     });
   }
 
