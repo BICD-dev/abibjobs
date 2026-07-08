@@ -463,18 +463,21 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateWalletBalance(userId: string, amountChange: number): Promise<Profile> {
-    const profile = await this.getProfile(userId);
-    if (!profile) throw new Error("Profile not found");
+    const delta = amountChange.toFixed(2);
+    const condition = amountChange < 0
+      ? and(eq(profiles.userId, userId), sql`${profiles.walletBalance}::numeric + ${delta}::numeric >= 0`)
+      : eq(profiles.userId, userId);
 
-    const currentBalance = parseFloat(profile.walletBalance);
-    const newBalance = currentBalance + amountChange;
-
-    const [updated] = await db.update(profiles)
-      .set({ walletBalance: newBalance.toFixed(2) })
-      .where(eq(profiles.userId, userId))
+    const result = await db.update(profiles)
+      .set({ walletBalance: sql`(${profiles.walletBalance}::numeric + ${delta}::numeric)` })
+      .where(condition)
       .returning();
-    
-    return updated;
+
+    if (result.length === 0) {
+      if (amountChange < 0) throw new Error("Insufficient wallet balance");
+      throw new Error("Profile not found");
+    }
+    return result[0];
   }
 
   async getOffersByJob(jobId: number): Promise<OfferWithSender[]> {

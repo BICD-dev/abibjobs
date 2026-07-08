@@ -9,8 +9,8 @@ import { setupAuth, isAuthenticated, registerAuthRoutes } from "./replit_integra
 import { registerObjectStorageRoutes, ObjectStorageService, ObjectNotFoundError, getObjectAclPolicy } from "./replit_integrations/object_storage";
 import { setupCallSignaling } from "./call";
 import { db } from "./db";
-import { users, disputeMessages } from "@shared/schema";
-import { eq } from "drizzle-orm";
+import { users, disputeMessages, jobs, disputes } from "@shared/schema";
+import { eq, sql, and } from "drizzle-orm";
 import {
   sendWelcomeEmail,
   sendPasswordResetEmail,
@@ -622,6 +622,19 @@ export async function registerRoutes(
       const totalPayout = totalEscrow - fee;
       const payoutPerWorker = totalPayout / workerIds.length;
 
+      const [atomicCompleted] = await db.update(jobs)
+        .set({ status: 'completed', completedAt: new Date(), posterMarkedComplete: true, workerMarkedComplete: true })
+        .where(and(eq(jobs.id, jobId), eq(jobs.status, 'in_progress')))
+        .returning();
+
+      if (!atomicCompleted) {
+        const currentJob = await storage.getJob(jobId);
+        if (currentJob?.status === 'completed') {
+          return res.json({ ...currentJob, bothConfirmed: true });
+        }
+        return res.status(409).json({ message: "Job state changed concurrently. Please refresh and try again." });
+      }
+
       for (const wId of workerIds) {
         await storage.updateWalletBalance(wId, payoutPerWorker);
         await storage.createTransaction({
@@ -633,7 +646,7 @@ export async function registerRoutes(
       }
 
       await storage.addPlatformEarning(fee, job.id, job.title);
-      const completed = await storage.updateJob(jobId, { status: 'completed', completedAt: new Date() });
+      const completed = atomicCompleted;
 
       await storage.createAdminNotification({
         adminId: 0,
@@ -2884,6 +2897,19 @@ export async function registerRoutes(
       const workerIds = job.workerId ? job.workerId.split(',').filter(Boolean) : [];
       const payoutPerWorker = workerPayout / workerIds.length;
 
+      const [atomicResolved] = await db.update(disputes)
+        .set({ status: 'resolved', resolvedAmount: resolvedAmount.toFixed(2), resolvedBy: 'agreement' })
+        .where(and(eq(disputes.id, disputeId), eq(disputes.status, 'awaiting_payment')))
+        .returning();
+
+      if (!atomicResolved) {
+        const currentDispute = await storage.getDispute(disputeId);
+        if (currentDispute?.status === 'resolved') {
+          return res.json(currentDispute);
+        }
+        return res.status(409).json({ message: "Dispute state changed concurrently. Please refresh and try again." });
+      }
+
       for (const wId of workerIds) {
         await storage.updateWalletBalance(wId, payoutPerWorker);
         await storage.createTransaction({
@@ -2912,12 +2938,6 @@ export async function registerRoutes(
         message: `Payment confirmed. \u20A6${resolvedAmount.toLocaleString()} released to worker (platform fee: \u20A6${fee.toFixed(2)}).`,
         type: 'system',
         amount: resolvedAmount.toFixed(2),
-      });
-
-      await storage.updateDispute(disputeId, {
-        status: 'resolved',
-        resolvedAmount: resolvedAmount.toFixed(2),
-        resolvedBy: 'agreement',
       });
 
       await storage.updateJob(dispute.jobId, { status: 'completed', completedAt: new Date() });
@@ -3089,6 +3109,15 @@ export async function registerRoutes(
         summaryMsg = `Admin resolved with custom split: Worker \u20A6${workerTotal.toLocaleString()}, Poster refund \u20A6${posterRefund.toLocaleString()}, Platform \u20A6${platformFee.toLocaleString()}.`;
       }
 
+      const [atomicAdminResolved] = await db.update(disputes)
+        .set({ status: 'resolved', resolvedAmount: (action === 'refund_poster' ? posterRefund : workerTotal).toFixed(2), resolvedBy: 'admin' })
+        .where(and(eq(disputes.id, disputeId), sql`${disputes.status} != 'resolved'`))
+        .returning();
+
+      if (!atomicAdminResolved) {
+        return res.status(409).json({ message: "This dispute has already been resolved." });
+      }
+
       if (workerTotal > 0 && workerIds.length > 0) {
         const payoutPerWorker = workerTotal / workerIds.length;
         for (const wId of workerIds) {
@@ -3133,12 +3162,6 @@ export async function registerRoutes(
         amount: (action === 'refund_poster' ? posterRefund : workerTotal).toFixed(2),
       });
 
-      await storage.updateDispute(disputeId, {
-        status: 'resolved',
-        resolvedAmount: (action === 'refund_poster' ? posterRefund : workerTotal).toFixed(2),
-        resolvedBy: 'admin',
-      });
-
       const newStatus = action === 'refund_poster' ? 'cancelled' : 'completed';
       await storage.updateJob(dispute.jobId, { 
         status: newStatus,
@@ -3177,7 +3200,7 @@ export async function registerRoutes(
     });
   });
 
-  app.post(api.wallet.deposit.path, isAuthenticated, async (req, res) => {
+  app.post(api.wallet.deposit.path, isAuthenticated, isAdminOrOwner, async (req, res) => {
     const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
     const parsed = api.wallet.deposit.input.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
