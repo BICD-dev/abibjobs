@@ -821,6 +821,30 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Job must be in progress to report a no-show" });
       }
 
+      // Block no-show if the worker has already marked the job as complete.
+      // This is the primary exploit path: worker does the work, poster withholds
+      // completion confirmation, waits 12 h, then calls no-show to reclaim escrow
+      // and rack up a strike against the worker. workerMarkedComplete is set
+      // server-side by the worker via POST /api/jobs/:id/complete, so it cannot
+      // be faked by the poster.
+      if (job.workerMarkedComplete) {
+        return res.status(400).json({ message: "Cannot report a no-show: the worker has already marked this job as complete. Use the dispute flow if there is a disagreement." });
+      }
+
+      // Block no-show if the worker has updated their progress at all. Any progress
+      // stage (getting_ready, on_the_way, at_location) is set explicitly by the worker
+      // via POST /api/jobs/:id/progress and constitutes server-side evidence of
+      // engagement. A poster cannot fabricate worker progress, so its presence is a
+      // reliable signal that the worker did not simply fail to appear.
+      if (job.workerProgress) {
+        return res.status(400).json({ message: "Cannot report a no-show: the worker has already updated their progress on this job." });
+      }
+
+      // Block no-show if the poster has already confirmed the worker arrived.
+      if (job.posterConfirmedArrival) {
+        return res.status(400).json({ message: "Cannot report a no-show: you already confirmed the worker arrived at the location." });
+      }
+
       const acceptedAt = job.acceptedAt ? new Date(job.acceptedAt).getTime() : null;
       const now = Date.now();
       const twelveHours = 12 * 60 * 60 * 1000;
