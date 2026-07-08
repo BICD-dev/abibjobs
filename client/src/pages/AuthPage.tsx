@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { Loader2, Mail, UserPlus, LogIn, ArrowLeft, Eye, EyeOff, KeyRound, Copy, CheckCircle2, ShieldCheck, SkipForward } from "lucide-react";
+import { Loader2, Mail, UserPlus, LogIn, ArrowLeft, Eye, EyeOff, KeyRound, CheckCircle2, ShieldCheck, SkipForward } from "lucide-react";
 import { VerificationCard } from "@/components/VerificationForm";
 import { useProfile } from "@/hooks/use-profile";
 
@@ -430,9 +430,7 @@ function ForgotPassword({
   onGoReset: () => void;
 }) {
   const [email, setEmail] = useState("");
-  const [resetToken, setResetToken] = useState<string | null>(null);
   const [emailSent, setEmailSent] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
   const { toast } = useToast();
 
   const forgotMutation = useMutation({
@@ -447,25 +445,12 @@ function ForgotPassword({
       return data;
     },
     onSuccess: (data) => {
-      if (data.resetToken) {
-        setResetToken(data.resetToken);
-      } else {
-        setEmailSent(data.message || "A password reset link has been sent to your email address.");
-      }
+      setEmailSent(data.message || "If this email is registered, a password reset link has been sent. Please check your inbox (and spam folder).");
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     },
   });
-
-  const resetLink = resetToken ? `${window.location.origin}/reset-password?token=${resetToken}` : "";
-
-  const copyLink = () => {
-    navigator.clipboard.writeText(resetLink).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  };
 
   return (
     <Card>
@@ -494,44 +479,13 @@ function ForgotPassword({
               Back to log in
             </button>
           </div>
-        ) : resetToken ? (
-          <div className="space-y-4">
-            <div className="w-14 h-14 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center mx-auto">
-              <CheckCircle2 className="w-7 h-7 text-green-600" />
-            </div>
-            <p className="text-sm text-center text-muted-foreground">
-              Your password reset link is ready. Copy it and open it in your browser.
-            </p>
-            <div className="bg-muted rounded-lg p-3 break-all text-xs font-mono text-foreground select-all" data-testid="text-reset-link">
-              {resetLink}
-            </div>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                className="flex-1"
-                onClick={copyLink}
-                data-testid="button-copy-reset-link"
-              >
-                {copied ? <CheckCircle2 className="w-4 h-4 mr-2 text-green-600" /> : <Copy className="w-4 h-4 mr-2" />}
-                {copied ? "Copied!" : "Copy Link"}
-              </Button>
-              <Button
-                className="flex-1"
-                onClick={onGoReset}
-                data-testid="button-open-reset"
-              >
-                <KeyRound className="w-4 h-4 mr-2" />
-                Reset Now
-              </Button>
-            </div>
-          </div>
         ) : (
           <form
             onSubmit={(e) => { e.preventDefault(); forgotMutation.mutate(); }}
             className="space-y-4"
           >
             <p className="text-sm text-muted-foreground">
-              Enter your email address and we'll generate a password reset link for you.
+              Enter your email address and we'll send a password reset link to your inbox.
             </p>
             <div className="space-y-2">
               <Label htmlFor="forgot-email">Email Address</Label>
@@ -553,7 +507,7 @@ function ForgotPassword({
               data-testid="button-submit-forgot"
             >
               {forgotMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <KeyRound className="w-4 h-4 mr-2" />}
-              Get Reset Link
+              Send Reset Link
             </Button>
             <p className="text-center text-sm text-muted-foreground">
               Remember your password?{" "}

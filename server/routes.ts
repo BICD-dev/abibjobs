@@ -204,10 +204,7 @@ export async function registerRoutes(
       await storage.setUserResetToken(email.toLowerCase().trim(), token, expiry);
 
       sendPasswordResetEmail(user.email, user.firstName || email, token).catch(() => {});
-      if (isOwnerAccount) {
-        return res.json({ message: "A password reset link has been sent to your email address. Please check your inbox (and spam folder)." });
-      }
-      res.json({ message: "Reset link generated.", resetToken: token });
+      res.json({ message: "If this email is registered, a password reset link has been sent. Please check your inbox (and spam folder)." });
     } catch (err) {
       console.error("Forgot password error:", err);
       res.status(500).json({ message: "Something went wrong. Please try again." });
