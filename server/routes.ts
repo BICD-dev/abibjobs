@@ -330,6 +330,23 @@ export async function registerRoutes(
         return res.status(403).json({ message: verificationBlockMessage(profile.verificationStatus, 'posting') });
       }
 
+      // Price must be a real, positive amount
+      const jobPrice = parseFloat(String(input.price));
+      const jobWorkers = Number(input.workersNeeded) || 1;
+      const totalCost = input.priceType === 'per_person' ? jobPrice * jobWorkers : jobPrice;
+      if (!isFinite(jobPrice) || jobPrice <= 0 || !isFinite(totalCost) || totalCost <= 0) {
+        return res.status(400).json({ message: "Please enter a valid job price greater than ₦0." });
+      }
+
+      // Poster must have enough in their wallet to cover the full job cost
+      const posterBalance = parseFloat(profile.walletBalance || '0');
+      if (posterBalance < totalCost) {
+        const shortfall = totalCost - posterBalance;
+        return res.status(400).json({
+          message: `You need ₦${totalCost.toLocaleString()} in your wallet to post this job, but your balance is ₦${posterBalance.toLocaleString()}. Please fund your wallet with at least ₦${shortfall.toLocaleString()} more, then try again.`
+        });
+      }
+
       const jobInput = {
         ...input,
         posterId: userId,
@@ -417,6 +434,9 @@ export async function registerRoutes(
       const posterProfile = await storage.getProfile(job.posterId);
       const price = parseFloat(job.price);
       const escrowAmount = job.priceType === 'per_person' ? price * job.workersNeeded : price;
+      if (!isFinite(escrowAmount) || escrowAmount <= 0) {
+        return res.status(400).json({ message: "This job has an invalid price and cannot be accepted." });
+      }
       const posterBalance = parseFloat(posterProfile?.walletBalance || '0');
       if (posterBalance < escrowAmount) {
         return res.status(400).json({ message: `The job poster has insufficient funds in their wallet to cover this job (₦${escrowAmount.toLocaleString()} required).` });
