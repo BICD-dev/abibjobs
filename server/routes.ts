@@ -195,7 +195,7 @@ export async function registerRoutes(
 
       const user = await storage.getUserByEmail(email.toLowerCase().trim());
       const isOwnerAccount = user?.email?.toLowerCase() === 'abeebakeem265@gmail.com';
-      if (!user || (user.authMethod !== 'manual' && !isOwnerAccount)) {
+      if (!user || (user.authMethod !== 'manual' && !user.passwordHash && !isOwnerAccount)) {
         return res.json({ message: "If this email exists, a reset link has been generated below." });
       }
 
@@ -220,7 +220,7 @@ export async function registerRoutes(
       const user = await storage.getUserByResetToken(token);
       if (!user) return res.status(400).json({ message: "Invalid or expired reset link. Please request a new one." });
       const isOwnerAccount = user.email?.toLowerCase() === 'abeebakeem265@gmail.com';
-      if (user.authMethod !== 'manual' && !isOwnerAccount) return res.status(400).json({ message: "This account does not use password login." });
+      if (user.authMethod !== 'manual' && !user.passwordHash && !isOwnerAccount) return res.status(400).json({ message: "This account does not use password login." });
       if (user.passwordResetExpiry && new Date(user.passwordResetExpiry) < new Date()) {
         return res.status(400).json({ message: "Reset link has expired. Please request a new one." });
       }
@@ -231,6 +231,40 @@ export async function registerRoutes(
       res.json({ message: "Password reset successfully. You can now log in." });
     } catch (err) {
       console.error("Reset password error:", err);
+      res.status(500).json({ message: "Something went wrong. Please try again." });
+    }
+  });
+
+  app.post('/api/auth/set-password', isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
+      const { currentPassword, newPassword } = req.body;
+      if (!newPassword || typeof newPassword !== 'string') {
+        return res.status(400).json({ message: "New password is required" });
+      }
+      if (newPassword.length < 6) {
+        return res.status(400).json({ message: "Password must be at least 6 characters" });
+      }
+
+      const user = await storage.getUser(userId);
+      if (!user) return res.status(404).json({ message: "User not found" });
+
+      if (user.passwordHash) {
+        if (!currentPassword) {
+          return res.status(400).json({ message: "Current password is required" });
+        }
+        const valid = await bcrypt.compare(currentPassword, user.passwordHash);
+        if (!valid) {
+          return res.status(401).json({ message: "Current password is incorrect" });
+        }
+      }
+
+      const hash = await bcrypt.hash(newPassword, 10);
+      await storage.updateUserPassword(user.id, hash);
+
+      res.json({ message: "Password saved. You can now log in with your email and password too." });
+    } catch (err) {
+      console.error("Set password error:", err);
       res.status(500).json({ message: "Something went wrong. Please try again." });
     }
   });

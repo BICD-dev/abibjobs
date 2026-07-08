@@ -7,11 +7,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Loader2, ShieldCheck, ShieldAlert, Camera, Clock, XCircle, RefreshCw } from "lucide-react";
+import { Loader2, ShieldCheck, ShieldAlert, Camera, Clock, XCircle, RefreshCw, KeyRound } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { useEffect, useRef } from "react";
 import { useUpload } from "@/hooks/use-upload";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { VerificationCard } from "@/components/VerificationForm";
 
@@ -118,9 +119,125 @@ export default function Profile() {
               </form>
             </CardContent>
           </Card>
+
+          <div className="md:col-span-2 md:col-start-2">
+            <PasswordCard hasPassword={!!(user as any)?.hasPassword} />
+          </div>
         </div>
       </main>
     </div>
+  );
+}
+
+function PasswordCard({ hasPassword }: { hasPassword: boolean }) {
+  const { toast } = useToast();
+  const form = useForm({
+    defaultValues: { currentPassword: "", newPassword: "", confirmPassword: "" },
+  });
+
+  const setPassword = useMutation({
+    mutationFn: async (data: { currentPassword?: string; newPassword: string }) => {
+      const res = await apiRequest("POST", "/api/auth/set-password", data);
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: hasPassword ? "Password updated" : "Password set",
+        description: "You can now log in with your email and password.",
+      });
+      form.reset({ currentPassword: "", newPassword: "", confirmPassword: "" });
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+    },
+    onError: (err: any) => {
+      let msg = (err?.message || "").replace(/^\d+:\s*/, "");
+      try {
+        msg = JSON.parse(msg).message || msg;
+      } catch {}
+      toast({
+        title: "Could not save password",
+        description: msg || "Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const onSubmit = (data: any) => {
+    if (data.newPassword.length < 6) {
+      toast({ title: "Password too short", description: "Password must be at least 6 characters.", variant: "destructive" });
+      return;
+    }
+    if (data.newPassword !== data.confirmPassword) {
+      toast({ title: "Passwords don't match", description: "Please make sure both passwords are the same.", variant: "destructive" });
+      return;
+    }
+    setPassword.mutate({
+      currentPassword: hasPassword ? data.currentPassword : undefined,
+      newPassword: data.newPassword,
+    });
+  };
+
+  return (
+    <Card className="rounded-3xl border-border shadow-sm">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <KeyRound className="w-5 h-5 text-primary" />
+          {hasPassword ? "Change Password" : "Set a Password"}
+        </CardTitle>
+        <CardDescription>
+          {hasPassword
+            ? "Update the password you use to log in with your email."
+            : "Set a password so you can also log in with your email and password, not just with your Google/Replit account."}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          {hasPassword && (
+            <div className="grid gap-2">
+              <label className="text-sm font-medium">Current Password</label>
+              <Input
+                type="password"
+                {...form.register("currentPassword")}
+                placeholder="Enter your current password"
+                className="rounded-xl border-2 focus:border-primary/50 h-12"
+                data-testid="input-current-password"
+              />
+            </div>
+          )}
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="grid gap-2">
+              <label className="text-sm font-medium">New Password</label>
+              <Input
+                type="password"
+                {...form.register("newPassword")}
+                placeholder="At least 6 characters"
+                className="rounded-xl border-2 focus:border-primary/50 h-12"
+                data-testid="input-new-password"
+              />
+            </div>
+            <div className="grid gap-2">
+              <label className="text-sm font-medium">Confirm New Password</label>
+              <Input
+                type="password"
+                {...form.register("confirmPassword")}
+                placeholder="Repeat the new password"
+                className="rounded-xl border-2 focus:border-primary/50 h-12"
+                data-testid="input-confirm-password"
+              />
+            </div>
+          </div>
+          <div className="flex justify-end pt-2">
+            <Button
+              type="submit"
+              className="bg-primary hover:bg-primary/90 text-white rounded-xl h-12 px-8 font-bold"
+              disabled={setPassword.isPending}
+              data-testid="button-save-password"
+            >
+              {setPassword.isPending ? <Loader2 className="animate-spin mr-2" /> : hasPassword ? "Update Password" : "Save Password"}
+            </Button>
+          </div>
+        </form>
+      </CardContent>
+    </Card>
   );
 }
 

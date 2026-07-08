@@ -4,3 +4,4 @@
 - [Live UI needs explicit polling](live-data-no-autorefetch.md) — global react-query config disables ALL auto-refetch; cross-user "live" UI must set refetchInterval.
 - [Dev vs prod databases](dev-vs-prod-database.md) — published app uses a SEPARATE production DB from dev; they hold different rows.
 - [WebSocket + Vite HMR](websocket-vite-hmr.md) — how to add a WebSocket server on the shared httpServer without breaking Vite's HMR socket in dev.
+- [curl + secure session cookies](curl-testing-secure-cookies.md) — secure:true cookies never reach curl over http; add X-Forwarded-Proto: https to login AND follow-up requests.
