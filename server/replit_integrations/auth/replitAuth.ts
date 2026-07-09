@@ -64,13 +64,33 @@ async function upsertUser(claims: any) {
   });
 }
 
+// Set to a resolved OIDC config if Replit auth is available, otherwise stays null
+// and the app falls back to local (username/password) auth only.
+let oidcConfig: Awaited<ReturnType<typeof getOidcConfig>> | null = null;
+
 export async function setupAuth(app: Express) {
   app.set("trust proxy", 1);
   app.use(getSession());
   app.use(passport.initialize());
   app.use(passport.session());
 
-  const config = await getOidcConfig();
+  passport.serializeUser((user: Express.User, cb) => cb(null, user));
+  passport.deserializeUser((user: Express.User, cb) => cb(null, user));
+
+  if (process.env.REPL_ID) {
+    try {
+      oidcConfig = await getOidcConfig();
+      console.log("Replit OIDC login enabled.");
+    } catch (err) {
+      console.warn(
+        "Replit OIDC discovery failed, disabling Replit login. App will continue with local auth only.",
+        (err as Error).message
+      );
+      oidcConfig = null;
+    }
+  } else {
+    console.warn("REPL_ID not set — Replit OIDC login disabled. Using local auth only.");
+  }
 
   const verify: VerifyFunction = async (
     tokens: client.TokenEndpointResponse & client.TokenEndpointResponseHelpers,
@@ -82,18 +102,16 @@ export async function setupAuth(app: Express) {
     verified(null, user);
   };
 
-  // Keep track of registered strategies
   const registeredStrategies = new Set<string>();
 
-  // Helper function to ensure strategy exists for a domain
   const ensureStrategy = (domain: string) => {
-    // Treat dev domains like standard domains to ensure callback matches
+    if (!oidcConfig) return;
     const strategyName = `replitauth:${domain}`;
     if (!registeredStrategies.has(strategyName)) {
       const strategy = new Strategy(
         {
           name: strategyName,
-          config,
+          config: oidcConfig,
           scope: "openid email profile offline_access",
           callbackURL: `https://${domain}/api/callback`,
         },
@@ -104,10 +122,10 @@ export async function setupAuth(app: Express) {
     }
   };
 
-  passport.serializeUser((user: Express.User, cb) => cb(null, user));
-  passport.deserializeUser((user: Express.User, cb) => cb(null, user));
-
   app.get("/api/login", (req, res, next) => {
+    if (!oidcConfig) {
+      return res.redirect("/auth?login_error=oidc_unavailable");
+    }
     const returnTo = req.query.returnTo as string;
     if (returnTo && req.session) {
       (req.session as any).returnTo = returnTo;
@@ -120,6 +138,9 @@ export async function setupAuth(app: Express) {
   });
 
   app.get("/api/callback", (req, res, next) => {
+    if (!oidcConfig) {
+      return res.redirect("/auth?login_error=oidc_unavailable");
+    }
     ensureStrategy(req.hostname);
     const returnTo = (req.session as any)?.returnTo || "/";
     if (req.session) {
@@ -148,15 +169,21 @@ export async function setupAuth(app: Express) {
       delete req.session.manualUserId;
     }
 
-    if (hasOidc) {
+    if (hasOidc && oidcConfig) {
       req.logout(() => {
         req.session.destroy(() => {
           res.redirect(
-            client.buildEndSessionUrl(config, {
+            client.buildEndSessionUrl(oidcConfig!, {
               client_id: process.env.REPL_ID!,
               post_logout_redirect_uri: `${req.protocol}://${req.hostname}/auth`,
             }).href
           );
+        });
+      });
+    } else if (hasOidc) {
+      req.logout(() => {
+        req.session.destroy(() => {
+          res.redirect("/auth");
         });
       });
     } else {
@@ -191,13 +218,12 @@ export const isAuthenticated: RequestHandler = async (req: any, res, next) => {
   }
 
   const refreshToken = user.refresh_token;
-  if (!refreshToken) {
+  if (!refreshToken || !oidcConfig) {
     return next();
   }
 
   try {
-    const config = await getOidcConfig();
-    const tokenResponse = await client.refreshTokenGrant(config, refreshToken);
+    const tokenResponse = await client.refreshTokenGrant(oidcConfig, refreshToken);
     updateUserSession(user, tokenResponse);
   } catch (error) {
     console.warn("Token refresh failed, continuing with existing session");
