@@ -10,6 +10,9 @@
     "check": "tsc",
     "db:push": "drizzle-kit push"
   },
+  "engines": {
+  "node": "20.x"
+},
   "dependencies": {
     "@google-cloud/storage": "^7.19.0",
     "@hookform/resolvers": "^3.10.0",
