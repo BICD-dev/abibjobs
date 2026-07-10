@@ -1945,11 +1945,15 @@ export async function registerRoutes(
       if (!email || !password) return res.status(400).json({ message: "Email and password required" });
 
       const admin = await storage.getAdminUserByEmail(email);
-      if (!admin || !admin.isActive) return res.status(401).json({ message: "Invalid credentials" });
-
+      if (!admin || !admin.isActive){
+        console.log("incorrect email address");
+        return res.status(401).json({ message: "Invalid credentials" });
+      };
       const valid = await bcrypt.compare(password, admin.passwordHash);
-      if (!valid) return res.status(401).json({ message: "Invalid credentials" });
-
+      if (!valid) {
+        console.log("Incorrect password");
+        return res.status(401).json({ message: "Invalid credentials" });
+      };
       (req.session as any).adminId = admin.id;
       (req.session as any).adminRole = admin.role;
 
