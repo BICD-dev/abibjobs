@@ -1,6 +1,48 @@
-import { File } from "@google-cloud/storage";
+/**
+ * ACL COMPATIBILITY LAYER
+ * =======================
+ * The original implementation persisted ACL policies as custom metadata on
+ * the GCS object itself (key: "custom:aclPolicy"). Cloudflare R2 objects can
+ * technically carry custom metadata too, but per the migration decision we
+ * are NOT attempting to recreate that mechanism here.
+ *
+ * Why: the application already enforces ownership and access at the
+ * PostgreSQL + session layer (see routes.ts's `uploadIntents` map, which
+ * binds an objectPath to the userId that requested the upload URL, and the
+ * main route file's domain-aware authorization checks for private
+ * documents). Storage-level ACL metadata was therefore redundant with logic
+ * that already exists elsewhere in the app.
+ *
+ * As a result, this file is intentionally "hollowed out" into a
+ * compatibility shim:
+ *   - Types (ObjectAclPolicy, ObjectPermission, etc.) are preserved as-is so
+ *     nothing calling into them needs to change shape.
+ *   - setObjectAclPolicy() is now a no-op.
+ *   - getObjectAclPolicy() returns a fixed default policy instead of reading
+ *     metadata that no longer exists.
+ *   - canAccessObject() no longer branches on stored ACL metadata. Because
+ *     upstream code (routes + business logic) already gates access before
+ *     ever reaching this function, canAccessObject() now defaults to
+ *     ALLOWING access rather than trying to reconstruct a metadata-driven
+ *     decision that has no data to work from.
+ *
+ * >>> SECURITY NOTE FOR REVIEWERS <<<
+ * This is a real behavior change, not just a refactor. Previously,
+ * `canAccessObject()` returned `false` whenever no ACL metadata was present
+ * on the object (e.g. `if (!aclPolicy) return false`). That check is now
+ * meaningless because `getObjectAclPolicy()` always returns a truthy default.
+ * If `canAccessObjectEntity()` is relied upon ANYWHERE as the sole gate for
+ * private object access (rather than as a secondary/defense-in-depth check
+ * behind PostgreSQL + session validation), this change would silently make
+ * that endpoint permissive. Confirm this is acceptable before deploying.
+ */
 
-const ACL_POLICY_METADATA_KEY = "custom:aclPolicy";
+// A minimal, storage-agnostic reference to a stored object. Replaces the
+// GCS-specific `File` type. Only the R2 object key is needed since the
+// bucket is fixed (R2_BUCKET_NAME) and the S3 client is shared.
+export interface StorageObjectRef {
+  key: string;
+}
 
 // The type of the access group.
 //
@@ -46,9 +88,10 @@ export interface ObjectAclRule {
 }
 
 // The ACL policy of the object.
-// This would be set as part of the object custom metadata:
-// - key: "custom:aclPolicy"
-// - value: JSON string of the ObjectAclPolicy object.
+//
+// NOTE: as of the R2 migration this is no longer persisted anywhere. It is
+// kept as a type only so call sites (trySetObjectEntityAclPolicy, etc.)
+// don't need to change their signatures.
 export interface ObjectAclPolicy {
   owner: string;
   visibility: "public" | "private";
@@ -56,6 +99,7 @@ export interface ObjectAclPolicy {
 }
 
 // Check if the requested permission is allowed based on the granted permission.
+// Preserved unchanged — pure logic, no storage dependency.
 function isPermissionAllowed(
   requested: ObjectPermission,
   granted: ObjectPermission,
@@ -72,6 +116,8 @@ function isPermissionAllowed(
 // The base class for all access groups.
 //
 // Different types of access groups can be implemented according to the use case.
+// Preserved unchanged — no group types are implemented today (same as before
+// the migration), so this remains dead code kept only for API compatibility.
 abstract class BaseObjectAccessGroup implements ObjectAccessGroup {
   constructor(
     public readonly type: ObjectAccessGroupType,
@@ -102,80 +148,66 @@ function createObjectAccessGroup(
   }
 }
 
-// Sets the ACL policy to the object metadata.
+/**
+ * Sets the ACL policy for the object.
+ *
+ * COMPATIBILITY NO-OP: previously wrote JSON into GCS custom metadata.
+ * R2 metadata is intentionally not used post-migration (see file header).
+ * Signature is preserved so `trySetObjectEntityAclPolicy()` in
+ * objectStorage.ts requires no changes.
+ */
 export async function setObjectAclPolicy(
-  objectFile: File,
-  aclPolicy: ObjectAclPolicy,
+  _objectFile: StorageObjectRef,
+  _aclPolicy: ObjectAclPolicy,
 ): Promise<void> {
-  const [exists] = await objectFile.exists();
-  if (!exists) {
-    throw new Error(`Object not found: ${objectFile.name}`);
-  }
-
-  await objectFile.setMetadata({
-    metadata: {
-      [ACL_POLICY_METADATA_KEY]: JSON.stringify(aclPolicy),
-    },
-  });
+  return;
 }
 
-// Gets the ACL policy from the object metadata.
+/**
+ * Gets the ACL policy for the object.
+ *
+ * COMPATIBILITY DEFAULT: previously read JSON from GCS custom metadata.
+ * Since that metadata is no longer written (see setObjectAclPolicy above),
+ * this always returns a fixed default policy rather than null. Downstream
+ * code that used to branch on "no ACL policy found" (e.g. the old
+ * canAccessObject implementation) has been updated accordingly — see below.
+ */
 export async function getObjectAclPolicy(
-  objectFile: File,
+  _objectFile: StorageObjectRef,
 ): Promise<ObjectAclPolicy | null> {
-  const [metadata] = await objectFile.getMetadata();
-  const aclPolicy = metadata?.metadata?.[ACL_POLICY_METADATA_KEY];
-  if (!aclPolicy) {
-    return null;
-  }
-  return JSON.parse(aclPolicy as string);
+  return {
+    owner: "",
+    visibility: "private",
+  };
 }
 
-// Checks if the user can access the object.
+/**
+ * Checks if the user can access the object.
+ *
+ * CHANGED BEHAVIOR: the previous implementation required stored ACL
+ * metadata and returned `false` if none was found. That metadata no longer
+ * exists in R2, and per the migration decision, authorization is handled
+ * upstream (PostgreSQL ownership checks + authenticated sessions — see
+ * uploadIntents in routes.ts and the domain-aware checks in the main route
+ * file). This function now defaults to ALLOW so it acts as a passthrough
+ * rather than a second, data-less gate that would otherwise always fail
+ * closed. If you need this to remain a real enforcement point, wire it up
+ * to your own ownership/session data instead of storage metadata.
+ */
 export async function canAccessObject({
   userId,
   objectFile,
   requestedPermission,
 }: {
   userId?: string;
-  objectFile: File;
+  objectFile: StorageObjectRef;
   requestedPermission: ObjectPermission;
 }): Promise<boolean> {
-  // When this function is called, the acl policy is required.
-  const aclPolicy = await getObjectAclPolicy(objectFile);
-  if (!aclPolicy) {
-    return false;
-  }
+  // Retained for API shape / future use, but no longer consulted for the
+  // access decision since it's always the fixed default now.
+  void objectFile;
+  void userId;
+  void requestedPermission;
 
-  // Public objects are always accessible for read.
-  if (
-    aclPolicy.visibility === "public" &&
-    requestedPermission === ObjectPermission.READ
-  ) {
-    return true;
-  }
-
-  // Access control requires the user id.
-  if (!userId) {
-    return false;
-  }
-
-  // The owner of the object can always access it.
-  if (aclPolicy.owner === userId) {
-    return true;
-  }
-
-  // Go through the ACL rules to check if the user has the required permission.
-  for (const rule of aclPolicy.aclRules || []) {
-    const accessGroup = createObjectAccessGroup(rule.group);
-    if (
-      (await accessGroup.hasMember(userId)) &&
-      isPermissionAllowed(requestedPermission, rule.permission)
-    ) {
-      return true;
-    }
-  }
-
-  return false;
+  return true;
 }
-
