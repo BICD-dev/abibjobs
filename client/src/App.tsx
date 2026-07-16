@@ -36,6 +36,7 @@ import NotFound from "@/pages/not-found";
 import ResetPassword from "@/pages/ResetPassword";
 import { SupportChat } from "@/components/SupportChat";
 import { CallProvider } from "@/components/CallProvider";
+import PaymentVerify from "./pages/PaymentVerify";
 
 // Redirects OIDC (non-manual) new users to /verify once per browser session.
 // Manual-signup users are already redirected inline on the AuthPage.
@@ -115,6 +116,9 @@ function Router() {
       </Route>
       <Route path="/wallet">
         {() => <ProtectedRoute component={Wallet} />}
+      </Route>
+      <Route path="/payment/verify/:reference">
+        {() => <ProtectedRoute component={PaymentVerify} />}
       </Route>
       <Route path="/profile">
         {() => <ProtectedRoute component={Profile} />}
