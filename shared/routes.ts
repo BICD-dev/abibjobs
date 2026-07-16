@@ -181,101 +181,143 @@ export const api = {
     },
   },
   wallet: {
-    get: {
-      method: 'GET' as const,
-      path: '/api/wallet' as const,
-      responses: {
-        200: z.object({
-          balance: z.string(),
-          transactions: z.array(z.custom<typeof transactions.$inferSelect>()),
-        }),
-      },
-    },
-    deposit: {
-      method: 'POST' as const,
-      path: '/api/wallet/deposit' as const,
-      input: z.object({
-        amount: z.number().min(1),
-        bankCode: z.string().min(1),
-        bankName: z.string().min(1),
-        accountNumber: z.string().length(10),
-        accountName: z.string().optional(),
+  get: {
+    method: 'GET' as const,
+    path: '/api/wallet' as const,
+    responses: {
+      200: z.object({
+        balance: z.string(),
+        transactions: z.array(z.custom<typeof transactions.$inferSelect>()),
       }),
-      responses: {
-        200: z.object({ newBalance: z.string() }),
-      },
-    },
-    cardDeposit: {
-      method: 'POST' as const,
-      path: '/api/wallet/card-deposit' as const,
-      input: z.object({
-        amount: z.number().min(100),
-        paymentMethod: z.enum(['card', 'bank_account']),
-        cardNumber: z.string().optional(),
-        cardExpiry: z.string().optional(),
-        cardCvv: z.string().optional(),
-        bankCode: z.string().optional(),
-        accountNumber: z.string().optional(),
-      }),
-      responses: {
-        200: z.object({ sessionId: z.string(), message: z.string(), otpSentTo: z.string() }),
-        400: errorSchemas.payment,
-      },
-    },
-    verifyOtp: {
-      method: 'POST' as const,
-      path: '/api/wallet/verify-otp' as const,
-      input: z.object({
-        sessionId: z.string().min(1),
-        otp: z.string().length(6),
-      }),
-      responses: {
-        200: z.object({ newBalance: z.string(), message: z.string() }),
-        400: errorSchemas.payment,
-      },
-    },
-    resendOtp: {
-      method: 'POST' as const,
-      path: '/api/wallet/resend-otp' as const,
-      input: z.object({
-        sessionId: z.string().min(1),
-      }),
-      responses: {
-        200: z.object({ message: z.string(), otpSentTo: z.string() }),
-        400: errorSchemas.payment,
-      },
-    },
-    withdraw: {
-      method: 'POST' as const,
-      path: '/api/wallet/withdraw' as const,
-      input: z.object({
-        amount: z.number().min(1),
-        bankCode: z.string().optional(),
-        bankName: z.string().min(1),
-        accountNumber: z.string().min(4),
-        accountName: z.string().optional(),
-      }),
-      responses: {
-        200: z.object({ newBalance: z.string() }),
-        400: errorSchemas.payment,
-      },
-    },
-    depositMethods: {
-      method: 'GET' as const,
-      path: '/api/wallet/deposit-methods' as const,
-      responses: {
-        200: z.object({
-          methods: z.array(z.object({
-            bankCode: z.string().nullable(),
-            bankName: z.string().nullable(),
-            accountNumber: z.string().nullable(),
-            accountName: z.string().nullable(),
-          })),
-          hasDeposits: z.boolean(),
-        }),
-      },
     },
   },
+
+  /**
+   * Initialize a Paystack transaction.
+   * Returns the hosted checkout URL.
+   */
+  initializeFunding: {
+    method: 'POST' as const,
+    path: '/api/wallet/fund/initialize' as const,
+    input: z.object({
+      amount: z.number().min(100),
+    }),
+    responses: {
+      200: z.object({
+        checkoutUrl: z.string().url(),
+        reference: z.string(),
+      }),
+      400: errorSchemas.payment,
+    },
+  },
+
+  /**
+   * Called by the frontend after Paystack redirects back.
+   * Used to determine the final state of the payment.
+   * Does NOT credit the wallet.
+   */
+  verifyFunding: {
+    method: 'GET' as const,
+    path: '/api/wallet/fund/verify/:reference' as const,
+    input: z.object({
+      reference: z.string(),
+    }),
+    responses: {
+      200: z.object({
+        status: z.enum([
+          'pending',
+          'success',
+          'failed',
+        ]),
+        message: z.string(),
+        amount: z.string(),
+      }),
+      400: errorSchemas.payment,
+    },
+  },
+
+  /**
+   * Withdraw from wallet.
+   * The backend should initiate a Paystack transfer.
+   */
+  withdraw: {
+    method: 'POST' as const,
+    path: '/api/wallet/withdraw' as const,
+    input: z.object({
+      amount: z.number().min(100),
+      bankCode: z.string(),
+      accountNumber: z.string().length(10),
+      accountName: z.string().optional(),
+    }),
+    responses: {
+      200: z.object({
+        reference: z.string(),
+        status: z.enum([
+          'pending',
+          'success',
+        ]),
+        message: z.string(),
+      }),
+      400: errorSchemas.payment,
+    },
+  },
+
+  /**
+   * Returns saved beneficiary accounts for withdrawals.
+   */
+  withdrawalAccounts: {
+    method: 'GET' as const,
+    path: '/api/wallet/withdrawal-accounts' as const,
+    responses: {
+      200: z.object({
+        accounts: z.array(
+          z.object({
+            bankCode: z.string(),
+            bankName: z.string(),
+            accountNumber: z.string(),
+            accountName: z.string(),
+          }),
+        ),
+      }),
+    },
+  },
+
+  /**
+   * Fetch available Nigerian banks from Paystack.
+   */
+  banks: {
+    method: 'GET' as const,
+    path: '/api/wallet/banks' as const,
+    responses: {
+      200: z.object({
+        banks: z.array(
+          z.object({
+            name: z.string(),
+            code: z.string(),
+          }),
+        ),
+      }),
+    },
+  },
+
+  /**
+   * Resolve account name before withdrawal.
+   */
+  resolveAccount: {
+    method: 'POST' as const,
+    path: '/api/wallet/resolve-account' as const,
+    input: z.object({
+      accountNumber: z.string().length(10),
+      bankCode: z.string(),
+    }),
+    responses: {
+      200: z.object({
+        accountName: z.string(),
+      }),
+      400: errorSchemas.payment,
+    },
+  },
+},
   offers: {
     list: {
       method: 'GET' as const,

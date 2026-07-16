@@ -2,31 +2,15 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
 
-export interface WalletTransactionInput {
+export interface InitializeFundingInput {
   amount: number;
-  bankCode: string;
-  bankName: string;
-  accountNumber: string;
-  accountName?: string;
 }
-
-export interface CardDepositInput {
-  amount: number;
-  paymentMethod: 'card' | 'bank_account';
-  cardNumber?: string;
-  cardExpiry?: string;
-  cardCvv?: string;
-  bankCode?: string;
-  accountNumber?: string;
+export interface VerifyFundingInput {
+  reference: string;
 }
-
-export interface VerifyOtpInput {
-  sessionId: string;
-  otp: string;
-}
-
-export interface ResendOtpInput {
-  sessionId: string;
+export interface InitializeFundingResponse {
+  checkoutUrl: string;
+  reference: string;
 }
 
 export function useWallet() {
@@ -40,60 +24,34 @@ export function useWallet() {
   });
 }
 
-export function useDeposit() {
-  const queryClient = useQueryClient();
+export function useInitializeFunding() {
   const { toast } = useToast();
 
   return useMutation({
-    mutationFn: async (input: WalletTransactionInput) => {
-      const res = await fetch(api.wallet.deposit.path, {
-        method: api.wallet.deposit.method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
+    mutationFn: async (
+      input: InitializeFundingInput
+    ): Promise<InitializeFundingResponse> => {
+      const res = await fetch(api.wallet.initializeFunding.path, {
+        method: api.wallet.initializeFunding.method,
         credentials: "include",
-      });
-
-      if (!res.ok) throw new Error("Deposit failed");
-      return api.wallet.deposit.responses[200].parse(await res.json());
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [api.wallet.get.path] });
-      toast({
-        title: "Deposit Successful",
-        description: "Funds have been added to your wallet.",
-      });
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Error",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-}
-
-export function useCardDeposit() {
-  const { toast } = useToast();
-
-  return useMutation({
-    mutationFn: async (input: CardDepositInput) => {
-      const res = await fetch(api.wallet.cardDeposit.path, {
-        method: api.wallet.cardDeposit.method,
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify(input),
-        credentials: "include",
       });
+
+      const body = await res.json();
 
       if (!res.ok) {
-        const error = await res.json();
-        throw new Error(error.message || "Failed to initiate payment");
+        throw new Error(body.message || "Unable to initialize payment.");
       }
-      return res.json() as Promise<{ sessionId: string; message: string; otpSentTo: string; instant?: boolean; promptType?: string; newBalance?: string }>;
+
+      return api.wallet.initializeFunding.responses[200].parse(body);
     },
-    onError: (error: Error) => {
+
+    onError(error: Error) {
       toast({
-        title: "Error",
+        title: "Unable to start payment",
         description: error.message,
         variant: "destructive",
       });
@@ -101,81 +59,30 @@ export function useCardDeposit() {
   });
 }
 
-export function useVerifyOtp() {
-  const queryClient = useQueryClient();
-  const { toast } = useToast();
+export function useVerifyFunding(reference: string | undefined) {
+  return useQuery({
+    enabled: !!reference,
+    queryKey: [api.wallet.verifyFunding.path, reference],
 
-  return useMutation({
-    mutationFn: async (input: VerifyOtpInput) => {
-      const res = await fetch(api.wallet.verifyOtp.path, {
-        method: api.wallet.verifyOtp.method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
+    queryFn: async () => {
+      const path = api.wallet.verifyFunding.path.replace(
+        ":reference",
+        reference!
+      );
+
+      const res = await fetch(path, {
         credentials: "include",
       });
 
-      if (!res.ok) {
-        const error = await res.json();
-        throw new Error(error.message || "OTP verification failed");
-      }
-      return res.json() as Promise<{ newBalance: string; message: string }>;
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: [api.wallet.get.path] });
-      toast({
-        title: "Deposit Successful",
-        description: data.message,
-      });
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Verification Failed",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-}
-
-export function useResendOtp() {
-  const { toast } = useToast();
-
-  return useMutation({
-    mutationFn: async (input: ResendOtpInput) => {
-      const res = await fetch(api.wallet.resendOtp.path, {
-        method: api.wallet.resendOtp.method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
-        credentials: "include",
-      });
+      const body = await res.json();
 
       if (!res.ok) {
-        const error = await res.json();
-        throw new Error(error.message || "Failed to resend OTP");
+        throw new Error(body.message || "Payment verification failed.");
       }
-      return res.json() as Promise<{ message: string; otpSentTo: string }>;
-    },
-    onSuccess: () => {
-      toast({
-        title: "OTP Resent",
-        description: "A new OTP has been sent to your phone/email.",
-      });
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Error",
-        description: error.message,
-        variant: "destructive",
-      });
+
+      return api.wallet.verifyFunding.responses[200].parse(body);
     },
   });
-}
-
-export interface DepositMethod {
-  bankCode: string | null;
-  bankName: string | null;
-  accountNumber: string | null;
-  accountName: string | null;
 }
 
 export interface WithdrawInput {
@@ -186,16 +93,6 @@ export interface WithdrawInput {
   accountName?: string;
 }
 
-export function useDepositMethods() {
-  return useQuery({
-    queryKey: [api.wallet.depositMethods.path],
-    queryFn: async () => {
-      const res = await fetch(api.wallet.depositMethods.path, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch deposit methods");
-      return res.json() as Promise<{ methods: DepositMethod[]; hasDeposits: boolean }>;
-    },
-  });
-}
 
 export function useWithdraw() {
   const queryClient = useQueryClient();
