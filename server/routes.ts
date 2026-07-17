@@ -74,15 +74,39 @@ function verificationBlockMessage(status: string | null | undefined, action: 'po
 async function paystackRequest(method: string, path: string, body?: any): Promise<any> {
   const secretKey = process.env.PAYSTACK_SECRET_KEY;
   if (!secretKey) throw new Error("PAYSTACK_SECRET_KEY is not configured");
-  const resp = await fetch(`https://api.paystack.co${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${secretKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  return resp.json();
+
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${secretKey}`,
+  };
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  let resp: Response;
+  try {
+    resp = await fetch(`https://api.paystack.co${path}`, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } catch (err) {
+    // Network-level failure (DNS, timeout, connection refused, etc.)
+    throw new Error("Unable to reach Paystack. Please try again.");
+  }
+
+  let json: any;
+  try {
+    json = await resp.json();
+  } catch {
+    throw new Error(`Paystack returned an unexpected response (HTTP ${resp.status}).`);
+  }
+
+  if (!resp.ok && json.status === undefined) {
+    // Fallback for cases where Paystack doesn't include its usual { status, message } shape
+    throw new Error(json.message || `Paystack request failed (HTTP ${resp.status}).`);
+  }
+
+  return json;
 }
 
 function cleanExpiredSessions() {
@@ -3188,424 +3212,282 @@ export async function registerRoutes(
       res.status(500).json({ message: "Internal server error" });
     }
   });
+// --- WALLET ---
 
-  // --- WALLET ---
+app.get(api.wallet.get.path, isAuthenticated, async (req, res) => {
+  const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
+  const profile = await storage.getProfile(userId);
+  const transactions = await storage.getTransactions(userId);
 
-  app.get(api.wallet.get.path, isAuthenticated, async (req, res) => {
-    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
-    const profile = await storage.getProfile(userId);
-    const transactions = await storage.getTransactions(userId);
-    
-    if (!profile) return res.status(404).json({ message: "Profile not found" });
+  if (!profile) return res.status(404).json({ message: "Profile not found" });
 
-    res.json({
-      balance: profile.walletBalance,
-      transactions
-    });
+  res.json({
+    balance: profile.walletBalance,
+    transactions
+  });
+});
+
+// Admin/owner: manually credit a user's wallet (e.g. reconciling an off-platform bank transfer).
+// NOTE: this is a separate admin action from the user-facing Paystack deposit flow below —
+// left untouched. Flag if this should actually be removed/merged.
+app.post(api.wallet.deposit.path, isAuthenticated, isAdminOrOwner, async (req, res) => {
+  const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
+  const parsed = api.wallet.deposit.input.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+  const { amount, bankCode, bankName, accountNumber, accountName } = parsed.data;
+
+  await storage.updateWalletBalance(userId, amount);
+  await storage.createTransaction({
+    userId,
+    amount: amount.toString(),
+    type: 'deposit',
+    bankName: bankName || null,
+    bankCode: bankCode || null,
+    accountNumber: accountNumber || null,
+    accountName: accountName || null,
   });
 
-  app.post(api.wallet.deposit.path, isAuthenticated, isAdminOrOwner, async (req, res) => {
-    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
-    const parsed = api.wallet.deposit.input.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
-    const { amount, bankCode, bankName, accountNumber, accountName } = parsed.data;
+  const profile = await storage.getProfile(userId);
+  const newBalance = parseFloat(profile?.walletBalance || "0");
+  storage.getUser(userId).then(u => {
+    if (u?.email) sendWalletDepositEmail(u.email, u.firstName || u.email, amount, newBalance).catch(() => {});
+  }).catch(() => {});
+  res.json({ newBalance: profile?.walletBalance || "0" });
+});
+
+// --- Paystack hosted checkout flow ---
+
+// In-memory guard against double-crediting on repeated /verify calls (refresh, webhook + client both firing).
+// TODO: replace with a persisted `reference` column on transactions and check there instead —
+// this Set won't survive a restart or work across multiple server instances.
+const processedFundingReferences = new Set<string>();
+
+app.post(api.wallet.initializeFunding.path, isAuthenticated, async (req, res) => {
+  const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
+  const parsed = api.wallet.initializeFunding.input.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+  const { amount } = parsed.data;
+
+  if (amount <= 0) return res.status(400).json({ message: "Amount must be greater than zero" });
+
+  const userRecord = await storage.getUser(userId);
+  const userEmail = userRecord?.email || `user_${userId}@abib.jobs`;
+
+  const amountKobo = Math.round(amount * 100);
+  const callbackUrl = `${process.env.APP_URL}/payment/verify`;
+
+  try {
+    const initResp = await paystackRequest('POST', '/transaction/initialize', {
+      email: userEmail,
+      amount: amountKobo,
+      callback_url: callbackUrl,
+      metadata: { userId, amount },
+    });
+
+    if (!initResp.status || !initResp.data?.authorization_url) {
+      return res.status(400).json({ message: initResp.message || "Unable to initialize payment." });
+    }
+
+    return res.json({
+      checkoutUrl: initResp.data.authorization_url,
+      reference: initResp.data.reference,
+    });
+  } catch (err: any) {
+    console.error('[Paystack] initialize error:', err);
+    return res.status(500).json({ message: "Payment service error. Please try again." });
+  }
+});
+
+app.get(api.wallet.verifyFunding.path, isAuthenticated, async (req, res) => {
+  const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
+  const { reference } = req.params as { reference?: string };
+
+  if (!reference) return res.status(400).json({ message: "Reference is required" });
+
+  try {
+    const verifyResp = await paystackRequest('GET', `/transaction/verify/${reference}`);
+    console.log(`[Paystack] verify response:`, JSON.stringify(verifyResp));
+
+    if (!verifyResp.status || verifyResp.data?.status !== 'success') {
+      return res.status(400).json({ message: verifyResp.data?.gateway_response || "Payment could not be verified." });
+    }
+
+    const data = verifyResp.data;
+
+    // Make sure this payment actually belongs to the requesting user.
+    if (data.metadata?.userId && data.metadata.userId !== userId) {
+      return res.status(403).json({ message: "This payment does not belong to your account." });
+    }
+
+    if (processedFundingReferences.has(reference)) {
+      const profile = await storage.getProfile(userId);
+      return res.json({ newBalance: profile?.walletBalance || "0", message: "Deposit already processed." });
+    }
+
+    const amount = data.amount / 100; // kobo -> naira
 
     await storage.updateWalletBalance(userId, amount);
     await storage.createTransaction({
       userId,
       amount: amount.toString(),
       type: 'deposit',
-      bankName: bankName || null,
-      bankCode: bankCode || null,
-      accountNumber: accountNumber || null,
-      accountName: accountName || null,
+      bankName: data.channel === 'card' ? 'Card Payment' : 'Bank Transfer',
+      bankCode: null,
+      accountNumber: data.authorization?.last4 ? `****${data.authorization.last4}` : null,
+      accountName: null,
     });
+
+    processedFundingReferences.add(reference);
 
     const profile = await storage.getProfile(userId);
     const newBalance = parseFloat(profile?.walletBalance || "0");
     storage.getUser(userId).then(u => {
       if (u?.email) sendWalletDepositEmail(u.email, u.firstName || u.email, amount, newBalance).catch(() => {});
     }).catch(() => {});
-    res.json({ newBalance: profile?.walletBalance || "0" });
-  });
 
-  app.post(api.wallet.cardDeposit.path, isAuthenticated, async (req, res) => {
-    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
-    const parsed = api.wallet.cardDeposit.input.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
-
-    const { amount, paymentMethod, cardNumber, cardExpiry, cardCvv, bankCode, accountNumber } = parsed.data;
-
-    // Fetch user email for Paystack
-    const userRecord = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-    const userEmail = userRecord[0]?.email || `user_${userId}@abib.jobs`;
-
-    // Amount in kobo (Paystack uses smallest currency unit)
-    const amountKobo = amount * 100;
-
-    let chargeBody: any = {
-      email: userEmail,
-      amount: amountKobo,
-    };
-
-    let maskedInfo = '';
-
-    if (paymentMethod === 'card') {
-      if (!cardNumber || !cardExpiry || !cardCvv) {
-        return res.status(400).json({ message: "Card number, expiry and CVV are required" });
-      }
-      const cleanCard = cardNumber.replace(/\s/g, '');
-      if (cleanCard.length < 13) {
-        return res.status(400).json({ message: "Invalid card number" });
-      }
-      const [expMonth, expYear] = cardExpiry.replace(/\s/g, '').split('/');
-      chargeBody.card = {
-        number: cleanCard,
-        cvv: cardCvv,
-        expiry_month: expMonth,
-        expiry_year: expYear?.length === 2 ? `20${expYear}` : expYear,
-      };
-      maskedInfo = `****${cleanCard.slice(-4)}`;
-    } else {
-      if (!bankCode || !accountNumber) {
-        return res.status(400).json({ message: "Bank and account number are required" });
-      }
-      chargeBody.bank = {
-        code: bankCode,
-        account_number: accountNumber,
-      };
-      maskedInfo = `****${accountNumber.slice(-4)}`;
-    }
-
-    try {
-      const chargeResp = await paystackRequest('POST', '/charge', chargeBody);
-      console.log(`[Paystack] charge response:`, JSON.stringify(chargeResp));
-
-      if (!chargeResp.status) {
-        return res.status(400).json({ message: chargeResp.message || "Payment initiation failed" });
-      }
-
-      const data = chargeResp.data;
-      const reference = data?.reference;
-
-      if (!reference) {
-        return res.status(400).json({ message: "No payment reference returned. Please try again." });
-      }
-
-      // If charge is already successful (test mode sometimes skips OTP)
-      if (data.status === 'success') {
-        await storage.updateWalletBalance(userId, amount);
-        const profile = await storage.getProfile(userId);
-
-        // Fetch bank name from NIGERIAN_BANKS if needed
-        let bankName = paymentMethod === 'card' ? 'Card Payment' : 'Bank Account';
-
-        await storage.createTransaction({
-          userId,
-          amount: amount.toString(),
-          type: 'deposit',
-          bankName,
-          bankCode: bankCode || null,
-          accountNumber: maskedInfo,
-          accountName: paymentMethod === 'card' ? 'Debit Card' : 'Bank Account',
-        });
-
-        const newBal = parseFloat(profile?.walletBalance || "0");
-        storage.getUser(userId).then(u => {
-          if (u?.email) sendWalletDepositEmail(u.email, u.firstName || u.email, amount, newBal).catch(() => {});
-        }).catch(() => {});
-
-        return res.json({
-          sessionId: reference,
-          message: 'Payment completed instantly',
-          otpSentTo: maskedInfo,
-          instant: true,
-          newBalance: profile?.walletBalance || "0",
-        });
-      }
-
-      // Needs OTP or PIN
-      if (data.status === 'send_otp' || data.status === 'send_pin' || data.status === 'pending') {
-        const sessionId = crypto.randomUUID();
-        paystackSessions.set(sessionId, {
-          userId,
-          amount,
-          paymentMethod,
-          paystackReference: reference,
-          maskedInfo,
-          bankCode: bankCode || undefined,
-          accountNumber: accountNumber || undefined,
-          expiresAt: Date.now() + 15 * 60 * 1000,
-          createdAt: Date.now(),
-        });
-
-        const displayMessage = data.status === 'send_pin'
-          ? `Enter your bank PIN for account ${maskedInfo}`
-          : `OTP sent to the phone number linked to ${maskedInfo}`;
-
-        return res.json({
-          sessionId,
-          message: displayMessage,
-          otpSentTo: maskedInfo,
-          promptType: data.status,
-        });
-      }
-
-      return res.status(400).json({ message: data.message || `Unexpected payment status: ${data.status}` });
-    } catch (err: any) {
-      console.error('[Paystack] charge error:', err);
-      return res.status(500).json({ message: "Payment service error. Please try again." });
-    }
-  });
-
-  app.post(api.wallet.verifyOtp.path, isAuthenticated, async (req, res) => {
-    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
-    const parsed = api.wallet.verifyOtp.input.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
-
-    const { sessionId, otp } = parsed.data;
-    const session = paystackSessions.get(sessionId);
-
-    if (!session) {
-      return res.status(400).json({ message: "Session expired or invalid. Please try again." });
-    }
-
-    if (session.userId !== userId) {
-      return res.status(400).json({ message: "Unauthorized session" });
-    }
-
-    if (session.expiresAt < Date.now()) {
-      paystackSessions.delete(sessionId);
-      return res.status(400).json({ message: "Session expired. Please initiate a new deposit." });
-    }
-
-    try {
-      // Submit OTP to Paystack
-      const otpResp = await paystackRequest('POST', '/charge/submit_otp', {
-        otp,
-        reference: session.paystackReference,
-      });
-      console.log(`[Paystack] submit_otp response:`, JSON.stringify(otpResp));
-
-      if (!otpResp.status) {
-        return res.status(400).json({ message: otpResp.message || "OTP verification failed" });
-      }
-
-      const data = otpResp.data;
-
-      // Verify transaction status
-      if (data.status === 'success') {
-        // Double-check with verify endpoint
-        const verifyResp = await paystackRequest('GET', `/transaction/verify/${session.paystackReference}`);
-        console.log(`[Paystack] verify response:`, JSON.stringify(verifyResp));
-
-        if (verifyResp.data?.status !== 'success') {
-          return res.status(400).json({ message: "Payment could not be confirmed. Please contact support." });
-        }
-
-        await storage.updateWalletBalance(userId, session.amount);
-        await storage.createTransaction({
-          userId,
-          amount: session.amount.toString(),
-          type: 'deposit',
-          bankName: session.paymentMethod === 'card' ? 'Card Payment' : 'Bank Account',
-          bankCode: session.bankCode || null,
-          accountNumber: session.maskedInfo,
-          accountName: session.paymentMethod === 'card' ? 'Debit Card' : 'Bank Account',
-        });
-
-        paystackSessions.delete(sessionId);
-        const profile = await storage.getProfile(userId);
-        const newBal2 = parseFloat(profile?.walletBalance || "0");
-        storage.getUser(userId).then(u => {
-          if (u?.email) sendWalletDepositEmail(u.email, u.firstName || u.email, session.amount, newBal2).catch(() => {});
-        }).catch(() => {});
-        return res.json({
-          newBalance: profile?.walletBalance || "0",
-          message: "Deposit successful!",
-        });
-      }
-
-      if (data.status === 'send_otp' || data.status === 'send_pin') {
-        return res.status(400).json({ message: "Incorrect OTP. Please try again." });
-      }
-
-      return res.status(400).json({ message: data.message || `Payment status: ${data.status}. Please try again.` });
-    } catch (err: any) {
-      console.error('[Paystack] verify-otp error:', err);
-      return res.status(500).json({ message: "Payment service error. Please try again." });
-    }
-  });
-
-  app.post(api.wallet.resendOtp.path, isAuthenticated, async (req, res) => {
-    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
-    const parsed = api.wallet.resendOtp.input.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
-
-    const { sessionId } = parsed.data;
-    const session = paystackSessions.get(sessionId);
-
-    if (!session || session.userId !== userId) {
-      return res.status(400).json({ message: "Session expired or invalid. Please try again." });
-    }
-
-    try {
-      // Paystack doesn't have a resend OTP endpoint directly — we inform the user to check their phone
-      res.json({
-        message: "Please check your phone for the OTP already sent by your bank",
-        otpSentTo: session.maskedInfo,
-      });
-    } catch (err: any) {
-      console.error('[Paystack] resend-otp error:', err);
-      return res.status(500).json({ message: "Could not resend OTP. Please try again." });
-    }
-  });
-
-  app.get(api.wallet.depositMethods.path, isAuthenticated, async (req, res) => {
-    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
-    const methods = await storage.getDepositMethods(userId);
-    res.json({ methods, hasDeposits: methods.length > 0 });
-  });
-
-  // User: submit withdrawal request (when they want a different account)
-  app.post('/api/wallet/withdrawal-requests', isAuthenticated, async (req, res) => {
-    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
-    const { amount, bankName, bankCode, accountNumber, accountName, reason } = req.body;
-    if (!amount || !bankName || !accountNumber) {
-      return res.status(400).json({ message: "Amount, bank name, and account number are required." });
-    }
-    const val = parseFloat(amount);
-    if (isNaN(val) || val <= 0) return res.status(400).json({ message: "Invalid amount." });
-
-    const profile = await storage.getProfile(userId);
-    if (!profile || parseFloat(profile.walletBalance) < val) {
-      return res.status(400).json({ message: "Insufficient wallet balance for this request." });
-    }
-
-    const userRecord = await storage.getUser(userId);
-    const userName = userRecord
-      ? `${userRecord.firstName || ''} ${userRecord.lastName || ''}`.trim() || userRecord.email || userId
-      : userId;
-
-    const request = await storage.createWithdrawalRequest({
-      userId,
-      userName,
-      amount: val.toString(),
-      bankName,
-      bankCode: bankCode || null,
-      accountNumber,
-      accountName: accountName || null,
-      reason: reason || null,
+    return res.json({
+      newBalance: profile?.walletBalance || "0",
+      message: "Deposit successful!",
     });
+  } catch (err: any) {
+    console.error('[Paystack] verify error:', err);
+    return res.status(500).json({ message: "Payment service error. Please try again." });
+  }
+});
 
-    if (userRecord?.email) {
-      sendWithdrawalEmail(userRecord.email, userRecord.firstName || userRecord.email, val).catch(() => {});
-    }
+// User: submit withdrawal request (when they want a different account)
+app.post('/api/wallet/withdrawal-requests', isAuthenticated, async (req, res) => {
+  const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
+  const { amount, bankName, bankCode, accountNumber, accountName, reason } = req.body;
+  if (!amount || !bankName || !accountNumber) {
+    return res.status(400).json({ message: "Amount, bank name, and account number are required." });
+  }
+  const val = parseFloat(amount);
+  if (isNaN(val) || val <= 0) return res.status(400).json({ message: "Invalid amount." });
 
-    res.json(request);
+  const profile = await storage.getProfile(userId);
+  if (!profile || parseFloat(profile.walletBalance) < val) {
+    return res.status(400).json({ message: "Insufficient wallet balance for this request." });
+  }
+
+  const userRecord = await storage.getUser(userId);
+  const userName = userRecord
+    ? `${userRecord.firstName || ''} ${userRecord.lastName || ''}`.trim() || userRecord.email || userId
+    : userId;
+
+  const request = await storage.createWithdrawalRequest({
+    userId,
+    userName,
+    amount: val.toString(),
+    bankName,
+    bankCode: bankCode || null,
+    accountNumber,
+    accountName: accountName || null,
+    reason: reason || null,
   });
 
-  // User: view their own withdrawal requests
-  app.get('/api/wallet/withdrawal-requests', isAuthenticated, async (req, res) => {
-    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
-    const requests = await storage.getUserWithdrawalRequests(userId);
-    res.json(requests);
-  });
+  if (userRecord?.email) {
+    sendWithdrawalEmail(userRecord.email, userRecord.firstName || userRecord.email, val).catch(() => {});
+  }
 
-  // Admin: view all withdrawal requests
-  app.get('/api/admin/withdrawal-requests', isAdminOrOwner, async (req, res) => {
-    const status = req.query.status as string | undefined;
-    const requests = await storage.getAllWithdrawalRequests(status);
-    res.json(requests);
-  });
+  res.json(request);
+});
 
-  // Admin: approve or reject a withdrawal request
-  app.post('/api/admin/withdrawal-requests/:id/process', isAdminOrOwner, async (req, res) => {
-    const id = parseInt(req.params.id);
-    const { action, adminNote } = req.body;
-    if (!['approved', 'rejected'].includes(action)) {
-      return res.status(400).json({ message: "Action must be 'approved' or 'rejected'." });
+// User: view their own withdrawal requests
+app.get('/api/wallet/withdrawal-requests', isAuthenticated, async (req, res) => {
+  const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
+  const requests = await storage.getUserWithdrawalRequests(userId);
+  res.json(requests);
+});
+
+// Admin: view all withdrawal requests
+app.get('/api/admin/withdrawal-requests', isAdminOrOwner, async (req, res) => {
+  const status = req.query.status as string | undefined;
+  const requests = await storage.getAllWithdrawalRequests(status);
+  res.json(requests);
+});
+
+// Admin: approve or reject a withdrawal request
+app.post('/api/admin/withdrawal-requests/:id/process', isAdminOrOwner, async (req, res) => {
+  const id = parseInt(req.params.id);
+  const { action, adminNote } = req.body;
+  if (!['approved', 'rejected'].includes(action)) {
+    return res.status(400).json({ message: "Action must be 'approved' or 'rejected'." });
+  }
+  const adminUser = (req as any).adminUser;
+  if (!adminUser) return res.status(401).json({ message: "Admin not authenticated." });
+
+  const existing = (await storage.getAllWithdrawalRequests()).find(r => r.id === id);
+  if (!existing) return res.status(404).json({ message: "Request not found." });
+  if (existing.status !== 'pending') return res.status(400).json({ message: "This request has already been processed." });
+
+  if (action === 'approved') {
+    const profile = await storage.getProfile(existing.userId);
+    const balance = parseFloat(profile?.walletBalance || '0');
+    const amount = parseFloat(existing.amount);
+    if (balance < amount) {
+      return res.status(400).json({ message: "User has insufficient wallet balance to fulfil this request." });
     }
-    const adminUser = (req as any).adminUser;
-    if (!adminUser) return res.status(401).json({ message: "Admin not authenticated." });
-
-    const existing = (await storage.getAllWithdrawalRequests()).find(r => r.id === id);
-    if (!existing) return res.status(404).json({ message: "Request not found." });
-    if (existing.status !== 'pending') return res.status(400).json({ message: "This request has already been processed." });
-
-    if (action === 'approved') {
-      const profile = await storage.getProfile(existing.userId);
-      const balance = parseFloat(profile?.walletBalance || '0');
-      const amount = parseFloat(existing.amount);
-      if (balance < amount) {
-        return res.status(400).json({ message: "User has insufficient wallet balance to fulfil this request." });
-      }
-      // Deduct from user wallet
-      await storage.updateWalletBalance(existing.userId, -amount);
-      await storage.createTransaction({
-        userId: existing.userId,
-        amount: (-amount).toString(),
-        type: 'withdrawal',
-        bankName: existing.bankName,
-        bankCode: existing.bankCode,
-        accountNumber: existing.accountNumber,
-        accountName: existing.accountName,
-      });
-      // Notify user
-      await storage.createNotification({
-        userId: existing.userId,
-        title: 'Withdrawal Approved',
-        message: `Your withdrawal request of N${amount.toLocaleString()} to ${existing.bankName} (${existing.accountNumber}) has been approved and processed.`,
-        type: 'success',
-      });
-    } else {
-      // Notify user of rejection
-      await storage.createNotification({
-        userId: existing.userId,
-        title: 'Withdrawal Request Rejected',
-        message: `Your withdrawal request of N${parseFloat(existing.amount).toLocaleString()} was not approved.${adminNote ? ` Reason: ${adminNote}` : ''}`,
-        type: 'warning',
-      });
-    }
-
-    const updated = await storage.processWithdrawalRequest(id, action, adminUser.id, adminNote);
-    res.json(updated);
-  });
-
-  app.post(api.wallet.withdraw.path, isAuthenticated, async (req, res) => {
-    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
-    const parsed = api.wallet.withdraw.input.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
-    const { amount, bankCode, bankName, accountNumber, accountName } = parsed.data;
-
-    const profile = await storage.getProfile(userId);
-    if (!profile || parseFloat(profile.walletBalance) < amount) {
-      return res.status(400).json({ message: "Insufficient funds" });
-    }
-
-    // Validate withdrawal destination matches a deposit method (if user has any deposits)
-    const depositMethods = await storage.getDepositMethods(userId);
-    if (depositMethods.length > 0) {
-      const isValidDestination = depositMethods.some(m => m.accountNumber === accountNumber && m.bankName === bankName);
-      if (!isValidDestination) {
-        return res.status(400).json({ message: "Withdrawal must go to one of your original deposit payment methods." });
-      }
-    }
-
-    await storage.updateWalletBalance(userId, -amount);
+    await storage.updateWalletBalance(existing.userId, -amount);
     await storage.createTransaction({
-      userId,
+      userId: existing.userId,
       amount: (-amount).toString(),
       type: 'withdrawal',
-      bankName: bankName || null,
-      bankCode: bankCode || null,
-      accountNumber: accountNumber || null,
-      accountName: accountName || null,
+      bankName: existing.bankName,
+      bankCode: existing.bankCode,
+      accountNumber: existing.accountNumber,
+      accountName: existing.accountName,
     });
+    await storage.createNotification({
+      userId: existing.userId,
+      title: 'Withdrawal Approved',
+      message: `Your withdrawal request of N${amount.toLocaleString()} to ${existing.bankName} (${existing.accountNumber}) has been approved and processed.`,
+      type: 'success',
+    });
+  } else {
+    await storage.createNotification({
+      userId: existing.userId,
+      title: 'Withdrawal Request Rejected',
+      message: `Your withdrawal request of N${parseFloat(existing.amount).toLocaleString()} was not approved.${adminNote ? ` Reason: ${adminNote}` : ''}`,
+      type: 'warning',
+    });
+  }
 
-    const updatedProfile = await storage.getProfile(userId);
-    res.json({ newBalance: updatedProfile?.walletBalance || "0" });
+  const updated = await storage.processWithdrawalRequest(id, action, adminUser.id, adminNote);
+  res.json(updated);
+});
+
+app.post(api.wallet.withdraw.path, isAuthenticated, async (req, res) => {
+  const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
+  const parsed = api.wallet.withdraw.input.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+  const { amount, bankCode, accountNumber, accountName } = parsed.data;
+
+  const profile = await storage.getProfile(userId);
+  if (!profile || parseFloat(profile.walletBalance) < amount) {
+    return res.status(400).json({ message: "Insufficient funds" });
+  }
+
+  // NOTE: the "destination must match a deposit method" check was removed —
+  // it depended on getDepositMethods(), which belonged to the old direct-charge flow.
+  // Your new withdrawal form lets the user withdraw to any bank account directly.
+  // If you still want a Paystack transfer to actually happen here (rather than just
+  // deducting the internal balance), this is the place to call Paystack's
+  // /transferrecipient + /transfer endpoints — see note below.
+
+  await storage.updateWalletBalance(userId, -amount);
+  await storage.createTransaction({
+    userId,
+    amount: (-amount).toString(),
+    type: 'withdrawal',
+    bankCode: bankCode || null,
+    accountNumber: accountNumber || null,
+    accountName: accountName || null,
   });
+
+  const updatedProfile = await storage.getProfile(userId);
+  res.json({ newBalance: updatedProfile?.walletBalance || "0" });
+});
 
   // --- VERIFICATION ---
 

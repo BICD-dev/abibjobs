@@ -317,6 +317,29 @@ export const api = {
       400: errorSchemas.payment,
     },
   },
+  // deposit money into wallet 
+  deposit: {
+    method: 'POST' as const,
+    path: '/api/wallet/deposit' as const,
+    input: z.object({
+      amount: z.number().min(100),
+      bankCode: z.string(),
+      accountNumber: z.string().length(10),
+      accountName: z.string().optional(),
+      bankName: z.string().optional(),
+    }),
+    responses: {
+      200: z.object({
+        reference: z.string(),
+        status: z.enum([
+          'pending',
+          'success',
+        ]),
+        message: z.string(),
+      }),
+      400: errorSchemas.payment,
+    },
+  },
 },
   offers: {
     list: {
