@@ -117,7 +117,7 @@ function Router() {
       <Route path="/wallet">
         {() => <ProtectedRoute component={Wallet} />}
       </Route>
-      <Route path="/payment/verify/:reference">
+      <Route path="/payment/verify">
         {() => <ProtectedRoute component={PaymentVerify} />}
       </Route>
       <Route path="/profile">
