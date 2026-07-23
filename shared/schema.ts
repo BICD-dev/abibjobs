@@ -6,6 +6,18 @@ export * from "./models/auth";
 
 // === TABLE DEFINITIONS ===
 
+export const jobEscrows = pgTable("job_escrows", {
+  id: serial("id").primaryKey(),
+  jobId: integer("job_id").notNull().references(() => jobs.id),
+  posterId: text("poster_id").notNull(),
+  amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
+  status: text("status").notNull().default("held"), // 'held' | 'released' | 'refunded' | 'partially_refunded'
+  refundedAmount: numeric("refunded_amount", { precision: 10, scale: 2 }),
+  releasedAmount: numeric("released_amount", { precision: 10, scale: 2 }),
+  createdAt: timestamp("created_at").defaultNow(),
+  resolvedAt: timestamp("resolved_at"),
+});
+
 export const profiles = pgTable("profiles", {
   id: serial("id").primaryKey(),
   userId: text("user_id").notNull().unique(),
@@ -333,6 +345,7 @@ export type SupportTicket = typeof supportTickets.$inferSelect;
 export type SupportMessage = typeof supportMessages.$inferSelect;
 export type WithdrawalRequest = typeof withdrawalRequests.$inferSelect;
 export type AdminWithdrawal = typeof adminWithdrawals.$inferSelect;
+export type JobEscrow = typeof jobEscrows.$inferSelect;
 
 export type CreateJobInput = z.infer<typeof createJobSchema>;
 export type VerificationStatus = 'unverified' | 'pending' | 'verified' | 'declined' | 'redo_requested';

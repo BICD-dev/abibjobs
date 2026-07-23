@@ -187,11 +187,30 @@ export const api = {
     responses: {
       200: z.object({
         balance: z.string(),
+        heldBalance: z.string(),
         transactions: z.array(z.custom<typeof transactions.$inferSelect>()),
       }),
     },
   },
-
+  /**
+   * Breakdown of funds currently held in escrow for the user's own pending jobs.
+   */
+  heldJobs: {
+    method: 'GET' as const,
+    path: '/api/wallet/held-jobs' as const,
+    responses: {
+      200: z.object({
+        jobs: z.array(
+          z.object({
+            jobId: z.number(),
+            jobTitle: z.string(),
+            amount: z.string(),
+            createdAt: z.string(),
+          }),
+        ),
+      }),
+    },
+  },
   /**
    * Initialize a Paystack transaction.
    * Returns the hosted checkout URL.

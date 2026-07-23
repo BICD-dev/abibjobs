@@ -23,6 +23,7 @@ import {
   supportMessages,
   withdrawalRequests,
   adminWithdrawals,
+  jobEscrows,
   type Profile,
   type Job,
   type Transaction,
@@ -47,6 +48,7 @@ import {
   type SupportMessage,
   type WithdrawalRequest,
   type AdminWithdrawal,
+  type JobEscrow,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -78,7 +80,7 @@ export interface IStorage {
   // Wallet & Transactions
   getTransactions(userId: string): Promise<Transaction[]>;
   getDepositMethods(userId: string): Promise<{ bankCode: string | null; bankName: string | null; accountNumber: string | null; accountName: string | null }[]>;
-  createTransaction(tx: { userId: string; amount: string; type: string; jobId?: number; bankName?: string | null; bankCode?: string | null; accountNumber?: string | null; accountName?: string | null }): Promise<Transaction>;
+  createTransaction(tx: { userId: string; amount: string; type: string; jobId?: number; bankName?: string | null; bankCode?: string | null; accountNumber?: string | null; accountName?: string | null, reference?:string | null, fee?:string | null, status?:string }): Promise<Transaction>;
   updateWalletBalance(userId: string, amountChange: number): Promise<Profile>;
 
   // Offers
@@ -214,6 +216,15 @@ export interface IStorage {
     totalJobs: number;
     jobBreakdown: { jobId: number; title: string; hours: number; worker: string; completedAt: string }[];
   }>;
+
+  // Job Escrow
+  createJobEscrow(data: { jobId: number; posterId: string; amount: string }): Promise<JobEscrow>;
+  getJobEscrow(jobId: number): Promise<JobEscrow | undefined>;
+  releaseJobEscrow(jobId: number): Promise<JobEscrow>;
+  refundJobEscrow(jobId: number, data: { status: 'refunded' | 'partially_refunded'; refundedAmount: string; releasedAmount?: string }): Promise<JobEscrow>;
+  getHeldBalance(userId: string): Promise<string>;
+  getUserJobEscrows(userId: string, status?: string): Promise<JobEscrow[]>;
+
 }
 
 export class DatabaseStorage implements IStorage {
@@ -457,7 +468,7 @@ export class DatabaseStorage implements IStorage {
     return unique;
   }
 
-  async createTransaction(tx: { userId: string; amount: string; type: string; jobId?: number; bankName?: string | null; bankCode?: string | null; accountNumber?: string | null; accountName?: string | null }): Promise<Transaction> {
+  async createTransaction(tx: { userId: string; amount: string; type: string; jobId?: number; bankName?: string | null; bankCode?: string | null; accountNumber?: string | null; accountName?: string | null, reference?:string | null, fee?:string | null, status?:string }): Promise<Transaction> {
     const [newTx] = await db.insert(transactions).values(tx).returning();
     return newTx;
   }
@@ -1539,6 +1550,64 @@ export class DatabaseStorage implements IStorage {
       .where(eq(withdrawalRequests.id, id))
       .returning();
     return updated;
+  }
+
+  async createJobEscrow(data: { jobId: number; posterId: string; amount: string }): Promise<JobEscrow> {
+    const result = await db.insert(jobEscrows)
+      .values({ jobId: data.jobId, posterId: data.posterId, amount: data.amount })
+      .returning();
+    return result[0];
+  }
+
+  async getJobEscrow(jobId: number): Promise<JobEscrow | undefined> {
+    const result = await db.select().from(jobEscrows).where(eq(jobEscrows.jobId, jobId)).limit(1);
+    return result[0];
+  }
+
+  async releaseJobEscrow(jobId: number): Promise<JobEscrow> {
+    const result = await db.update(jobEscrows)
+      .set({ status: 'released', releasedAmount: sql`${jobEscrows.amount}`, resolvedAt: new Date() })
+      .where(and(eq(jobEscrows.jobId, jobId), eq(jobEscrows.status, 'held')))
+      .returning();
+
+    if (result.length === 0) {
+      throw new Error(`No held escrow found for job ${jobId} (already resolved or never created)`);
+    }
+    return result[0];
+  }
+
+  async refundJobEscrow(
+    jobId: number,
+    data: { status: 'refunded' | 'partially_refunded'; refundedAmount: string; releasedAmount?: string }
+  ): Promise<JobEscrow> {
+    const result = await db.update(jobEscrows)
+      .set({
+        status: data.status,
+        refundedAmount: data.refundedAmount,
+        releasedAmount: data.releasedAmount ?? '0',
+        resolvedAt: new Date(),
+      })
+      .where(and(eq(jobEscrows.jobId, jobId), eq(jobEscrows.status, 'held')))
+      .returning();
+
+    if (result.length === 0) {
+      throw new Error(`No held escrow found for job ${jobId} (already resolved or never created)`);
+    }
+    return result[0];
+  }
+
+  async getHeldBalance(userId: string): Promise<string> {
+    const result = await db.select({ total: sql<string>`COALESCE(SUM(${jobEscrows.amount}), 0)` })
+      .from(jobEscrows)
+      .where(and(eq(jobEscrows.posterId, userId), eq(jobEscrows.status, 'held')));
+    return result[0]?.total ?? '0';
+  }
+
+  async getUserJobEscrows(userId: string, status?: string): Promise<JobEscrow[]> {
+    const condition = status
+      ? and(eq(jobEscrows.posterId, userId), eq(jobEscrows.status, status))
+      : eq(jobEscrows.posterId, userId);
+    return db.select().from(jobEscrows).where(condition).orderBy(desc(jobEscrows.createdAt));
   }
 }
 

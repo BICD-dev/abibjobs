@@ -473,14 +473,22 @@ export async function registerRoutes(
           message: `You need ₦${totalCost.toLocaleString()} in your wallet to post this job, but your balance is ₦${posterBalance.toLocaleString()}. Please fund your wallet with at least ₦${shortfall.toLocaleString()} more, then try again.`
         });
       }
-
+      
       const jobInput = {
         ...input,
         posterId: userId,
         scheduledDate: input.scheduledDate ? new Date(input.scheduledDate as any) : undefined,
       };
       const job = await storage.createJob(jobInput);
-
+      // lock the portion of the user's fund allocated for the job
+      await storage.updateWalletBalance(userId, -totalCost);
+      await storage.createJobEscrow({ jobId: job.id, posterId: userId, amount: totalCost.toString() });
+      await storage.createTransaction({
+        userId,
+        amount: (-totalCost).toString(),
+        type: 'escrow_hold',
+        jobId: job.id,
+      });
       await storage.createAdminNotification({
         adminId: 0,
         title: 'New Job Posted',
@@ -555,27 +563,27 @@ export async function registerRoutes(
     if (!job.acceptedAt) {
       updateData.acceptedAt = new Date();
     }
-
-    // Hold escrow from poster's wallet on first acceptance
-    if (currentWorkers.length === 0) {
-      const posterProfile = await storage.getProfile(job.posterId);
-      const price = parseFloat(job.price);
-      const escrowAmount = job.priceType === 'per_person' ? price * job.workersNeeded : price;
-      if (!isFinite(escrowAmount) || escrowAmount <= 0) {
-        return res.status(400).json({ message: "This job has an invalid price and cannot be accepted." });
-      }
-      const posterBalance = parseFloat(posterProfile?.walletBalance || '0');
-      if (posterBalance < escrowAmount) {
-        return res.status(400).json({ message: `The job poster has insufficient funds in their wallet to cover this job (₦${escrowAmount.toLocaleString()} required).` });
-      }
-      await storage.updateWalletBalance(job.posterId, -escrowAmount);
-      await storage.createTransaction({
-        userId: job.posterId,
-        amount: (-escrowAmount).toString(),
-        type: 'escrow_hold',
-        jobId: job.id,
-      });
-    }
+    // this block is redundant since the poster's wallet is deducted on job post
+    // // Hold escrow from poster's wallet on first acceptance
+    // if (currentWorkers.length === 0) {
+    //   const posterProfile = await storage.getProfile(job.posterId);
+    //   const price = parseFloat(job.price);
+    //   const escrowAmount = job.priceType === 'per_person' ? price * job.workersNeeded : price;
+    //   if (!isFinite(escrowAmount) || escrowAmount <= 0) {
+    //     return res.status(400).json({ message: "This job has an invalid price and cannot be accepted." });
+    //   }
+    //   const posterBalance = parseFloat(posterProfile?.walletBalance || '0');
+    //   if (posterBalance < escrowAmount) {
+    //     return res.status(400).json({ message: `The job poster has insufficient funds in their wallet to cover this job (₦${escrowAmount.toLocaleString()} required).` });
+    //   }
+    //   await storage.updateWalletBalance(job.posterId, -escrowAmount);
+    //   await storage.createTransaction({
+    //     userId: job.posterId,
+    //     amount: (-escrowAmount).toString(),
+    //     type: 'escrow_hold',
+    //     jobId: job.id,
+    //   });
+    // }
 
     const updated = await storage.updateJob(jobId, updateData);
 
@@ -658,6 +666,8 @@ export async function registerRoutes(
         }
         return res.status(409).json({ message: "Job state changed concurrently. Please refresh and try again." });
       }
+      // releasing the hold now that it's been fully consumed by worker payouts + platform fee:
+      await storage.releaseJobEscrow(jobId);
 
       for (const wId of workerIds) {
         await storage.updateWalletBalance(wId, payoutPerWorker);
@@ -763,69 +773,84 @@ export async function registerRoutes(
     const price = parseFloat(job.price);
     const escrowAmount = job.priceType === 'per_person' ? price * job.workersNeeded : price;
     const workerIsEnRoute = job.workerProgress === 'on_the_way' || job.workerProgress === 'at_location';
-    const escrowWasHeld = !!job.workerId; // escrow only held once first worker accepts
 
-    if (escrowWasHeld) {
-      if (workerIsEnRoute) {
-        const penalty = Math.round(escrowAmount * 0.1 * 100) / 100;
-        const posterRefund = escrowAmount - penalty;
+    const escrowRow = await storage.getJobEscrow(jobId);
+    if (!escrowRow) {
+      // Shouldn't happen for any job created after this change, but don't silently proceed if it does.
+      return res.status(500).json({ message: "No escrow record found for this job. Please contact support before cancelling." });
+    }
+    if (escrowRow.status !== 'held') {
+      return res.status(400).json({ message: "This job's escrow has already been resolved." });
+    }
 
-        await storage.updateWalletBalance(userId, posterRefund);
+    if (workerIsEnRoute) {
+      const penalty = Math.round(escrowAmount * 0.1 * 100) / 100;
+      const posterRefund = escrowAmount - penalty;
+
+      await storage.updateWalletBalance(userId, posterRefund);
+      await storage.createTransaction({
+        userId,
+        amount: posterRefund.toString(),
+        type: 'escrow_refund',
+        jobId: job.id,
+      });
+
+      const workerIds = job.workerId!.includes(',') ? job.workerId!.split(',').map(id => id.trim()) : [job.workerId!];
+      let remaining = penalty;
+      for (let i = 0; i < workerIds.length; i++) {
+        const isLast = i === workerIds.length - 1;
+        const share = isLast ? remaining : Math.floor((penalty / workerIds.length) * 100) / 100;
+        remaining = Math.round((remaining - share) * 100) / 100;
+
+        await storage.updateWalletBalance(workerIds[i], share);
         await storage.createTransaction({
-          userId,
-          amount: posterRefund.toString(),
-          type: 'escrow_refund',
+          userId: workerIds[i],
+          amount: share.toString(),
+          type: 'cancellation_compensation',
           jobId: job.id,
         });
 
-        const workerIds = job.workerId!.includes(',') ? job.workerId!.split(',').map(id => id.trim()) : [job.workerId!];
-        let remaining = penalty;
-        for (let i = 0; i < workerIds.length; i++) {
-          const isLast = i === workerIds.length - 1;
-          const share = isLast ? remaining : Math.floor((penalty / workerIds.length) * 100) / 100;
-          remaining = Math.round((remaining - share) * 100) / 100;
+        await storage.createNotification({
+          userId: workerIds[i],
+          title: "Compensation Received",
+          message: `The poster cancelled "${job.title}" while you were on the way. ₦${share.toLocaleString()} has been added to your wallet.`,
+          type: "success",
+          jobId: job.id,
+        });
 
-          // Pay worker immediately — no delay, owner gains nothing
-          await storage.updateWalletBalance(workerIds[i], share);
-          await storage.createTransaction({
-            userId: workerIds[i],
-            amount: share.toString(),
-            type: 'cancellation_compensation',
-            jobId: job.id,
-          });
+        storage.getUser(workerIds[i]).then(worker => {
+          if (worker?.email) sendJobCancelledToWorkerEmail(worker.email, worker.firstName || worker.email, job.title, share).catch(() => {});
+        }).catch(() => {});
+      }
 
-          await storage.createNotification({
-            userId: workerIds[i],
-            title: "Compensation Received",
-            message: `The poster cancelled "${job.title}" while you were on the way. ₦${share.toLocaleString()} has been added to your wallet.`,
-            type: "success",
-            jobId: job.id,
-          });
+      await storage.refundJobEscrow(jobId, {
+        status: 'partially_refunded',
+        refundedAmount: posterRefund.toString(),
+        releasedAmount: penalty.toString(),
+      });
+    } else {
+      await storage.updateWalletBalance(userId, escrowAmount);
+      await storage.createTransaction({
+        userId,
+        amount: escrowAmount.toString(),
+        type: 'escrow_refund',
+        jobId: job.id,
+      });
 
-          // Email worker about compensation
-          storage.getUser(workerIds[i]).then(worker => {
-            if (worker?.email) sendJobCancelledToWorkerEmail(worker.email, worker.firstName || worker.email, job.title, share).catch(() => {});
+      if (job.workerId) {
+        const wIds = job.workerId.split(',').filter(Boolean);
+        for (const wId of wIds) {
+          storage.getUser(wId).then(worker => {
+            if (worker?.email) sendJobCancelledToWorkerEmail(worker.email, worker.firstName || worker.email, job.title, null).catch(() => {});
           }).catch(() => {});
         }
-      } else {
-        await storage.updateWalletBalance(userId, escrowAmount);
-        await storage.createTransaction({
-          userId,
-          amount: escrowAmount.toString(),
-          type: 'escrow_refund',
-          jobId: job.id,
-        });
-
-        // Email workers that job was cancelled (no compensation)
-        if (job.workerId) {
-          const wIds = job.workerId.split(',').filter(Boolean);
-          for (const wId of wIds) {
-            storage.getUser(wId).then(worker => {
-              if (worker?.email) sendJobCancelledToWorkerEmail(worker.email, worker.firstName || worker.email, job.title, null).catch(() => {});
-            }).catch(() => {});
-          }
-        }
       }
+
+      await storage.refundJobEscrow(jobId, {
+        status: 'refunded',
+        refundedAmount: escrowAmount.toString(),
+        releasedAmount: '0',
+      });
     }
     // If no worker has accepted yet, no escrow was held — nothing to refund
 
@@ -3218,15 +3243,35 @@ app.get(api.wallet.get.path, isAuthenticated, async (req, res) => {
   const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
   const profile = await storage.getProfile(userId);
   const transactions = await storage.getTransactions(userId);
+  const heldBalance = await storage.getHeldBalance(userId);
 
   if (!profile) return res.status(404).json({ message: "Profile not found" });
 
   res.json({
     balance: profile.walletBalance,
+    heldBalance,
     transactions
   });
 });
 
+app.get(api.wallet.heldJobs.path, isAuthenticated, async (req, res) => {
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
+    const escrows = await storage.getUserJobEscrows(userId, 'held');
+
+    const jobs = await Promise.all(
+      escrows.map(async (e) => {
+        const job = await storage.getJob(e.jobId);
+        return {
+          jobId: e.jobId,
+          jobTitle: job?.title || 'Untitled job',
+          amount: e.amount,
+          createdAt: e.createdAt?.toISOString() ?? new Date().toISOString(),
+        };
+      })
+    );
+
+    res.json({ jobs });
+  });
 // Admin/owner: manually credit a user's wallet (e.g. reconciling an off-platform bank transfer).
 // NOTE: this is a separate admin action from the user-facing Paystack deposit flow below —
 // left untouched. Flag if this should actually be removed/merged.

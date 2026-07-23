@@ -1,4 +1,4 @@
-import { useWallet } from "@/hooks/use-wallet";
+import { useWallet, useHeldJobs } from "@/hooks/use-wallet";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Navbar } from "@/components/Navbar";
@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, ArrowUpRight, ArrowDownLeft, Wallet as WalletIcon, Building2, ArrowDownToLine, Clock, CheckCircle2, XCircle, MessageSquare } from "lucide-react";
+import { Loader2, ArrowUpRight, ArrowDownLeft, Wallet as WalletIcon, Building2, ArrowDownToLine, Clock, CheckCircle2, XCircle, MessageSquare, Lock, ChevronDown } from "lucide-react";
 import { format } from "date-fns";
 import { NIGERIAN_BANKS } from "@/lib/nigerian-banks";
 import { useToast } from "@/hooks/use-toast";
@@ -20,6 +20,9 @@ export default function Wallet() {
   const { data: wallet, isLoading } = useWallet();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  const [heldOpen, setHeldOpen] = useState(false);
+  const { data: heldJobs, isLoading: isHeldLoading } = useHeldJobs();
 
   // --- Admin-mediated "withdraw to new account" request (unchanged flow) ---
   const [requestOpen, setRequestOpen] = useState(false);
@@ -65,6 +68,7 @@ export default function Wallet() {
 
   const selectedReqBank = NIGERIAN_BANKS.find((b) => b.code === reqBankCode);
   const balance = Number(wallet?.balance || 0);
+  const heldBalance = Number(wallet?.heldBalance || 0);
 
   return (
     <div className="min-h-screen bg-background pb-20">
@@ -74,20 +78,69 @@ export default function Wallet() {
         <h1 className="text-3xl font-display font-bold text-foreground mb-8" data-testid="text-wallet-title">My Wallet</h1>
 
         <div className="grid gap-8 md:grid-cols-2">
-          <div className="bg-primary rounded-3xl p-8 text-white shadow-2xl shadow-primary/30 relative overflow-hidden md:col-span-2">
+          {/* Available balance */}
+          <div className="bg-primary rounded-3xl p-8 text-white shadow-2xl shadow-primary/30 relative overflow-hidden">
             <div className="absolute top-0 right-0 p-8 opacity-10">
               <WalletIcon className="w-32 h-32" />
             </div>
 
             <p className="text-primary-foreground/80 font-medium mb-2">Available Balance</p>
-            <h2 className="text-5xl font-bold font-display tracking-tight mb-8" data-testid="text-wallet-balance">
+            <h2 className="text-4xl font-bold font-display tracking-tight mb-8" data-testid="text-wallet-balance">
               ₦{balance.toLocaleString()}
             </h2>
 
-            <div className="flex gap-4 relative z-10">
+            <div className="flex gap-4 relative z-10 flex-wrap">
               <FundWalletModal />
               <WithdrawModal balance={balance} />
             </div>
+          </div>
+
+          {/* Held for pending jobs */}
+          <div className="bg-muted rounded-3xl p-8 relative overflow-hidden border border-border">
+            <div className="absolute top-0 right-0 p-8 opacity-10">
+              <Lock className="w-32 h-32" />
+            </div>
+
+            <p className="text-muted-foreground font-medium mb-2">Held for Pending Jobs</p>
+            <h2 className="text-4xl font-bold font-display tracking-tight mb-8 text-foreground" data-testid="text-wallet-held-balance">
+              ₦{heldBalance.toLocaleString()}
+            </h2>
+
+            <button
+              onClick={() => setHeldOpen((v) => !v)}
+              className="flex items-center gap-2 text-sm font-medium text-foreground relative z-10"
+              data-testid="button-toggle-held-breakdown"
+              disabled={heldBalance === 0}
+            >
+              {heldBalance === 0 ? (
+                <span className="text-muted-foreground">No funds currently held</span>
+              ) : (
+                <>
+                  View breakdown
+                  <ChevronDown className={`w-4 h-4 transition-transform ${heldOpen ? "rotate-180" : ""}`} />
+                </>
+              )}
+            </button>
+
+            {heldOpen && heldBalance > 0 && (
+              <div className="mt-4 space-y-2 relative z-10">
+                {isHeldLoading ? (
+                  <div className="flex justify-center py-4"><Loader2 className="w-4 h-4 animate-spin" /></div>
+                ) : heldJobs?.jobs.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Nothing held right now.</p>
+                ) : (
+                  heldJobs?.jobs.map((j) => (
+                    <div key={j.jobId} className="flex items-center justify-between gap-2 p-3 rounded-xl bg-background/60 text-sm" data-testid={`row-held-job-${j.jobId}`}>
+                      <div className="min-w-0">
+                        <p className="font-medium text-foreground truncate">{j.jobTitle}</p>
+                        <p className="text-xs text-muted-foreground">{format(new Date(j.createdAt), "PP")}</p>
+                      </div>
+                      <span className="font-bold font-mono text-foreground flex-shrink-0">₦{Number(j.amount).toLocaleString()}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
           </div>
 
           <Card className="md:col-span-2 rounded-3xl border border-border shadow-sm">

@@ -24,6 +24,17 @@ export function useWallet() {
   });
 }
 
+export function useHeldJobs() {
+  return useQuery({
+    queryKey: [api.wallet.heldJobs.path],
+    queryFn: async () => {
+      const res = await fetch(api.wallet.heldJobs.path, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch held funds breakdown");
+      return api.wallet.heldJobs.responses[200].parse(await res.json());
+    },
+  });
+}
+
 export function useInitializeFunding() {
   const { toast } = useToast();
 
@@ -93,7 +104,6 @@ export interface WithdrawInput {
   accountName?: string;
 }
 
-
 export function useWithdraw() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -115,6 +125,7 @@ export function useWithdraw() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.wallet.get.path] });
+      // Withdrawing spends available balance, but a held amount never moves here — no need to invalidate that.
       toast({
         title: "Withdrawal Successful",
         description: "Funds have been sent to your bank account.",
