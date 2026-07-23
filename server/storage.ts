@@ -82,6 +82,9 @@ export interface IStorage {
   getDepositMethods(userId: string): Promise<{ bankCode: string | null; bankName: string | null; accountNumber: string | null; accountName: string | null }[]>;
   createTransaction(tx: { userId: string; amount: string; type: string; jobId?: number; bankName?: string | null; bankCode?: string | null; accountNumber?: string | null; accountName?: string | null, reference?:string | null, fee?:string | null, status?:string }): Promise<Transaction>;
   updateWalletBalance(userId: string, amountChange: number): Promise<Profile>;
+  getTransactionByReference(reference: string): Promise<Transaction | undefined>;
+  updateTransactionStatus(reference: string, status: 'pending' | 'success' | 'failed'): Promise<Transaction>;
+  completeDepositIfPending(reference: string, data: { amount: string; bankName: string | null; accountNumber: string | null }): Promise<Transaction | undefined>;
 
   // Offers
   getOffersByJob(jobId: number): Promise<OfferWithSender[]>;
@@ -228,6 +231,45 @@ export interface IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
+  async getTransactionByReference(reference: string): Promise<Transaction | undefined> {
+    const result = await db.select()
+      .from(transactions)
+      .where(eq(transactions.reference, reference))
+      .limit(1);
+    return result[0];
+  }
+
+  async updateTransactionStatus(reference: string, status: 'pending' | 'success' | 'failed'): Promise<Transaction> {
+    const result = await db.update(transactions)
+      .set({ status })
+      .where(eq(transactions.reference, reference))
+      .returning();
+
+    if (result.length === 0) {
+      throw new Error(`Transaction with reference ${reference} not found`);
+    }
+    return result[0];
+  }
+
+  // Atomic pending -> completed transition. Returns undefined (not a throw) if the row
+  // was already completed/failed by a concurrent request — the caller uses that to decide
+  // whether it's the "winner" allowed to actually credit the wallet.
+  async completeDepositIfPending(
+    reference: string,
+    data: { amount: string; bankName: string | null; accountNumber: string | null }
+  ): Promise<Transaction | undefined> {
+    const result = await db.update(transactions)
+      .set({
+        status: 'completed',
+        amount: data.amount,
+        bankName: data.bankName,
+        accountNumber: data.accountNumber,
+      })
+      .where(and(eq(transactions.reference, reference), eq(transactions.status, 'pending')))
+      .returning();
+    return result[0];
+  }
+
   async getUser(id: string): Promise<any | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
     return user;

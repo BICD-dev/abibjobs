@@ -82,6 +82,8 @@ export const transactions = pgTable("transactions", {
   bankCode: text("bank_code"),
   accountNumber: text("account_number"),
   accountName: text("account_name"),
+  reference: text("reference"),
+  fee: numeric("fee", { precision: 10, scale: 2 }),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
