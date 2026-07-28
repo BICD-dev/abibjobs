@@ -227,7 +227,7 @@ export interface IStorage {
   refundJobEscrow(jobId: number, data: { status: 'refunded' | 'partially_refunded'; refundedAmount: string; releasedAmount?: string }): Promise<JobEscrow>;
   getHeldBalance(userId: string): Promise<string>;
   getUserJobEscrows(userId: string, status?: string): Promise<JobEscrow[]>;
-
+  adjustJobEscrowAmount(jobId: number, delta: number): Promise<JobEscrow>
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1650,6 +1650,18 @@ export class DatabaseStorage implements IStorage {
       ? and(eq(jobEscrows.posterId, userId), eq(jobEscrows.status, status))
       : eq(jobEscrows.posterId, userId);
     return db.select().from(jobEscrows).where(condition).orderBy(desc(jobEscrows.createdAt));
+  }
+  async adjustJobEscrowAmount(jobId: number, delta: number): Promise<JobEscrow> {
+    const deltaStr = delta.toFixed(2);
+    const result = await db.update(jobEscrows)
+      .set({ amount: sql`(${jobEscrows.amount}::numeric + ${deltaStr}::numeric)` })
+      .where(and(eq(jobEscrows.jobId, jobId), eq(jobEscrows.status, 'held')))
+      .returning();
+
+    if (result.length === 0) {
+      throw new Error(`No held escrow found for job ${jobId} to adjust`);
+    }
+    return result[0];
   }
 }
 

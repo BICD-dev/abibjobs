@@ -1799,7 +1799,23 @@ export async function registerRoutes(
           });
         }
 
-        await storage.updateWalletBalance(userId, -escrowDiff);
+        try {
+          await storage.updateWalletBalance(userId, -escrowDiff);
+        } catch (err) {
+          // Balance could have changed between the read above and this write
+          // (e.g. another job posted concurrently). Report it the same way as the pre-check
+          // instead of letting it fall through as a 500.
+          const freshProfile = await storage.getProfile(userId);
+          const freshBalance = parseFloat(freshProfile?.walletBalance || '0');
+          return res.json({
+            offer,
+            job,
+            insufficientFunds: true,
+            shortfall: escrowDiff - freshBalance,
+          });
+        }
+
+        await storage.adjustJobEscrowAmount(job.id, escrowDiff);
         await storage.createTransaction({
           userId,
           amount: (-escrowDiff).toString(),
@@ -1808,6 +1824,7 @@ export async function registerRoutes(
         });
       } else if (isPoster && escrowDiff < 0) {
         await storage.updateWalletBalance(userId, Math.abs(escrowDiff));
+        await storage.adjustJobEscrowAmount(job.id, escrowDiff); // escrowDiff is negative — reduces the held amount
         await storage.createTransaction({
           userId,
           amount: Math.abs(escrowDiff).toString(),
