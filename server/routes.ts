@@ -3383,8 +3383,7 @@ app.get(api.wallet.verifyFunding.path, isAuthenticated, async (req, res) => {
 
     // Already resolved — safe to hit repeatedly (refresh, duplicate calls) without re-querying Paystack.
     if (transaction.status === 'completed') {
-      const profile = await storage.getProfile(userId);
-      return res.json({ newBalance: profile?.walletBalance || "0", message: "Deposit already processed." });
+      return res.json({ status: 'success', message: "Deposit already processed.", amount: transaction.amount });
     }
     if (transaction.status === 'failed') {
       return res.status(400).json({ message: "This payment attempt was not successful." });
@@ -3417,8 +3416,7 @@ app.get(api.wallet.verifyFunding.path, isAuthenticated, async (req, res) => {
 
     if (!completed) {
       // Lost the race to a concurrent verify call — it already credited the wallet. Just report current state.
-      const profile = await storage.getProfile(userId);
-      return res.json({ newBalance: profile?.walletBalance || "0", message: "Deposit already processed." });
+      return res.json({ status: 'success', message: "Deposit already processed.", amount: amount.toString() });
     }
 
     await storage.updateWalletBalance(userId, amount);
@@ -3430,8 +3428,9 @@ app.get(api.wallet.verifyFunding.path, isAuthenticated, async (req, res) => {
     }).catch(() => {});
 
     return res.json({
-      newBalance: profile?.walletBalance || "0",
+      status: 'success',
       message: "Deposit successful!",
+      amount: amount.toString(),
     });
   } catch (err: any) {
     console.error('[Paystack] verify error:', err);
