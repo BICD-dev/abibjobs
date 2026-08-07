@@ -169,15 +169,19 @@ export async function setupAuth(app: Express) {
       delete req.session.manualUserId;
     }
 
-    if (hasOidc && oidcConfig) {
+    if (hasOidc && oidcConfig && process.env.REPL_ID) {
+      let endSessionUrl: string | null = null;
+      try {
+        endSessionUrl = client.buildEndSessionUrl(oidcConfig, {
+          client_id: process.env.REPL_ID,
+          post_logout_redirect_uri: `${req.protocol}://${req.hostname}/auth`,
+        }).href;
+      } catch (err) {
+        console.error("[auth] Failed to build OIDC end-session URL:", err);
+      }
       req.logout(() => {
         req.session.destroy(() => {
-          res.redirect(
-            client.buildEndSessionUrl(oidcConfig!, {
-              client_id: process.env.REPL_ID!,
-              post_logout_redirect_uri: `${req.protocol}://${req.hostname}/auth`,
-            }).href
-          );
+          res.redirect(endSessionUrl ?? "/auth");
         });
       });
     } else if (hasOidc) {

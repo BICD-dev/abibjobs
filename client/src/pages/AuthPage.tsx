@@ -330,6 +330,7 @@ function ManualLogin({
       return res.json();
     },
     onSuccess: () => {
+      queryClient.clear();
       queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
       toast({ title: "Welcome Back", description: "You're now logged in." });
       onSuccess();

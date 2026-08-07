@@ -165,6 +165,11 @@ export function useConfirmDisputePayment() {
       queryClient.invalidateQueries({ queryKey: ['/api/disputes', vars.disputeId] });
       queryClient.invalidateQueries({ queryKey: [api.jobs.get.path, vars.jobId] });
       queryClient.invalidateQueries({ queryKey: [api.wallet.get.path] });
+      queryClient.invalidateQueries({ queryKey: [api.wallet.heldJobs.path] });
+      queryClient.invalidateQueries({ queryKey: [api.jobs.myJobs.path] });
+      queryClient.invalidateQueries({ queryKey: [api.jobs.history.path] });
+      queryClient.invalidateQueries({ queryKey: [api.notifications.list.path] });
+      queryClient.invalidateQueries({ queryKey: [api.notifications.unreadCount.path] });
       toast({ title: "Payment Confirmed", description: "Funds have been released to the worker." });
     },
     onError: (error: Error) => {

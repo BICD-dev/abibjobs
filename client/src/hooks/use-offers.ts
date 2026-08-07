@@ -62,6 +62,9 @@ export function useAcceptOffer() {
       queryClient.invalidateQueries({ queryKey: ['/api/jobs', vars.jobId, 'offers'] });
       queryClient.invalidateQueries({ queryKey: [api.jobs.get.path, vars.jobId] });
       queryClient.invalidateQueries({ queryKey: [api.wallet.get.path] });
+      queryClient.invalidateQueries({ queryKey: [api.wallet.heldJobs.path] });
+      queryClient.invalidateQueries({ queryKey: [api.jobs.myJobs.path] });
+      queryClient.invalidateQueries({ queryKey: [api.jobs.history.path] });
       if (data.insufficientFunds) {
         toast({
           title: "Insufficient Funds",
