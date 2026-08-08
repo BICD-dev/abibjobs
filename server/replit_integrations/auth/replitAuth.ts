@@ -7,6 +7,7 @@ import type { Express, RequestHandler } from "express";
 import memoize from "memoizee";
 import connectPg from "connect-pg-simple";
 import { authStorage } from "./storage";
+import { setupGoogleAuth } from "./googleAuth";
 
 const getOidcConfig = memoize(
   async () => {
@@ -37,7 +38,7 @@ export function getSession() {
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: true,
+      secure: process.env.NODE_ENV === "production",
       maxAge: sessionTtl,
     },
   });
@@ -196,6 +197,8 @@ export async function setupAuth(app: Express) {
       });
     }
   });
+
+  await setupGoogleAuth(app);
 }
 
 export const isAuthenticated: RequestHandler = async (req: any, res, next) => {

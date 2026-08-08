@@ -16,6 +16,7 @@ class AuthStorage implements IAuthStorage {
   }
 
   async upsertUser(userData: UpsertUser): Promise<User> {
+    const { authMethod, ...safeData } = userData;
     try {
       const [user] = await db
         .insert(users)
@@ -23,7 +24,7 @@ class AuthStorage implements IAuthStorage {
         .onConflictDoUpdate({
           target: users.id,
           set: {
-            ...userData,
+            ...safeData,
             updatedAt: new Date(),
           },
         })
@@ -36,7 +37,7 @@ class AuthStorage implements IAuthStorage {
           if (existing) {
             const [updated] = await db
               .update(users)
-              .set({ ...userData, updatedAt: new Date() })
+              .set({ ...safeData, updatedAt: new Date() })
               .where(eq(users.id, existing.id))
               .returning();
             return updated;
