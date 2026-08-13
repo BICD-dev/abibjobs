@@ -766,6 +766,19 @@ export async function registerRoutes(
       return res.status(400).json({ message: "Job is already " + job.status });
     }
 
+    // A disputed job must be resolved through the dispute flow — the poster
+    // cannot cancel it to claw back escrow while a concern is open.
+    if (job.status === 'disputed') {
+      return res.status(400).json({ message: "Cannot cancel a job that is under dispute. The escrow stays locked until the dispute is resolved." });
+    }
+
+    // Once the worker has marked the job complete, the poster can no longer
+    // cancel and claw back escrow — the work has been done. They must confirm
+    // completion (which releases payment) or use the dispute flow.
+    if (job.workerMarkedComplete) {
+      return res.status(400).json({ message: "Cannot cancel: the worker has already marked this job as complete. Confirm completion to release their payment, or raise a concern." });
+    }
+
     if (job.posterConfirmedArrival) {
       return res.status(403).json({ message: "You cannot cancel this job after confirming the worker has arrived on site." });
     }
@@ -2635,10 +2648,6 @@ export async function registerRoutes(
       const job = await storage.getJob(jobId);
       if (!job) return res.status(404).json({ message: "Job not found" });
 
-      if (job.posterId !== userId) {
-        return res.status(403).json({ message: "Only the job poster can raise a dispute" });
-      }
-
       if (job.status !== 'in_progress' && job.status !== 'completed') {
         return res.status(400).json({ message: "Disputes can only be raised for in-progress or completed jobs" });
       }
@@ -2649,14 +2658,34 @@ export async function registerRoutes(
       }
 
       const workerIds = job.workerId ? job.workerId.split(',') : [];
-      if (!workerIds.includes(parsed.data.workerId)) {
-        return res.status(400).json({ message: "The specified worker is not assigned to this job" });
+      const isPoster = job.posterId === userId;
+      const isWorker = workerIds.includes(userId);
+
+      let posterId: string;
+      let workerId: string;
+      let initiatorRole: 'poster' | 'worker';
+
+      if (isPoster) {
+        posterId = userId;
+        workerId = parsed.data.workerId;
+        if (!workerIds.includes(workerId)) {
+          return res.status(400).json({ message: "The specified worker is not assigned to this job" });
+        }
+        initiatorRole = 'poster';
+      } else if (isWorker) {
+        // A worker can raise a concern about their own job (e.g. the poster
+        // won't confirm completion so their payment stays stuck in escrow).
+        posterId = job.posterId;
+        workerId = userId;
+        initiatorRole = 'worker';
+      } else {
+        return res.status(403).json({ message: "Only the job poster or worker can raise a concern for this job" });
       }
 
       const dispute = await storage.createDispute({
         jobId,
-        posterId: userId,
-        workerId: parsed.data.workerId,
+        posterId,
+        workerId,
       });
 
       await storage.createDisputeMessage({
@@ -2677,10 +2706,13 @@ export async function registerRoutes(
         });
       } catch (e) {}
 
+      const notifiedParty = initiatorRole === 'poster' ? workerId : job.posterId;
       await storage.createNotification({
-        userId: parsed.data.workerId,
+        userId: notifiedParty,
         title: 'A Concern Has Been Raised',
-        message: `The poster has raised a concern about job "${job.title}". Please review and respond in the job details.`,
+        message: initiatorRole === 'poster'
+          ? `The poster has raised a concern about job "${job.title}". Please review and respond in the job details.`
+          : `The worker has raised a concern about job "${job.title}" — they say the job is done but it hasn't been confirmed. Please review and respond in the job details.`,
         type: 'warning',
         jobId: job.id,
       });

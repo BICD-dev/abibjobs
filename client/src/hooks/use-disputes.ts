@@ -78,7 +78,7 @@ export function useCreateDispute() {
     onSuccess: (_, vars) => {
       queryClient.invalidateQueries({ queryKey: ['/api/jobs', vars.jobId, 'dispute'] });
       queryClient.invalidateQueries({ queryKey: [api.jobs.get.path, vars.jobId] });
-      toast({ title: "Dispute Raised", description: "Your concern has been submitted. The worker will be notified." });
+      toast({ title: "Concern Raised", description: "Your concern has been submitted. The other party has been notified." });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });

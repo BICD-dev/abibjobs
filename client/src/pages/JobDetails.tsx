@@ -220,7 +220,7 @@ export default function JobDetails() {
 
   const handleCreateDispute = () => {
     if (!disputeMessage.trim()) return;
-    const targetWorker = disputeWorkerId || workerIds[0];
+    const targetWorker = isPoster ? (disputeWorkerId || workerIds[0]) : user?.id;
     if (!targetWorker) return;
     createDispute({
       jobId: job.id,
@@ -599,87 +599,89 @@ export default function JobDetails() {
                                 The worker has already confirmed — tap above to release their payment!
                               </div>
                             )}
-                            {!confirmingNoShow ? (
-                              noShowAvailability.canReport ? (
-                                <Button
-                                  variant="destructive"
-                                  className="w-full rounded-xl"
-                                  onClick={() => { setConfirmingNoShow(true); setNoShowStep('confirm'); }}
-                                  data-testid="button-no-show"
-                                >
-                                  <UserX className="mr-2 h-4 w-4" />
-                                  Worker Didn't Show Up
-                                </Button>
-                              ) : (
-                                <div className="p-3 bg-muted rounded-xl text-center space-y-1" data-testid="section-no-show-timer">
-                                  <p className="text-sm text-muted-foreground">You can report a no-show after 12 hours</p>
-                                  <p className="text-sm font-medium flex items-center justify-center gap-1">
-                                    <Clock className="h-4 w-4" /> {noShowAvailability.remainingText}
-                                  </p>
-                                </div>
-                              )
-                            ) : noShowStep === 'confirm' ? (
-                              <div className="p-4 bg-red-50 dark:bg-red-950/30 rounded-xl border border-red-200 dark:border-red-800 space-y-3" data-testid="section-confirm-no-show">
-                                <p className="text-sm font-medium text-red-700 dark:text-red-300">
-                                  Are you sure the worker didn't show up? This will refund your escrow and the worker will receive a warning.
-                                </p>
-                                <div className="flex gap-2">
+                            {!job.workerMarkedComplete && !job.posterConfirmedArrival && !job.workerProgress && (
+                              !confirmingNoShow ? (
+                                noShowAvailability.canReport ? (
                                   <Button
                                     variant="destructive"
-                                    className="flex-1 rounded-xl"
-                                    onClick={() => setNoShowStep('choose')}
-                                    data-testid="button-confirm-no-show"
+                                    className="w-full rounded-xl"
+                                    onClick={() => { setConfirmingNoShow(true); setNoShowStep('confirm'); }}
+                                    data-testid="button-no-show"
                                   >
                                     <UserX className="mr-2 h-4 w-4" />
-                                    Yes, Report No-Show
+                                    Worker Didn't Show Up
                                   </Button>
-                                  <Button
-                                    variant="outline"
-                                    className="rounded-xl"
-                                    onClick={() => setConfirmingNoShow(false)}
-                                    data-testid="button-cancel-no-show"
-                                  >
-                                    Cancel
-                                  </Button>
+                                ) : (
+                                  <div className="p-3 bg-muted rounded-xl text-center space-y-1" data-testid="section-no-show-timer">
+                                    <p className="text-sm text-muted-foreground">You can report a no-show after 12 hours</p>
+                                    <p className="text-sm font-medium flex items-center justify-center gap-1">
+                                      <Clock className="h-4 w-4" /> {noShowAvailability.remainingText}
+                                    </p>
+                                  </div>
+                                )
+                              ) : noShowStep === 'confirm' ? (
+                                <div className="p-4 bg-red-50 dark:bg-red-950/30 rounded-xl border border-red-200 dark:border-red-800 space-y-3" data-testid="section-confirm-no-show">
+                                  <p className="text-sm font-medium text-red-700 dark:text-red-300">
+                                    Are you sure the worker didn't show up? This will refund your escrow and the worker will receive a warning.
+                                  </p>
+                                  <div className="flex gap-2">
+                                    <Button
+                                      variant="destructive"
+                                      className="flex-1 rounded-xl"
+                                      onClick={() => setNoShowStep('choose')}
+                                      data-testid="button-confirm-no-show"
+                                    >
+                                      <UserX className="mr-2 h-4 w-4" />
+                                      Yes, Report No-Show
+                                    </Button>
+                                    <Button
+                                      variant="outline"
+                                      className="rounded-xl"
+                                      onClick={() => setConfirmingNoShow(false)}
+                                      data-testid="button-cancel-no-show"
+                                    >
+                                      Cancel
+                                    </Button>
+                                  </div>
                                 </div>
-                              </div>
-                            ) : noShowStep === 'choose' ? (
-                              <div className="p-4 bg-amber-50 dark:bg-amber-950/30 rounded-xl border border-amber-200 dark:border-amber-800 space-y-3" data-testid="section-noshow-choose">
-                                <p className="text-sm font-medium text-amber-700 dark:text-amber-300">
-                                  What would you like to do with this job?
-                                </p>
-                                <div className="flex flex-col gap-2">
-                                  <Button
-                                    variant="default"
-                                    className="w-full rounded-xl"
-                                    onClick={() => { reportNoShow({ id: job.id, action: 'repost' }); setConfirmingNoShow(false); }}
-                                    disabled={isReportingNoShow}
-                                    data-testid="button-noshow-repost"
-                                  >
-                                    {isReportingNoShow ? <Loader2 className="animate-spin mr-2" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-                                    Repost Job for New Workers
-                                  </Button>
-                                  <Button
-                                    variant="destructive"
-                                    className="w-full rounded-xl"
-                                    onClick={() => { reportNoShow({ id: job.id, action: 'delete' }); setConfirmingNoShow(false); }}
-                                    disabled={isReportingNoShow}
-                                    data-testid="button-noshow-delete"
-                                  >
-                                    {isReportingNoShow ? <Loader2 className="animate-spin mr-2" /> : <Trash2 className="mr-2 h-4 w-4" />}
-                                    Delete Job
-                                  </Button>
-                                  <Button
-                                    variant="outline"
-                                    className="w-full rounded-xl"
-                                    onClick={() => { setConfirmingNoShow(false); setNoShowStep('confirm'); }}
-                                    data-testid="button-back-no-show"
-                                  >
-                                    Go Back
-                                  </Button>
+                              ) : noShowStep === 'choose' ? (
+                                <div className="p-4 bg-amber-50 dark:bg-amber-950/30 rounded-xl border border-amber-200 dark:border-amber-800 space-y-3" data-testid="section-noshow-choose">
+                                  <p className="text-sm font-medium text-amber-700 dark:text-amber-300">
+                                    What would you like to do with this job?
+                                  </p>
+                                  <div className="flex flex-col gap-2">
+                                    <Button
+                                      variant="default"
+                                      className="w-full rounded-xl"
+                                      onClick={() => { reportNoShow({ id: job.id, action: 'repost' }); setConfirmingNoShow(false); }}
+                                      disabled={isReportingNoShow}
+                                      data-testid="button-noshow-repost"
+                                    >
+                                      {isReportingNoShow ? <Loader2 className="animate-spin mr-2" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                                      Repost Job for New Workers
+                                    </Button>
+                                    <Button
+                                      variant="destructive"
+                                      className="w-full rounded-xl"
+                                      onClick={() => { reportNoShow({ id: job.id, action: 'delete' }); setConfirmingNoShow(false); }}
+                                      disabled={isReportingNoShow}
+                                      data-testid="button-noshow-delete"
+                                    >
+                                      {isReportingNoShow ? <Loader2 className="animate-spin mr-2" /> : <Trash2 className="mr-2 h-4 w-4" />}
+                                      Delete Job
+                                    </Button>
+                                    <Button
+                                      variant="outline"
+                                      className="w-full rounded-xl"
+                                      onClick={() => { setConfirmingNoShow(false); setNoShowStep('confirm'); }}
+                                      data-testid="button-back-no-show"
+                                    >
+                                      Go Back
+                                    </Button>
+                                  </div>
                                 </div>
-                              </div>
-                            ) : null}
+                              ) : null
+                            )}
                             <Button
                               variant="outline"
                               className="w-full rounded-xl text-amber-600 border-amber-200 dark:border-amber-800"
@@ -696,7 +698,7 @@ export default function JobDetails() {
                           </p>
                         ) : null}
 
-                        {(isOpen || isInProgress) && (() => {
+                        {!job.workerMarkedComplete && (isOpen || isInProgress) && (() => {
                           const workerEnRoute = job.workerProgress === 'on_the_way' || job.workerProgress === 'at_location';
                           const price = parseFloat(job.price);
                           const escrowAmount = job.priceType === 'per_person' ? price * job.workersNeeded : price;
@@ -899,6 +901,17 @@ export default function JobDetails() {
                                 The poster already confirmed — tap above to release your payment!
                               </div>
                             )}
+                            {job.workerMarkedComplete && !job.posterMarkedComplete && !dispute && (
+                              <Button
+                                variant="outline"
+                                className="w-full rounded-xl text-amber-600 border-amber-200 dark:border-amber-800"
+                                onClick={() => setShowDisputeForm(!showDisputeForm)}
+                                data-testid="button-worker-toggle-dispute-form"
+                              >
+                                <Flag className="mr-2 h-4 w-4" />
+                                {showDisputeForm ? "Cancel" : "Poster Won't Confirm? Raise a Concern"}
+                              </Button>
+                            )}
                           </div>
                         ) : isWorker && isInProgress && workerIds.length > 1 ? (
                           <div className="space-y-3 p-4 bg-primary/10 rounded-xl border border-primary/20">
@@ -919,6 +932,17 @@ export default function JobDetails() {
                                 Mark Job as Done
                               </Button>
                             )}
+                            {job.workerMarkedComplete && !job.posterMarkedComplete && !dispute && (
+                              <Button
+                                variant="outline"
+                                className="w-full rounded-xl text-amber-600 border-amber-200 dark:border-amber-800"
+                                onClick={() => setShowDisputeForm(!showDisputeForm)}
+                                data-testid="button-worker-toggle-dispute-form-multi"
+                              >
+                                <Flag className="mr-2 h-4 w-4" />
+                                {showDisputeForm ? "Cancel" : "Poster Won't Confirm? Raise a Concern"}
+                              </Button>
+                            )}
                           </div>
                         ) : !isOpen && !isWorker ? (
                           <div className="p-4 bg-blue-50 dark:bg-blue-950/30 rounded-xl border border-blue-100 dark:border-blue-900" data-testid="text-job-taken">
@@ -937,17 +961,19 @@ export default function JobDetails() {
                 )}
               </div>
 
-              {showDisputeForm && isPoster && isInProgress && !dispute && (
+              {showDisputeForm && isInProgress && !dispute && (isPoster || (isWorker && job.workerMarkedComplete)) && (
                 <Card className="p-6">
                   <h4 className="font-bold font-display mb-4 flex items-center gap-2">
                     <Flag className="w-5 h-5 text-amber-600" />
                     Raise a Concern
                   </h4>
                   <p className="text-sm text-muted-foreground mb-4">
-                    Describe your concern about the work. The worker will be notified and you can negotiate a fair resolution.
+                    {isPoster
+                      ? "Describe your concern about the work. The worker will be notified and you can negotiate a fair resolution."
+                      : "Describe your concern about the completed job. The poster will be notified and you can negotiate a fair resolution."}
                   </p>
                   <div className="space-y-3">
-                    {workerIds.length > 1 && (
+                    {isPoster && workerIds.length > 1 && (
                       <div>
                         <label className="text-sm font-medium mb-1 block">Select Worker</label>
                         <select
