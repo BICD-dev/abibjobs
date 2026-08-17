@@ -9,6 +9,17 @@ import { Input } from "@/components/ui/input";
 import { MessageCircle, X, Send, Loader2, Clock, CheckCircle2 } from "lucide-react";
 import type { SupportTicket, SupportMessage } from "@shared/schema";
 
+function formatSenderName(name: string): string {
+  if (name.includes("@")) {
+    const local = name.split("@")[0];
+    return local
+      .split(/[._-]/)
+      .map((s) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase())
+      .join(" ");
+  }
+  return name;
+}
+
 function TicketStatusBadge({ status }: { status: string }) {
   if (status === "waiting") {
     return <Badge variant="secondary" data-testid="badge-ticket-waiting"><Clock className="w-3 h-3 mr-1" />Waiting for agent</Badge>;
@@ -215,7 +226,7 @@ export function SupportChat() {
                       }`}
                     >
                       {msg.senderType === "admin" && (
-                        <p className="text-xs font-semibold mb-0.5 opacity-80">{msg.senderName}</p>
+                        <p className="text-xs font-semibold mb-0.5 opacity-80">{formatSenderName(msg.senderName)}</p>
                       )}
                       <p className="whitespace-pre-wrap break-words">{msg.message}</p>
                       <p className="text-[10px] opacity-60 mt-1">
