@@ -24,6 +24,7 @@ import {
   withdrawalRequests,
   adminWithdrawals,
   jobEscrows,
+  userBeneficiaries,
   type Profile,
   type Job,
   type Transaction,
@@ -48,6 +49,7 @@ import {
   type SupportMessage,
   type WithdrawalRequest,
   type AdminWithdrawal,
+  type UserBeneficiary,
   type JobEscrow,
 } from "@shared/schema";
 
@@ -105,6 +107,7 @@ export interface IStorage {
   getPlatformEarnings(): Promise<PlatformEarning>;
   getPlatformTransactions(): Promise<PlatformTransaction[]>;
   addPlatformEarning(amount: number, jobId: number, jobTitle: string): Promise<void>;
+  addWithdrawalFee(amount: number, reference: string): Promise<void>;
   withdrawPlatformEarnings(amount: number, bankInfo: { bankName: string; bankCode: string; accountNumber: string; accountName?: string }): Promise<PlatformEarning>;
   updatePlatformBankInfo(bankInfo: { bankName: string; bankCode: string; accountNumber: string; accountName?: string }): Promise<PlatformEarning>;
 
@@ -200,7 +203,13 @@ export interface IStorage {
   createWithdrawalRequest(data: { userId: string; userName: string; amount: string; bankName: string; bankCode?: string | null; accountNumber: string; accountName?: string | null; reason?: string | null }): Promise<WithdrawalRequest>;
   getUserWithdrawalRequests(userId: string): Promise<WithdrawalRequest[]>;
   getAllWithdrawalRequests(status?: string): Promise<WithdrawalRequest[]>;
-  processWithdrawalRequest(id: number, status: 'approved' | 'rejected', adminId: number, adminNote?: string): Promise<WithdrawalRequest>;
+  processWithdrawalRequest(id: number, status: 'approved' | 'rejected', adminId: number, adminNote?: string): Promise<{ request: WithdrawalRequest; walletDebited?: boolean; reference?: string }>;
+
+  // Beneficiaries
+  createBeneficiary(data: { userId: string; bankName: string; bankCode?: string; accountNumber: string; accountName?: string }): Promise<UserBeneficiary>;
+  getUserBeneficiaries(userId: string): Promise<UserBeneficiary[]>;
+  deleteBeneficiary(id: number, userId: string): Promise<void>;
+  setDefaultBeneficiary(id: number, userId: string): Promise<void>;
 
   // Site Visits & Analytics
   trackVisit(visitorId: string, page: string, userAgent?: string): Promise<void>;
@@ -720,6 +729,17 @@ export class DatabaseStorage implements IStorage {
       type: 'fee_earned',
       jobId,
       jobTitle,
+    });
+  }
+
+  async addWithdrawalFee(amount: number, reference: string): Promise<void> {
+    const earnings = await this.getPlatformEarnings();
+    const newBalance = parseFloat(earnings.totalBalance) + amount;
+    await db.update(platformEarnings).set({ totalBalance: newBalance.toFixed(2) }).where(eq(platformEarnings.id, earnings.id));
+    await db.insert(platformTransactions).values({
+      amount: amount.toFixed(2),
+      type: 'withdrawal_fee',
+      jobTitle: `Withdrawal fee (${reference})`,
     });
   }
 
@@ -1586,12 +1606,67 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(withdrawalRequests).orderBy(desc(withdrawalRequests.createdAt));
   }
 
-  async processWithdrawalRequest(id: number, status: 'approved' | 'rejected', adminId: number, adminNote?: string): Promise<WithdrawalRequest> {
-    const [updated] = await db.update(withdrawalRequests)
-      .set({ status, adminNote: adminNote || null, processedBy: adminId, processedAt: new Date() })
-      .where(eq(withdrawalRequests.id, id))
-      .returning();
-    return updated;
+  async processWithdrawalRequest(id: number, status: 'approved' | 'rejected', adminId: number, adminNote?: string): Promise<{ request: WithdrawalRequest; walletDebited?: boolean; reference?: string }> {
+    return db.transaction(async (tx) => {
+      const [request] = await tx.select().from(withdrawalRequests)
+        .where(and(eq(withdrawalRequests.id, id), eq(withdrawalRequests.status, 'pending')));
+      if (!request) throw new Error("Request not found or already processed");
+
+      const [updated] = await tx.update(withdrawalRequests)
+        .set({ status, adminNote: adminNote || null, processedBy: adminId, processedAt: new Date() })
+        .where(eq(withdrawalRequests.id, id))
+        .returning();
+
+      if (status === 'approved') {
+        const amountNum = parseFloat(request.amount);
+        const [deducted] = await tx.update(profiles)
+          .set({ walletBalance: sql`${profiles.walletBalance} - ${amountNum}` })
+          .where(and(eq(profiles.userId, request.userId), sql`${profiles.walletBalance} >= ${amountNum}`))
+          .returning();
+        if (!deducted) throw new Error("User has insufficient wallet balance");
+
+        const reference = `wdr_${request.userId}_${Date.now()}`;
+        await tx.insert(transactions).values({
+          userId: request.userId,
+          amount: (-amountNum).toString(),
+          type: 'withdrawal',
+          bankName: request.bankName,
+          bankCode: request.bankCode,
+          accountNumber: request.accountNumber,
+          accountName: request.accountName,
+          reference,
+          status: 'pending',
+        });
+
+        return { request: updated, walletDebited: true, reference };
+      }
+
+      return { request: updated, walletDebited: false };
+    });
+  }
+
+  // Beneficiaries
+
+  async createBeneficiary(data: { userId: string; bankName: string; bankCode?: string; accountNumber: string; accountName?: string }): Promise<UserBeneficiary> {
+    const existing = await db.select().from(userBeneficiaries).where(eq(userBeneficiaries.userId, data.userId));
+    const isDefault = existing.length === 0;
+    const [beneficiary] = await db.insert(userBeneficiaries).values({ ...data, isDefault }).returning();
+    return beneficiary;
+  }
+
+  async getUserBeneficiaries(userId: string): Promise<UserBeneficiary[]> {
+    return db.select().from(userBeneficiaries)
+      .where(eq(userBeneficiaries.userId, userId))
+      .orderBy(desc(userBeneficiaries.isDefault), desc(userBeneficiaries.createdAt));
+  }
+
+  async deleteBeneficiary(id: number, userId: string): Promise<void> {
+    await db.delete(userBeneficiaries).where(and(eq(userBeneficiaries.id, id), eq(userBeneficiaries.userId, userId)));
+  }
+
+  async setDefaultBeneficiary(id: number, userId: string): Promise<void> {
+    await db.update(userBeneficiaries).set({ isDefault: false }).where(eq(userBeneficiaries.userId, userId));
+    await db.update(userBeneficiaries).set({ isDefault: true }).where(eq(userBeneficiaries.id, id));
   }
 
   async createJobEscrow(data: { jobId: number; posterId: string; amount: string }): Promise<JobEscrow> {
