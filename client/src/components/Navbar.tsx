@@ -78,7 +78,6 @@ export function Navbar() {
     adminLinks.push({ href: "/admin/dashboard", label: "Dashboard", icon: LayoutDashboard });
     adminLinks.push({ href: "/admin/earnings", label: "Earnings", icon: TrendingUp });
     adminLinks.push({ href: "/admin/payroll", label: "Payroll", icon: Wallet });
-    adminLinks.push({ href: "/admin/verifications", label: "Verifications", icon: ShieldCheck });
     adminLinks.push({ href: "/admin/disputes", label: "Disputes", icon: Scale });
     adminLinks.push({ href: "/admin/staff", label: "Admin Staff", icon: Users });
     adminLinks.push({ href: "/admin/security", label: "Investigations", icon: Shield });
@@ -237,12 +236,6 @@ export function Navbar() {
                     )}
                     {isOwner && (
                       <>
-                        <Link href="/admin/verifications">
-                          <DropdownMenuItem className="cursor-pointer">
-                            <ShieldCheck className="mr-2 h-4 w-4" />
-                            <span>Verifications</span>
-                          </DropdownMenuItem>
-                        </Link>
                         <Link href="/admin/disputes">
                           <DropdownMenuItem className="cursor-pointer">
                             <Scale className="mr-2 h-4 w-4" />
