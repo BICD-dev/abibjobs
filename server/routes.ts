@@ -3513,165 +3513,31 @@ app.get(api.wallet.verifyFunding.path, isAuthenticated, async (req, res) => {
     }
   });
 
-  // Derives beneficiaries from past successful withdrawals — no dedicated "saved accounts" table needed.
+  // Returns saved beneficiary accounts from the user_beneficiaries table.
   app.get(api.wallet.withdrawalAccounts.path, isAuthenticated, async (req, res) => {
     const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
-    const transactions = await storage.getTransactions(userId);
-
-    const seen = new Set<string>();
-    const accounts: { bankCode: string; bankName: string; accountNumber: string; accountName: string }[] = [];
-
-    for (const tx of transactions) {
-      const status = (tx as any).status;
-      if (tx.type !== 'withdrawal' || status === 'failed') continue;
-      if (!tx.bankCode || !tx.accountNumber) continue;
-      const key = `${tx.bankCode}:${tx.accountNumber}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      accounts.push({
-        bankCode: tx.bankCode,
-        bankName: tx.bankName || '',
-        accountNumber: tx.accountNumber,
-        accountName: tx.accountName || '',
-      });
-    }
-
+    if (!userId) return res.status(401).json({ message: "Not authenticated" });
+    const beneficiaries = await storage.getUserBeneficiaries(userId);
+    const accounts = beneficiaries.map((b) => ({
+      bankCode: b.bankCode || '',
+      bankName: b.bankName,
+      accountNumber: b.accountNumber,
+      accountName: b.accountName || '',
+    }));
     res.json({ accounts });
   });
 
-  app.post(api.wallet.withdraw.path, isAuthenticated, async (req, res) => {
-    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
-    const parsed = api.wallet.withdraw.input.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
-    const { amount, bankCode, accountNumber, accountName: providedAccountName } = parsed.data;
-
-    const fee = Math.round(amount * (WITHDRAWAL_FEE_PERCENT / 100) * 100) / 100;
-    const netAmount = amount - fee;
-    if (netAmount <= 0) {
-      return res.status(400).json({ message: "Amount is too small after fees." });
-    }
-
-    const profile = await storage.getProfile(userId);
-    if (!profile || parseFloat(profile.walletBalance) < amount) {
-      return res.status(400).json({ message: "Insufficient funds" });
-    }
-
-    let bankName = bankCode;
-    try {
-      const banks = await getBanksList();
-      bankName = banks.find(b => b.code === bankCode)?.name || bankCode;
-    } catch {}
-
-    // Resolve account name if the client didn't already confirm one via resolve-account
-    let accountName = providedAccountName;
-    if (!accountName) {
-      try {
-        const resolveResp = await paystackRequest('GET', `/bank/resolve?account_number=${accountNumber}&bank_code=${bankCode}`);
-        if (!resolveResp.status) {
-          return res.status(400).json({ message: resolveResp.message || "Could not resolve account details." });
-        }
-        accountName = resolveResp.data.account_name;
-      } catch (err) {
-        return res.status(400).json({ message: "Could not verify account details. Please try again." });
-      }
-    }
-
-    // Create (or re-create — Paystack allows duplicates) a transfer recipient for this destination
-    let recipientCode: string;
-    try {
-      const recipientResp = await paystackRequest('POST', '/transferrecipient', {
-        type: 'nuban',
-        name: accountName,
-        account_number: accountNumber,
-        bank_code: bankCode,
-        currency: 'NGN',
-      });
-      if (!recipientResp.status) {
-        return res.status(400).json({ message: recipientResp.message || "Could not set up withdrawal destination." });
-      }
-      recipientCode = recipientResp.data.recipient_code;
-    } catch (err) {
-      return res.status(400).json({ message: "Could not set up withdrawal destination. Please try again." });
-    }
-
-    const reference = `wd_${userId}_${Date.now()}`;
-
-    // Debit up front so the funds can't be double-spent while the transfer is in flight.
-    // Refunded automatically below if the transfer call fails, or by the webhook if it fails/reverses later.
-    // TODO: wrap the balance-check + debit above in a single DB transaction/row lock to close the race
-    // window between two concurrent withdrawal requests from the same user.
-    await storage.updateWalletBalance(userId, -amount);
-    await storage.createTransaction({
-      userId,
-      amount: (-amount).toString(),
-      type: 'withdrawal',
-      bankName,
-      bankCode,
-      accountNumber,
-      accountName,
-      reference,
-      status: 'pending',
-      fee: fee.toString(),
-    });
-
-    try {
-      const transferResp = await paystackRequest('POST', '/transfer', {
-        source: 'balance',
-        amount: Math.round(netAmount * 100), // kobo
-        recipient: recipientCode,
-        reason: 'Wallet withdrawal',
-        reference,
-      });
-
-      if (!transferResp.status) {
-        // Rejected outright (e.g. insufficient Paystack balance, invalid recipient) — no webhook will follow, refund now.
-        await storage.updateWalletBalance(userId, amount);
-        await storage.updateTransactionStatus(reference, 'failed');
-        return res.status(400).json({ message: transferResp.message || "Withdrawal failed. Your funds have been returned." });
-      }
-
-      const transferStatus = transferResp.data.status; // 'success' | 'pending' | 'otp'
-
-      if (transferStatus === 'otp') {
-        // OTP-for-transfers is enabled on the Paystack dashboard — this flow can't complete automatically.
-        // Refund and surface a clear message rather than leaving the user in limbo.
-        await storage.updateWalletBalance(userId, amount);
-        await storage.updateTransactionStatus(reference, 'failed');
-        console.error('[Paystack] Transfer requires OTP — disable "OTP for transfers" in the Paystack dashboard.');
-        return res.status(400).json({ message: "Withdrawals are temporarily unavailable. Please contact support." });
-      }
-
-      if (transferStatus === 'success') {
-        await storage.updateTransactionStatus(reference, 'success');
-        return res.json({ reference, status: 'success', fee, netAmount, message: 'Withdrawal successful.' });
-      }
-
-      // 'pending' — normal for real transfers; the webhook below will confirm success/failure.
-      return res.json({
-        reference,
-        status: 'pending',
-        fee,
-        netAmount,
-        message: "Withdrawal is being processed and should arrive shortly.",
-      });
-    } catch (err: any) {
-      await storage.updateWalletBalance(userId, amount);
-      await storage.updateTransactionStatus(reference, 'failed');
-      console.error('[Paystack] transfer error:', err);
-      return res.status(400).json({ message: "Withdrawal failed. Your funds have been returned." });
-    }
-  });
-
   // Paystack webhook — reconciles transfers that didn't resolve synchronously above.
-  // IMPORTANT: this route must receive the RAW request body (not JSON-parsed) to verify the signature.
-  // Mount it with express.raw({ type: 'application/json' }) BEFORE your global express.json()
-  // middleware applies to this path — otherwise req.body will already be a parsed object here.
-  app.post('/api/webhooks/paystack', express.raw({ type: 'application/json' }), async (req, res) => {
+  // IMPORTANT: the global express.json() middleware in server/index.ts runs before this
+  // route and captures the raw bytes into req.rawBody via its verify() callback. We sign
+  // and hash THAT buffer (req.body here is already the parsed JSON object, which would
+  // produce a wrong/invalid signature hash).
+  app.post('/api/webhooks/paystack', async (req, res) => {
     const secretKey = process.env.PAYSTACK_SECRET_KEY;
     if (!secretKey) return res.status(500).send('Webhook not configured');
 
     const signature = req.headers['x-paystack-signature'] as string | undefined;
-    const rawBody = req.body as Buffer;
+    const rawBody = req.rawBody as Buffer;
 
     const expectedHash = crypto.createHmac('sha512', secretKey).update(rawBody).digest('hex');
     if (!signature || signature !== expectedHash) {
@@ -3711,6 +3577,8 @@ app.get(api.wallet.verifyFunding.path, isAuthenticated, async (req, res) => {
 
       if (eventType === 'transfer.success') {
         await storage.updateTransactionStatus(reference, 'success');
+        const fee = Number((transaction as any).fee) || 0;
+        if (fee > 0) await storage.addWithdrawalFee(fee, reference);
         await storage.createNotification({
           userId: transaction.userId,
           title: 'Withdrawal Successful',
@@ -3731,6 +3599,354 @@ app.get(api.wallet.verifyFunding.path, isAuthenticated, async (req, res) => {
       console.error('[Paystack Webhook] processing error:', err);
     }
   });
+  // --- WITHDRAWAL OTP ---
+
+  app.post('/api/wallet/withdraw-otp', isAuthenticated, async (req, res) => {
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
+    if (!userId) return res.status(401).json({ message: "Not authenticated" });
+
+    const { amount, bankCode, bankName, accountNumber, accountName } = req.body;
+    if (!amount || !bankCode || !accountNumber || accountNumber.length !== 10) {
+      return res.status(400).json({ message: "Missing required fields" });
+    }
+    const amountNum = parseFloat(amount);
+    if (!isFinite(amountNum) || amountNum <= 0) {
+      return res.status(400).json({ message: "Invalid amount" });
+    }
+
+    const profile = await storage.getProfile(userId);
+    if (!profile || parseFloat(profile.walletBalance) < amountNum) {
+      return res.status(400).json({ message: "Insufficient funds" });
+    }
+
+    const [user] = await db.select().from(users).where(eq(users.id, userId));
+    const email = user?.email;
+    if (!email) return res.status(400).json({ message: "No email on file" });
+    const userName = user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User' : 'User';
+
+    const otpCode = String(Math.floor(100000 + Math.random() * 900000));
+    const reference = `wdotp_${userId}_${Date.now()}`;
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    const created = await storage.createWithdrawalRequest({
+      userId,
+      userName,
+      amount: amountNum.toFixed(2),
+      bankName,
+      bankCode: bankCode || null,
+      accountNumber,
+      accountName: accountName || null,
+      reason: null,
+    });
+
+    const { db: dbConn } = await import('./db');
+    const { withdrawalRequests: wr } = await import('@shared/schema');
+    const { eq: eqOp } = await import('drizzle-orm');
+    await dbConn.update(wr).set({ otpCode, otpExpiresAt: expiresAt, reference }).where(eqOp(wr.id, created.id));
+
+    try {
+      const { sendWithdrawalOtpEmail } = await import('./email');
+      await sendWithdrawalOtpEmail(email, userName, otpCode, amountNum);
+    } catch (err) {
+      console.error('[OTP] Failed to send email:', err);
+    }
+
+    res.json({ reference, message: "OTP sent to your email" });
+  });
+
+  app.post('/api/wallet/verify-otp', isAuthenticated, async (req, res) => {
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
+    if (!userId) return res.status(401).json({ message: "Not authenticated" });
+
+    const { reference, otpCode } = req.body;
+    if (!reference || !otpCode) {
+      return res.status(400).json({ message: "Reference and OTP code required" });
+    }
+
+    const { db: dbConn } = await import('./db');
+    const { withdrawalRequests: wr } = await import('@shared/schema');
+    const { eq: eqOp, and: andOp } = await import('drizzle-orm');
+
+    const [request] = await dbConn.select().from(wr).where(andOp(eqOp(wr.reference, reference), eqOp(wr.userId, userId)));
+    if (!request) return res.status(400).json({ message: "Invalid request" });
+    if (request.otpCode !== otpCode) return res.status(400).json({ message: "Invalid OTP code" });
+    if (!request.otpExpiresAt || new Date() > request.otpExpiresAt) return res.status(400).json({ message: "OTP has expired" });
+    if (request.status !== 'pending') return res.status(400).json({ message: "Request already processed" });
+
+    await dbConn.update(wr).set({ status: 'approved', processedAt: new Date() }).where(eqOp(wr.id, request.id));
+
+    const amountNum = parseFloat(request.amount);
+    const fee = Math.round(amountNum * (WITHDRAWAL_FEE_PERCENT / 100) * 100) / 100;
+    const netAmount = amountNum - fee;
+
+    await storage.updateWalletBalance(userId, -amountNum);
+    await storage.createTransaction({
+      userId,
+      amount: (-amountNum).toString(),
+      type: 'withdrawal',
+      bankName: request.bankName,
+      bankCode: request.bankCode,
+      accountNumber: request.accountNumber,
+      accountName: request.accountName,
+      reference,
+      status: 'pending',
+      fee: fee.toString(),
+    });
+
+    let accountName = request.accountName;
+    try {
+      const resolveResp = await paystackRequest('GET', `/bank/resolve?account_number=${request.accountNumber}&bank_code=${request.bankCode}`);
+      if (resolveResp.status) accountName = resolveResp.data.account_name;
+    } catch {}
+
+    let recipientCode: string;
+    try {
+      const recipientResp = await paystackRequest('POST', '/transferrecipient', {
+        type: 'nuban',
+        name: accountName || 'User',
+        account_number: request.accountNumber,
+        bank_code: request.bankCode,
+        currency: 'NGN',
+      });
+      if (!recipientResp.status) {
+        await storage.updateWalletBalance(userId, amountNum);
+        await storage.updateTransactionStatus(reference, 'failed');
+        return res.status(400).json({ message: recipientResp.message || "Could not set up transfer destination. Funds refunded." });
+      }
+      recipientCode = recipientResp.data.recipient_code;
+    } catch {
+      await storage.updateWalletBalance(userId, amountNum);
+      await storage.updateTransactionStatus(reference, 'failed');
+      return res.status(400).json({ message: "Could not set up transfer destination. Funds refunded." });
+    }
+
+    try {
+      const transferResp = await paystackRequest('POST', '/transfer', {
+        source: 'balance',
+        amount: Math.round(netAmount * 100),
+        recipient: recipientCode,
+        reason: 'Wallet withdrawal',
+        reference,
+      });
+
+      if (!transferResp.status) {
+        await storage.updateWalletBalance(userId, amountNum);
+        await storage.updateTransactionStatus(reference, 'failed');
+        return res.status(400).json({ message: transferResp.message || "Withdrawal failed. Funds refunded." });
+      }
+
+      const transferStatus = transferResp.data.status;
+      if (transferStatus === 'otp') {
+        await storage.updateWalletBalance(userId, amountNum);
+        await storage.updateTransactionStatus(reference, 'failed');
+        return res.status(400).json({ message: "Withdrawals temporarily unavailable. Funds refunded." });
+      }
+
+      if (transferStatus === 'success') {
+        await storage.updateTransactionStatus(reference, 'success');
+        await storage.addWithdrawalFee(fee, reference);
+        return res.json({ reference, status: 'success', fee, netAmount, message: 'Withdrawal successful.' });
+      }
+
+      return res.json({ reference, status: 'pending', fee, netAmount, message: "Withdrawal is being processed." });
+    } catch (err: any) {
+      await storage.updateWalletBalance(userId, amountNum);
+      await storage.updateTransactionStatus(reference, 'failed');
+      return res.status(400).json({ message: "Withdrawal failed. Funds returned." });
+    }
+  });
+
+  // --- BENEFICIARIES ---
+
+  app.get('/api/wallet/beneficiaries', isAuthenticated, async (req, res) => {
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
+    if (!userId) return res.status(401).json({ message: "Not authenticated" });
+    const beneficiaries = await storage.getUserBeneficiaries(userId);
+    res.json(beneficiaries);
+  });
+
+  app.post('/api/wallet/beneficiaries', isAuthenticated, async (req, res) => {
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
+    if (!userId) return res.status(401).json({ message: "Not authenticated" });
+    const { bankName, bankCode, accountNumber, accountName } = req.body;
+    if (!bankName || !accountNumber || accountNumber.length !== 10) {
+      return res.status(400).json({ message: "Bank name and 10-digit account number required" });
+    }
+    const beneficiary = await storage.createBeneficiary({ userId, bankName, bankCode, accountNumber, accountName });
+    res.status(201).json(beneficiary);
+  });
+
+  app.delete('/api/wallet/beneficiaries/:id', isAuthenticated, async (req, res) => {
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
+    if (!userId) return res.status(401).json({ message: "Not authenticated" });
+    const id = parseInt(req.params.id as string);
+    await storage.deleteBeneficiary(id, userId);
+    res.json({ message: "Beneficiary removed" });
+  });
+
+  app.put('/api/wallet/beneficiaries/:id/default', isAuthenticated, async (req, res) => {
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
+    if (!userId) return res.status(401).json({ message: "Not authenticated" });
+    const id = parseInt(req.params.id as string);
+    await storage.setDefaultBeneficiary(id, userId);
+    res.json({ message: "Default beneficiary updated" });
+  });
+
+  // --- USER WITHDRAWAL REQUESTS (admin-mediated) ---
+
+  app.get('/api/wallet/withdrawal-requests', isAuthenticated, async (req, res) => {
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
+    if (!userId) return res.status(401).json({ message: "Not authenticated" });
+    const requests = await storage.getUserWithdrawalRequests(userId);
+    res.json(requests);
+  });
+
+  app.post('/api/wallet/withdrawal-requests', isAuthenticated, async (req, res) => {
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
+    if (!userId) return res.status(401).json({ message: "Not authenticated" });
+
+    const { amount, bankName, bankCode, accountNumber, accountName, reason } = req.body;
+    if (!amount || !bankName || !accountNumber || accountNumber.length !== 10) {
+      return res.status(400).json({ message: "Amount, bank name, and 10-digit account number are required" });
+    }
+    const amountNum = parseFloat(amount);
+    if (!isFinite(amountNum) || amountNum <= 0) {
+      return res.status(400).json({ message: "Invalid amount" });
+    }
+
+    const profile = await storage.getProfile(userId);
+    if (!profile || parseFloat(profile.walletBalance) < amountNum) {
+      return res.status(400).json({ message: "Insufficient wallet balance" });
+    }
+
+    const [user] = await db.select().from(users).where(eq(users.id, userId));
+    const userName = user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User' : 'User';
+
+    const request = await storage.createWithdrawalRequest({
+      userId,
+      userName,
+      amount: amountNum.toFixed(2),
+      bankName,
+      bankCode: bankCode || null,
+      accountNumber,
+      accountName: accountName || null,
+      reason: reason || null,
+    });
+
+    try {
+      const { sendWithdrawalEmail } = await import('./email');
+      if (user?.email) sendWithdrawalEmail(user.email, userName, amountNum);
+    } catch {}
+
+    res.status(201).json(request);
+  });
+
+  // --- ADMIN WITHDRAWAL REQUESTS ---
+
+  app.get('/api/admin/withdrawal-requests', isAdminOrOwner, async (req, res) => {
+    const status = req.query.status as string | undefined;
+    const requests = await storage.getAllWithdrawalRequests(status);
+    res.json(requests);
+  });
+
+  app.post('/api/admin/withdrawal-requests/:id/process', isAdminOrOwner, async (req, res) => {
+    const id = parseInt(req.params.id);
+    const { action, adminNote } = req.body;
+    if (action !== 'approved' && action !== 'rejected') {
+      return res.status(400).json({ message: "action must be 'approved' or 'rejected'" });
+    }
+
+    const adminId = (req as any).adminUser?.id || 0;
+
+    try {
+      const result = await storage.processWithdrawalRequest(id, action, adminId, adminNote);
+
+      if (action === 'approved' && result.walletDebited && result.reference) {
+        const request = result.request;
+        let accountName = request.accountName;
+        let bankName = request.bankName;
+
+        try {
+          const resolveResp = await paystackRequest('GET', `/bank/resolve?account_number=${request.accountNumber}&bank_code=${request.bankCode}`);
+          if (resolveResp.status) accountName = resolveResp.data.account_name;
+        } catch {}
+
+        try {
+          const banks = await getBanksList();
+          bankName = banks.find((b: any) => b.code === request.bankCode)?.name || request.bankName;
+        } catch {}
+
+        let recipientCode: string;
+        try {
+          const recipientResp = await paystackRequest('POST', '/transferrecipient', {
+            type: 'nuban',
+            name: accountName || 'User',
+            account_number: request.accountNumber,
+            bank_code: request.bankCode,
+            currency: 'NGN',
+          });
+          if (!recipientResp.status) throw new Error(recipientResp.message);
+          recipientCode = recipientResp.data.recipient_code;
+        } catch (err: any) {
+          await storage.updateWalletBalance(request.userId, parseFloat(request.amount));
+          await storage.updateTransactionStatus(result.reference, 'failed');
+          return res.status(400).json({ message: "Could not set up transfer destination. Funds refunded." });
+        }
+
+        const fee = Math.round(parseFloat(request.amount) * (WITHDRAWAL_FEE_PERCENT / 100) * 100) / 100;
+        const netAmount = parseFloat(request.amount) - fee;
+
+        try {
+          const transferResp = await paystackRequest('POST', '/transfer', {
+            source: 'balance',
+            amount: Math.round(netAmount * 100),
+            recipient: recipientCode,
+            reason: 'Admin-approved withdrawal',
+            reference: result.reference,
+          });
+
+          if (!transferResp.status) {
+            await storage.updateWalletBalance(request.userId, parseFloat(request.amount));
+            await storage.updateTransactionStatus(result.reference, 'failed');
+            return res.status(400).json({ message: "Transfer failed. Funds refunded." });
+          }
+
+          const transferStatus = transferResp.data.status;
+          if (transferStatus === 'success') {
+            await storage.updateTransactionStatus(result.reference, 'success');
+            await storage.addWithdrawalFee(fee, result.reference);
+          } else if (transferStatus === 'otp') {
+            await storage.updateWalletBalance(request.userId, parseFloat(request.amount));
+            await storage.updateTransactionStatus(result.reference, 'failed');
+            return res.status(400).json({ message: "Withdrawals temporarily unavailable. Funds refunded." });
+          }
+        } catch (err: any) {
+          await storage.updateWalletBalance(request.userId, parseFloat(request.amount));
+          await storage.updateTransactionStatus(result.reference, 'failed');
+          return res.status(400).json({ message: "Transfer failed. Funds refunded." });
+        }
+      }
+
+      try {
+        const targetUser = await storage.getProfile(result.request.userId);
+        if (targetUser?.userId) {
+          await storage.createNotification({
+            userId: result.request.userId,
+            title: action === 'approved' ? 'Withdrawal Approved' : 'Withdrawal Rejected',
+            message: action === 'approved'
+              ? `Your withdrawal of ₦${parseFloat(result.request.amount).toLocaleString()} has been approved and is being processed.`
+              : `Your withdrawal request was rejected.${adminNote ? ` Reason: ${adminNote}` : ''}`,
+            type: action === 'approved' ? 'success' : 'warning',
+          });
+        }
+      } catch {}
+
+      res.json(result.request);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message || "Failed to process request" });
+    }
+  });
+
   // --- VERIFICATION ---
 
   app.post(api.verification.submit.path, isAuthenticated, async (req, res) => {

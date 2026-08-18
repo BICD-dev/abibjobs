@@ -234,3 +234,15 @@ export async function sendWithdrawalEmail(to: string, name: string, amount: numb
   );
   await send(to, `Withdrawal of ${fmt(amount)} requested`, body);
 }
+
+export async function sendWithdrawalOtpEmail(to: string, name: string, otpCode: string, amount: number) {
+  const body = wrap("Withdrawal Verification",
+    heading("Your Withdrawal OTP") +
+    para(`Hi ${name}, to confirm your withdrawal of <strong>${fmt(amount)}</strong>, use the code below:`) +
+    `<div style="background:#f0fdf4;border:2px solid #16a34a;border-radius:12px;padding:24px;text-align:center;margin:24px 0;">
+      <span style="font-size:36px;font-weight:800;color:#16a34a;letter-spacing:8px;">${otpCode}</span>
+    </div>` +
+    para("This code expires in 10 minutes. If you did not request this withdrawal, please ignore this email or contact support immediately.")
+  );
+  await send(to, `Your withdrawal verification code: ${otpCode}`, body);
+}

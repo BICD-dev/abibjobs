@@ -256,32 +256,6 @@ export const api = {
   },
 
   /**
-   * Withdraw from wallet.
-   * The backend should initiate a Paystack transfer.
-   */
-  withdraw: {
-    method: 'POST' as const,
-    path: '/api/wallet/withdraw' as const,
-    input: z.object({
-      amount: z.number().min(100),
-      bankCode: z.string(),
-      accountNumber: z.string().length(10),
-      accountName: z.string().optional(),
-    }),
-    responses: {
-      200: z.object({
-        reference: z.string(),
-        status: z.enum([
-          'pending',
-          'success',
-        ]),
-        message: z.string(),
-      }),
-      400: errorSchemas.payment,
-    },
-  },
-
-  /**
    * Returns saved beneficiary accounts for withdrawals.
    */
   withdrawalAccounts: {
