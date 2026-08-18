@@ -230,15 +230,15 @@ export default function AdminWithdrawalRequests() {
       </main>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="rounded-2xl">
-          <DialogHeader>
+        <DialogContent className="rounded-2xl max-h-[85vh] flex flex-col p-0">
+          <DialogHeader className="px-6 pt-6 pb-0">
             <DialogTitle>
               {action === 'approved' ? 'Approve Withdrawal Request' : 'Reject Withdrawal Request'}
             </DialogTitle>
           </DialogHeader>
 
           {selectedRequest && (
-            <div className="space-y-4">
+            <div className="space-y-4 px-6 pb-6 overflow-y-auto flex-1 min-h-0">
               <div className="bg-muted/50 rounded-xl p-4 space-y-2 text-sm">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">User</span>

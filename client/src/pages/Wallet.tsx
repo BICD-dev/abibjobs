@@ -224,11 +224,11 @@ export default function Wallet() {
       </main>
 
       <Dialog open={requestOpen} onOpenChange={setRequestOpen}>
-        <DialogContent className="rounded-2xl">
-          <DialogHeader>
+        <DialogContent className="rounded-2xl max-h-[85vh] flex flex-col p-0">
+          <DialogHeader className="px-6 pt-6 pb-0">
             <DialogTitle>Request Withdrawal to New Account</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4 mt-2">
+          <div className="space-y-4 px-6 pb-6 overflow-y-auto flex-1 min-h-0">
             <p className="text-sm text-muted-foreground">
               Fill in the details of the bank account you want to receive funds in. An admin will review and process your request.
             </p>

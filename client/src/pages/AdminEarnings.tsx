@@ -74,7 +74,7 @@ export default function AdminEarnings() {
   );
 
   const totalEarned = earnings?.transactions
-    ?.filter((t: any) => t.type === 'fee_earned')
+    ?.filter((t: any) => t.type === 'fee_earned' || t.type === 'withdrawal_fee')
     ?.reduce((sum: number, t: any) => sum + Math.abs(parseFloat(t.amount)), 0) || 0;
 
   const totalWithdrawn = earnings?.transactions
@@ -298,15 +298,15 @@ export default function AdminEarnings() {
                   <div key={tx.id} className="flex items-center justify-between gap-4 p-4 rounded-xl bg-muted/20 transition-colors" data-testid={`row-earning-${tx.id}`}>
                     <div className="flex items-center gap-4">
                       <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${
-                        tx.type === 'fee_earned'
+                        tx.type === 'fee_earned' || tx.type === 'withdrawal_fee'
                           ? "bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400"
                           : "bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400"
                       }`}>
-                        {tx.type === 'fee_earned' ? <ArrowDownLeft className="w-5 h-5" /> : <ArrowUpRight className="w-5 h-5" />}
+                        {tx.type === 'fee_earned' || tx.type === 'withdrawal_fee' ? <ArrowDownLeft className="w-5 h-5" /> : <ArrowUpRight className="w-5 h-5" />}
                       </div>
                       <div>
                         <p className="font-bold text-foreground">
-                          {tx.type === 'fee_earned' ? '22% Fee Earned' : 'Withdrawal'}
+                          {tx.type === 'withdrawal_fee' ? 'Withdrawal Fee (1.5%)' : tx.type === 'fee_earned' ? '22% Fee Earned' : 'Withdrawal'}
                         </p>
                         {tx.jobTitle && (
                           <p className="text-xs text-muted-foreground">Job: {tx.jobTitle}</p>
@@ -318,9 +318,9 @@ export default function AdminEarnings() {
                       </div>
                     </div>
                     <span className={`font-bold font-mono flex-shrink-0 ${
-                      tx.type === 'fee_earned' ? "text-green-600 dark:text-green-400" : "text-foreground"
+                      tx.type === 'fee_earned' || tx.type === 'withdrawal_fee' ? "text-green-600 dark:text-green-400" : "text-foreground"
                     }`}>
-                      {tx.type === 'fee_earned' ? '+' : '-'}₦{Math.abs(Number(tx.amount)).toLocaleString()}
+                      {tx.type === 'fee_earned' || tx.type === 'withdrawal_fee' ? '+' : '-'}₦{Math.abs(Number(tx.amount)).toLocaleString()}
                     </span>
                   </div>
                 ))}
