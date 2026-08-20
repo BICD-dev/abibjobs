@@ -5,6 +5,9 @@ import passport from "passport";
 import type { Express } from "express";
 import memoize from "memoizee";
 import { authStorage } from "./storage";
+import { db } from "../../db";
+import { adminUsers } from "@shared/schema";
+import { eq } from "drizzle-orm";
 
 const GOOGLE_ISSUER = "https://accounts.google.com";
 const GOOGLE_STRATEGY = "google";
@@ -64,6 +67,14 @@ export async function setupGoogleAuth(app: Express) {
   ) => {
     try {
       const claims = tokens.claims() as Record<string, any>;
+      const email = claims["email"];
+      if (email) {
+        const [adminUser] = await db.select().from(adminUsers).where(eq(adminUsers.email, email.toLowerCase()));
+        if (adminUser) {
+          verified(new Error("This email is already associated with an account."));
+          return;
+        }
+      }
       const dbUser = await authStorage.upsertUser({
         id: `google-${claims["sub"]}`,
         email: claims["email"] ?? null,
@@ -116,6 +127,10 @@ export async function setupGoogleAuth(app: Express) {
     }
     passport.authenticate(GOOGLE_STRATEGY, (err: any, user: any, info: any) => {
       if (err || !user) {
+        const msg = err?.message || "";
+        if (msg.includes("already associated")) {
+          return res.redirect("/auth?login_error=account_exists");
+        }
         console.error("Google auth callback error:", err?.message || info);
         return res.redirect("/auth?login_error=google_failed");
       }

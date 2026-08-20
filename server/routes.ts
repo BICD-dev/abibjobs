@@ -9,7 +9,7 @@ import { setupAuth, isAuthenticated, registerAuthRoutes } from "./replit_integra
 import { registerObjectStorageRoutes, ObjectStorageService, ObjectNotFoundError, getObjectAclPolicy } from "./replit_integrations/object_storage";
 import { setupCallSignaling } from "./call";
 import { db } from "./db";
-import { users, disputeMessages, jobs, disputes } from "@shared/schema";
+import { users, disputeMessages, jobs, disputes, adminUsers } from "@shared/schema";
 import { eq, sql, and } from "drizzle-orm";
 import {
   sendWelcomeEmail,
@@ -271,6 +271,11 @@ export async function registerRoutes(
         return res.status(409).json({ message: "An account with this email already exists. Please log in instead." });
       }
 
+      const [adminUser] = await db.select().from(adminUsers).where(eq(adminUsers.email, email.toLowerCase().trim()));
+      if (adminUser) {
+        return res.status(403).json({ message: "This email is already associated with an account." });
+      }
+
       const passwordHash = await bcrypt.hash(password, 10);
       const user = await storage.createManualUser({
         email: email.toLowerCase().trim(),
@@ -308,6 +313,10 @@ export async function registerRoutes(
 
       const user = await storage.getUserByEmail(email.toLowerCase().trim());
       if (!user || !user.passwordHash) {
+        const [adminUser] = await db.select().from(adminUsers).where(eq(adminUsers.email, email.toLowerCase().trim()));
+        if (adminUser) {
+          return res.status(403).json({ message: "This email is already associated with an account." });
+        }
         return res.status(401).json({ message: "Invalid email or password" });
       }
 

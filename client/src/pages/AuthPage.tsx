@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,6 +19,19 @@ export default function AuthPage() {
   const [view, setView] = useState<AuthView>(initialView);
   const [newUserName, setNewUserName] = useState("");
   const [, setLocation] = useLocation();
+  const { toast } = useToast();
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const loginError = params.get("login_error");
+    if (loginError === "account_exists") {
+      toast({ title: "Login failed", description: "This email is already associated with an account.", variant: "destructive" });
+      window.history.replaceState({}, "", "/auth");
+    } else if (loginError === "google_failed") {
+      toast({ title: "Login failed", description: "Google login failed. Please try again.", variant: "destructive" });
+      window.history.replaceState({}, "", "/auth");
+    }
+  }, []);
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
