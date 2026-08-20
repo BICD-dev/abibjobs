@@ -33,7 +33,7 @@ export default function AuthPage() {
 
         {view === "choose" && (
           <ChooseMethod
-            onGoogleLogin={() => { window.location.href = "/api/auth/google"; }}
+            onGoogleLogin={() => { window.location.href = "/auth/google"; }}
             onManualSignup={() => setView("manual-signup")}
             onManualLogin={() => setView("manual-login")}
           />
