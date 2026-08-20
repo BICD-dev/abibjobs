@@ -204,6 +204,7 @@ export interface IStorage {
   getUserWithdrawalRequests(userId: string): Promise<WithdrawalRequest[]>;
   getAllWithdrawalRequests(status?: string): Promise<WithdrawalRequest[]>;
   processWithdrawalRequest(id: number, status: 'approved' | 'rejected', adminId: number, adminNote?: string): Promise<{ request: WithdrawalRequest; walletDebited?: boolean; reference?: string }>;
+  revertWithdrawalRequest(id: number): Promise<void>;
 
   // Beneficiaries
   createBeneficiary(data: { userId: string; bankName: string; bankCode?: string; accountNumber: string; accountName?: string }): Promise<UserBeneficiary>;
@@ -1643,6 +1644,12 @@ export class DatabaseStorage implements IStorage {
 
       return { request: updated, walletDebited: false };
     });
+  }
+
+  async revertWithdrawalRequest(id: number): Promise<void> {
+    await db.update(withdrawalRequests)
+      .set({ status: 'pending', adminNote: null, processedBy: null, processedAt: null })
+      .where(eq(withdrawalRequests.id, id));
   }
 
   // Beneficiaries

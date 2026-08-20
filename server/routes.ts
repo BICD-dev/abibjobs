@@ -3605,9 +3605,12 @@ app.get(api.wallet.verifyFunding.path, isAuthenticated, async (req, res) => {
     const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
     if (!userId) return res.status(401).json({ message: "Not authenticated" });
 
-    const { amount, bankCode, bankName, accountNumber, accountName } = req.body;
+    const { amount, bankCode, bankName, accountNumber, accountName, reason, type } = req.body;
     if (!amount || !bankCode || !accountNumber || accountNumber.length !== 10) {
       return res.status(400).json({ message: "Missing required fields" });
+    }
+    if (type === 'request' && (!reason || !reason.trim())) {
+      return res.status(400).json({ message: "Reason is required for withdrawal requests" });
     }
     const amountNum = parseFloat(amount);
     if (!isFinite(amountNum) || amountNum <= 0) {
@@ -3625,7 +3628,8 @@ app.get(api.wallet.verifyFunding.path, isAuthenticated, async (req, res) => {
     const userName = user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User' : 'User';
 
     const otpCode = String(Math.floor(100000 + Math.random() * 900000));
-    const reference = `wdotp_${userId}_${Date.now()}`;
+    const prefix = type === 'request' ? 'wdrq' : 'wdotp';
+    const reference = `${prefix}_${userId}_${Date.now()}`;
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
     const created = await storage.createWithdrawalRequest({
@@ -3636,7 +3640,7 @@ app.get(api.wallet.verifyFunding.path, isAuthenticated, async (req, res) => {
       bankCode: bankCode || null,
       accountNumber,
       accountName: accountName || null,
-      reason: null,
+      reason: reason?.trim() || null,
     });
 
     const { db: dbConn } = await import('./db');
@@ -3673,6 +3677,13 @@ app.get(api.wallet.verifyFunding.path, isAuthenticated, async (req, res) => {
     if (!request.otpExpiresAt || new Date() > request.otpExpiresAt) return res.status(400).json({ message: "OTP has expired" });
     if (request.status !== 'pending') return res.status(400).json({ message: "Request already processed" });
 
+    // Admin-mediated withdrawal request — OTP validates, but admin must approve
+    if (reference.startsWith('wdrq_')) {
+      await dbConn.update(wr).set({ otpCode: null, otpExpiresAt: null }).where(eqOp(wr.id, request.id));
+      return res.json({ reference, status: 'pending', message: "Your withdrawal request has been submitted and is awaiting admin approval." });
+    }
+
+    // Direct beneficiary withdrawal — auto-approve and initiate Paystack transfer
     await dbConn.update(wr).set({ status: 'approved', processedAt: new Date() }).where(eqOp(wr.id, request.id));
 
     const amountNum = parseFloat(request.amount);
@@ -3868,8 +3879,11 @@ app.get(api.wallet.verifyFunding.path, isAuthenticated, async (req, res) => {
 
         try {
           const resolveResp = await paystackRequest('GET', `/bank/resolve?account_number=${request.accountNumber}&bank_code=${request.bankCode}`);
+          console.log('[Admin Withdrawal] Resolve account response:', JSON.stringify(resolveResp));
           if (resolveResp.status) accountName = resolveResp.data.account_name;
-        } catch {}
+        } catch (err) {
+          console.error('[Admin Withdrawal] Resolve account error:', err);
+        }
 
         try {
           const banks = await getBanksList();
@@ -3885,11 +3899,14 @@ app.get(api.wallet.verifyFunding.path, isAuthenticated, async (req, res) => {
             bank_code: request.bankCode,
             currency: 'NGN',
           });
+          console.log('[Admin Withdrawal] Create recipient response:', JSON.stringify(recipientResp));
           if (!recipientResp.status) throw new Error(recipientResp.message);
           recipientCode = recipientResp.data.recipient_code;
         } catch (err: any) {
+          console.error('[Admin Withdrawal] Create recipient failed:', err.message);
           await storage.updateWalletBalance(request.userId, parseFloat(request.amount));
           await storage.updateTransactionStatus(result.reference, 'failed');
+          await storage.revertWithdrawalRequest(id);
           return res.status(400).json({ message: "Could not set up transfer destination. Funds refunded." });
         }
 
@@ -3904,11 +3921,14 @@ app.get(api.wallet.verifyFunding.path, isAuthenticated, async (req, res) => {
             reason: 'Admin-approved withdrawal',
             reference: result.reference,
           });
+          console.log('[Admin Withdrawal] Transfer response:', JSON.stringify(transferResp));
 
           if (!transferResp.status) {
+            console.error('[Admin Withdrawal] Transfer rejected:', transferResp.message);
             await storage.updateWalletBalance(request.userId, parseFloat(request.amount));
             await storage.updateTransactionStatus(result.reference, 'failed');
-            return res.status(400).json({ message: "Transfer failed. Funds refunded." });
+            await storage.revertWithdrawalRequest(id);
+            return res.status(400).json({ message: `Transfer failed: ${transferResp.message}. Funds refunded.` });
           }
 
           const transferStatus = transferResp.data.status;
@@ -3916,13 +3936,19 @@ app.get(api.wallet.verifyFunding.path, isAuthenticated, async (req, res) => {
             await storage.updateTransactionStatus(result.reference, 'success');
             await storage.addWithdrawalFee(fee, result.reference);
           } else if (transferStatus === 'otp') {
+            console.error('[Admin Withdrawal] Transfer requires OTP — dashboard setting blocks automated transfers');
             await storage.updateWalletBalance(request.userId, parseFloat(request.amount));
             await storage.updateTransactionStatus(result.reference, 'failed');
+            await storage.revertWithdrawalRequest(id);
             return res.status(400).json({ message: "Withdrawals temporarily unavailable. Funds refunded." });
+          } else {
+            console.error('[Admin Withdrawal] Unexpected transfer status:', transferStatus);
           }
         } catch (err: any) {
+          console.error('[Admin Withdrawal] Transfer error:', err.message || err);
           await storage.updateWalletBalance(request.userId, parseFloat(request.amount));
           await storage.updateTransactionStatus(result.reference, 'failed');
+          await storage.revertWithdrawalRequest(id);
           return res.status(400).json({ message: "Transfer failed. Funds refunded." });
         }
       }
