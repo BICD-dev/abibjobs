@@ -30,18 +30,6 @@ function updateUserSession(
   user.expires_at = user.claims?.exp;
 }
 
-async function upsertUser(claims: any) {
-  await authStorage.upsertUser({
-    // Namespace Google subjects so they can't collide with Replit or manual user ids.
-    id: `google-${claims["sub"]}`,
-    email: claims["email"],
-    firstName: claims["given_name"],
-    lastName: claims["family_name"],
-    profileImageUrl: claims["picture"],
-    authMethod: "google",
-  });
-}
-
 let googleConfig: Awaited<ReturnType<typeof getGoogleConfig>> | null = null;
 
 export function isGoogleAuthEnabled() {
@@ -74,10 +62,27 @@ export async function setupGoogleAuth(app: Express) {
     tokens: client.TokenEndpointResponse & client.TokenEndpointResponseHelpers,
     verified: passport.AuthenticateCallback
   ) => {
-    const user = {};
-    updateUserSession(user, tokens);
-    await upsertUser(tokens.claims());
-    verified(null, user);
+    try {
+      const claims = tokens.claims() as Record<string, any>;
+      const dbUser = await authStorage.upsertUser({
+        id: `google-${claims["sub"]}`,
+        email: claims["email"] ?? null,
+        firstName: claims["given_name"] ?? null,
+        lastName: claims["family_name"] ?? null,
+        profileImageUrl: claims["picture"] ?? null,
+        authMethod: "google",
+      });
+
+      const user: any = {};
+      updateUserSession(user, tokens);
+      // Use the actual DB user ID — handles both new Google users and
+      // existing accounts matched by email (manual or other OAuth).
+      user.claims = { ...user.claims, sub: dbUser.id };
+      verified(null, user);
+    } catch (err) {
+      console.error("Google auth verify error:", err);
+      verified(err as Error);
+    }
   };
 
   passport.use(
