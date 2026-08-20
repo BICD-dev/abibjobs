@@ -36,6 +36,7 @@ export function WithdrawModal({ balance, trigger }: WithdrawModalProps) {
   const [otpMode, setOtpMode] = useState(false);
   const [otpReference, setOtpReference] = useState("");
   const [otpCode, setOtpCode] = useState("");
+  const [otpIsRequest, setOtpIsRequest] = useState(false);
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -71,7 +72,7 @@ export function WithdrawModal({ balance, trigger }: WithdrawModalProps) {
   });
 
   const requestOtp = useMutation({
-    mutationFn: async (data: { amount: number; bankCode: string; bankName: string; accountNumber: string; accountName?: string }) => {
+    mutationFn: async (data: { amount: number; bankCode: string; bankName: string; accountNumber: string; accountName?: string; type?: string; reason?: string }) => {
       const res = await fetch("/api/wallet/withdraw-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -86,6 +87,7 @@ export function WithdrawModal({ balance, trigger }: WithdrawModalProps) {
     },
     onSuccess: (data) => {
       setOtpReference(data.reference);
+      setOtpIsRequest(data.reference.startsWith('wdrq_'));
       setOtpMode(true);
       toast({ title: "OTP Sent", description: "Check your email for the verification code." });
     },
@@ -108,35 +110,16 @@ export function WithdrawModal({ balance, trigger }: WithdrawModalProps) {
       }
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/wallet"] });
       queryClient.invalidateQueries({ queryKey: ["/api/wallet/beneficiaries"] });
-      toast({ title: "Withdrawal Successful", description: "Your funds are on the way!" });
-      setOpen(false);
-      reset();
-    },
-    onError: (err: Error) => {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
-    },
-  });
-
-  const submitWithdrawalRequest = useMutation({
-    mutationFn: async (data: { amount: string; bankName: string; bankCode: string; accountNumber: string; accountName?: string; reason: string }) => {
-      const res = await fetch("/api/wallet/withdrawal-requests", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify(data),
+      const isRequest = otpReference.startsWith('wdrq_');
+      toast({
+        title: isRequest ? "Request Submitted" : "Withdrawal Successful",
+        description: isRequest
+          ? "Your withdrawal request has been submitted and is awaiting admin approval."
+          : "Your funds are on the way!",
       });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.message || "Failed to submit request");
-      }
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/wallet"] });
-      toast({ title: "Request Submitted", description: "Your withdrawal request has been sent for admin approval. You will be notified when it is processed." });
       setOpen(false);
       reset();
     },
@@ -155,6 +138,7 @@ export function WithdrawModal({ balance, trigger }: WithdrawModalProps) {
     setOtpMode(false);
     setOtpReference("");
     setOtpCode("");
+    setOtpIsRequest(false);
   };
 
   const selectBeneficiary = (b: Beneficiary) => {
@@ -185,18 +169,19 @@ export function WithdrawModal({ balance, trigger }: WithdrawModalProps) {
     if (isBeneficiaryAccount) {
       requestOtp.mutate({ amount: Number(amount), bankCode, bankName, accountNumber, accountName: accountName || undefined });
     } else {
-      submitWithdrawalRequest.mutate({
-        amount: Number(amount).toFixed(2),
-        bankName,
+      requestOtp.mutate({
+        amount: Number(amount),
         bankCode,
+        bankName,
         accountNumber,
         accountName: accountName || undefined,
+        type: "request",
         reason: reason.trim(),
       });
     }
   };
 
-  const isPending = requestOtp.isPending || verifyOtp.isPending || submitWithdrawalRequest.isPending;
+  const isPending = requestOtp.isPending || verifyOtp.isPending;
 
   return (
     <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) reset(); }}>
@@ -224,7 +209,7 @@ export function WithdrawModal({ balance, trigger }: WithdrawModalProps) {
 
             <div className="bg-green-50 dark:bg-green-950/30 rounded-xl p-3 flex items-start gap-2 text-sm text-green-700 dark:text-green-400">
               <ShieldCheck className="w-4 h-4 mt-0.5 flex-shrink-0" />
-              <p>A 6-digit code has been sent to your email. Enter it below to confirm.</p>
+              <p>A 6-digit code has been sent to your email. Enter it below to {otpIsRequest ? "submit your withdrawal request" : "confirm your withdrawal"}.</p>
             </div>
 
             <div className="space-y-2">
@@ -257,7 +242,7 @@ export function WithdrawModal({ balance, trigger }: WithdrawModalProps) {
                 onClick={() => verifyOtp.mutate()}
                 data-testid="button-verify-otp"
               >
-                {verifyOtp.isPending ? <Loader2 className="animate-spin" /> : "Verify & Withdraw"}
+                {verifyOtp.isPending ? <Loader2 className="animate-spin" /> : otpIsRequest ? "Verify & Submit Request" : "Verify & Withdraw"}
               </Button>
             </div>
           </div>
