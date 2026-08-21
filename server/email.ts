@@ -1,14 +1,32 @@
 import nodemailer from "nodemailer";
 
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || "smtp-relay.brevo.com",
-  port: Number(process.env.SMTP_PORT) || 587,
-  secure: Number(process.env.SMTP_PORT) === 465,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+type EmailProvider = "emailjs" | "nodemailer";
+
+const EMAIL_PROVIDER: EmailProvider =
+  (process.env.EMAIL_PROVIDER as EmailProvider) || "emailjs";
+
+// ─── Nodemailer setup (Brevo / any SMTP) ────────────────────────────────────
+
+const transporter =
+  EMAIL_PROVIDER === "nodemailer"
+    ? nodemailer.createTransport({
+        host: process.env.SMTP_HOST || "smtp-relay.brevo.com",
+        port: Number(process.env.SMTP_PORT) || 587,
+        secure: Number(process.env.SMTP_PORT) === 465,
+        auth: {
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASS,
+        },
+      })
+    : null;
+
+// ─── EmailJS config ─────────────────────────────────────────────────────────
+
+const EMAILJS_SERVICE_ID = process.env.EMAILJS_SERVICE_ID || "";
+const EMAILJS_TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID || "";
+const EMAILJS_PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY || "";
+
+// ─── Common ──────────────────────────────────────────────────────────────────
 
 const FROM = process.env.EMAIL_FROM || "ABIB JOBS <noreply@abibjobs.com>";
 const APP_URL = process.env.REPLIT_DOMAINS
@@ -19,10 +37,40 @@ function fmt(amount: number) {
   return `₦${amount.toLocaleString("en-NG", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+async function sendViaEmailJS(to: string, subject: string, html: string) {
+  const resp = await fetch(
+    "https://api.emailjs.com/api/v1.0/email/send",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        service_id: EMAILJS_SERVICE_ID,
+        template_id: EMAILJS_TEMPLATE_ID,
+        user_id: EMAILJS_PUBLIC_KEY,
+        template_params: {
+          to_email: to,
+          from_name: "ABIB JOBS",
+          subject,
+          body: html,
+        },
+      }),
+    }
+  );
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`EmailJS error ${resp.status}: ${text}`);
+  }
+}
+
 async function send(to: string, subject: string, html: string) {
-  if (!process.env.SMTP_USER) return;
   try {
-    await transporter.sendMail({ from: FROM, to, subject, html });
+    if (EMAIL_PROVIDER === "emailjs") {
+      if (!EMAILJS_SERVICE_ID || !EMAILJS_TEMPLATE_ID || !EMAILJS_PUBLIC_KEY) return;
+      await sendViaEmailJS(to, subject, html);
+    } else {
+      if (!process.env.SMTP_USER) return;
+      await transporter!.sendMail({ from: FROM, to, subject, html });
+    }
   } catch (err) {
     console.error("[email] Failed to send:", subject, err);
   }
