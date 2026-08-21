@@ -1,8 +1,16 @@
-import { Resend } from "resend";
+import nodemailer from "nodemailer";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST || "smtp-relay.brevo.com",
+  port: Number(process.env.SMTP_PORT) || 587,
+  secure: Number(process.env.SMTP_PORT) === 465,
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+});
 
-const FROM = "ABIB JOBS <onboarding@resend.dev>";
+const FROM = process.env.EMAIL_FROM || "ABIB JOBS <noreply@abibjobs.com>";
 const APP_URL = process.env.REPLIT_DOMAINS
   ? `https://${process.env.REPLIT_DOMAINS.split(",")[0]}`
   : "http://localhost:5000";
@@ -12,9 +20,9 @@ function fmt(amount: number) {
 }
 
 async function send(to: string, subject: string, html: string) {
-  if (!process.env.RESEND_API_KEY) return;
+  if (!process.env.SMTP_USER) return;
   try {
-    await resend.emails.send({ from: FROM, to, subject, html });
+    await transporter.sendMail({ from: FROM, to, subject, html });
   } catch (err) {
     console.error("[email] Failed to send:", subject, err);
   }
