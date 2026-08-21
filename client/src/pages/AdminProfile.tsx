@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Loader2, Clock, Building2, CreditCard, Check, User, CalendarIcon, ChevronLeft, ChevronRight, Wallet, ArrowDownToLine, CheckCircle2, XCircle, AlertCircle } from "lucide-react";
 import { useAdminAuth } from "@/hooks/use-admin-auth";
 import { useToast } from "@/hooks/use-toast";
-import { NIGERIAN_BANKS } from "@/lib/nigerian-banks";
+import { useBanks } from "@/hooks/use-banks";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, isSameMonth, addMonths, subMonths, isWithinInterval, parseISO } from "date-fns";
 
@@ -92,6 +92,8 @@ export default function AdminProfile() {
   const [rangeFrom, setRangeFrom] = useState<Date | null>(null);
   const [rangeTo, setRangeTo] = useState<Date | null>(null);
   const [rangeFromOpen, setRangeFromOpen] = useState(false);
+
+  const { data: banks = [] } = useBanks();
   const [rangeToOpen, setRangeToOpen] = useState(false);
   const [withdrawDialogOpen, setWithdrawDialogOpen] = useState(false);
   const [withdrawAmount, setWithdrawAmount] = useState("");
@@ -576,7 +578,7 @@ export default function AdminProfile() {
                         value={bankCode}
                         onValueChange={(val) => {
                           setBankCode(val);
-                          const bank = NIGERIAN_BANKS.find(b => b.code === val);
+                          const bank = banks.find(b => b.code === val);
                           if (bank) setBankName(bank.name);
                         }}
                       >
@@ -584,7 +586,7 @@ export default function AdminProfile() {
                           <SelectValue placeholder="Select your bank" />
                         </SelectTrigger>
                         <SelectContent>
-                          {NIGERIAN_BANKS.map((bank) => (
+                          {banks.map((bank) => (
                             <SelectItem key={bank.code} value={bank.code}>
                               {bank.name}
                             </SelectItem>

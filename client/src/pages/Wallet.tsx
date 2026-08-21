@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Loader2, ArrowUpRight, ArrowDownLeft, Wallet as WalletIcon, Building2, ArrowDownToLine, Clock, CheckCircle2, XCircle, MessageSquare, Lock, ChevronDown } from "lucide-react";
 import { format } from "date-fns";
-import { NIGERIAN_BANKS } from "@/lib/nigerian-banks";
+import { useBanks } from "@/hooks/use-banks";
 import { useToast } from "@/hooks/use-toast";
 import { FundWalletModal } from "@/components/wallet/FundWalletModal";
 import { WithdrawModal } from "@/components/wallet/WithdrawModal";
@@ -66,7 +66,8 @@ export default function Wallet() {
     },
   });
 
-  const selectedReqBank = NIGERIAN_BANKS.find((b) => b.code === reqBankCode);
+  const { data: banks = [] } = useBanks();
+  const selectedReqBank = banks.find((b) => b.code === reqBankCode);
   const balance = Number(wallet?.balance || 0);
   const heldBalance = Number(wallet?.heldBalance || 0);
 
@@ -243,7 +244,7 @@ export default function Wallet() {
                   <SelectValue placeholder="Choose your bank" />
                 </SelectTrigger>
                 <SelectContent>
-                  {NIGERIAN_BANKS.map((bank) => (
+                  {banks.map((bank) => (
                     <SelectItem key={bank.code} value={bank.code}>{bank.name}</SelectItem>
                   ))}
                 </SelectContent>

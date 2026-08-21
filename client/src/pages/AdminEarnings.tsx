@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, ArrowUpRight, ArrowDownLeft, TrendingUp, Building2, Settings, Banknote, Lock, Key } from "lucide-react";
 import { format } from "date-fns";
-import { NIGERIAN_BANKS } from "@/lib/nigerian-banks";
+import { useBanks } from "@/hooks/use-banks";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 
@@ -25,7 +25,8 @@ export default function AdminEarnings() {
   const [accountName, setAccountName] = useState("");
   const [passcode, setPasscode] = useState("");
 
-  const selectedBank = NIGERIAN_BANKS.find(b => b.code === bankCode);
+  const { data: banks = [] } = useBanks();
+  const selectedBank = banks.find(b => b.code === bankCode);
 
   const resetForm = () => {
     setAmount("");
@@ -157,7 +158,7 @@ export default function AdminEarnings() {
                       <SelectValue placeholder="Choose your bank" />
                     </SelectTrigger>
                     <SelectContent>
-                      {NIGERIAN_BANKS.map((bank) => (
+                      {banks.map((bank) => (
                         <SelectItem key={bank.code} value={bank.code}>{bank.name}</SelectItem>
                       ))}
                     </SelectContent>
@@ -249,7 +250,7 @@ export default function AdminEarnings() {
                       <SelectValue placeholder="Choose your bank" />
                     </SelectTrigger>
                     <SelectContent>
-                      {NIGERIAN_BANKS.map((bank) => (
+                      {banks.map((bank) => (
                         <SelectItem key={bank.code} value={bank.code}>{bank.name}</SelectItem>
                       ))}
                     </SelectContent>

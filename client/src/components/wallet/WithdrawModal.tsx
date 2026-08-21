@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
 import { Loader2, Building2, X, Plus, Star, ShieldCheck, Info } from "lucide-react";
-import { NIGERIAN_BANKS } from "@/lib/nigerian-banks";
+import { useBanks } from "@/hooks/use-banks";
 import { useToast } from "@/hooks/use-toast";
 
 interface Beneficiary {
@@ -40,7 +40,8 @@ export function WithdrawModal({ balance, trigger }: WithdrawModalProps) {
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const selectedBank = NIGERIAN_BANKS.find((b) => b.code === bankCode);
+  const { data: banks = [] } = useBanks();
+  const selectedBank = banks.find((b) => b.code === bankCode);
 
   const { data: beneficiaries = [] } = useQuery<Beneficiary[]>({
     queryKey: ["/api/wallet/beneficiaries"],
@@ -308,7 +309,7 @@ export function WithdrawModal({ balance, trigger }: WithdrawModalProps) {
                       <SelectValue placeholder="Choose your bank" />
                     </SelectTrigger>
                     <SelectContent>
-                      {NIGERIAN_BANKS.map((bank) => (
+                      {banks.map((bank) => (
                         <SelectItem key={bank.code} value={bank.code} data-testid={`select-withdraw-bank-option-${bank.code}`}>
                           {bank.name}
                         </SelectItem>
