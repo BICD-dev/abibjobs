@@ -155,27 +155,39 @@ export default function Wallet() {
                 <div className="text-center py-10 text-muted-foreground" data-testid="text-no-transactions">No transactions yet.</div>
               ) : (
                 <div className="space-y-4">
-                  {wallet?.transactions.map((tx) => (
-                    <div key={tx.id} className="flex items-center justify-between gap-4 p-4 rounded-xl bg-muted/20 transition-colors" data-testid={`row-transaction-${tx.id}`}>
+                  {wallet?.transactions.map((tx) => {
+                    const isFailed = (tx as any).status === 'failed';
+                    const isPending = (tx as any).status === 'pending';
+                    const isCredit = ["deposit", "job_earning"].includes(tx.type);
+                    return (
+                    <div key={tx.id} className={`flex items-center justify-between gap-4 p-4 rounded-xl transition-colors ${isFailed ? 'bg-red-50/50 dark:bg-red-950/20 opacity-60' : 'bg-muted/20'}`} data-testid={`row-transaction-${tx.id}`}>
                       <div className="flex items-center gap-4">
                         <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${
-                          ["deposit", "job_earning"].includes(tx.type) ? "bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400" : "bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400"
+                          isFailed ? "bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400"
+                          : isCredit ? "bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400"
+                          : "bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400"
                         }`}>
-                          {["deposit", "job_earning"].includes(tx.type) ? <ArrowDownLeft className="w-5 h-5" /> : <ArrowUpRight className="w-5 h-5" />}
+                          {isCredit && !isFailed ? <ArrowDownLeft className="w-5 h-5" /> : <ArrowUpRight className="w-5 h-5" />}
                         </div>
                         <div>
-                          <p className="font-bold capitalize text-foreground">{tx.type.replace("_", " ")}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="font-bold capitalize text-foreground">{tx.type.replace("_", " ")}</p>
+                            {isFailed && <Badge variant="destructive" className="text-[10px] px-1.5 py-0">Failed</Badge>}
+                            {isPending && <Badge className="bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 text-[10px] px-1.5 py-0">Pending</Badge>}
+                          </div>
                           {(tx as any).bankName && <p className="text-xs text-muted-foreground">{(tx as any).bankName}</p>}
                           <p className="text-xs text-muted-foreground">{format(new Date(tx.createdAt || Date.now()), "PP p")}</p>
                         </div>
                       </div>
                       <span className={`font-bold font-mono flex-shrink-0 ${
-                        ["deposit", "job_earning"].includes(tx.type) ? "text-green-600 dark:text-green-400" : "text-foreground"
+                        isFailed ? "text-red-500 dark:text-red-400 line-through"
+                        : isCredit ? "text-green-600 dark:text-green-400" : "text-foreground"
                       }`}>
-                        {["deposit", "job_earning"].includes(tx.type) ? "+" : "-"}₦{Math.abs(Number(tx.amount)).toLocaleString()}
+                        {isCredit ? "+" : "-"}₦{Math.abs(Number(tx.amount)).toLocaleString()}
                       </span>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </CardContent>

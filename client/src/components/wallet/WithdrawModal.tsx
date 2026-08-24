@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
 import { Loader2, Building2, X, Plus, Star, ShieldCheck, Info } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useBanks } from "@/hooks/use-banks";
 import { useToast } from "@/hooks/use-toast";
 
@@ -37,6 +38,7 @@ export function WithdrawModal({ balance, trigger }: WithdrawModalProps) {
   const [otpReference, setOtpReference] = useState("");
   const [otpCode, setOtpCode] = useState("");
   const [otpIsRequest, setOtpIsRequest] = useState(false);
+  const [saveAsBeneficiary, setSaveAsBeneficiary] = useState(false);
 
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -111,9 +113,23 @@ export function WithdrawModal({ balance, trigger }: WithdrawModalProps) {
       }
       return res.json();
     },
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/wallet"] });
       queryClient.invalidateQueries({ queryKey: ["/api/wallet/beneficiaries"] });
+
+      // Save as beneficiary if checkbox was checked and account isn't already one
+      if (saveAsBeneficiary && !isBeneficiaryAccount && bankCode && accountNumber.length === 10) {
+        try {
+          await fetch("/api/wallet/beneficiaries", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ bankName: selectedBank?.name || "", bankCode, accountNumber, accountName: accountName || undefined }),
+          });
+          queryClient.invalidateQueries({ queryKey: ["/api/wallet/beneficiaries"] });
+        } catch {}
+      }
+
       const isRequest = otpReference.startsWith('wdrq_');
       toast({
         title: isRequest ? "Request Submitted" : "Withdrawal Successful",
@@ -136,6 +152,7 @@ export function WithdrawModal({ balance, trigger }: WithdrawModalProps) {
     setAccountName("");
     setSelectedBeneficiaryId(null);
     setReason("");
+    setSaveAsBeneficiary(false);
     setOtpMode(false);
     setOtpReference("");
     setOtpCode("");
@@ -417,6 +434,19 @@ export function WithdrawModal({ balance, trigger }: WithdrawModalProps) {
 
             {!!amount && Number(amount) > balance && (
               <p className="text-xs text-red-500">Amount exceeds available balance.</p>
+            )}
+
+            {bankCode && accountNumber.length === 10 && !isBeneficiaryAccount && !selectedBeneficiaryId && (
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="save-beneficiary"
+                  checked={saveAsBeneficiary}
+                  onCheckedChange={(checked) => setSaveAsBeneficiary(checked === true)}
+                />
+                <label htmlFor="save-beneficiary" className="text-sm text-muted-foreground cursor-pointer">
+                  Save this account for future withdrawals
+                </label>
+              </div>
             )}
 
             <Button

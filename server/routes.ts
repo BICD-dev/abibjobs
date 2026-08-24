@@ -2348,27 +2348,77 @@ export async function registerRoutes(
       }
 
       const ownerAdmin = await storage.getAdminUserByEmail(OWNER_EMAIL);
-      const updated = await storage.processAdminWithdrawal(id, action, ownerAdmin?.id ?? 0, adminNote);
 
-      try {
-        if (action === 'approved') {
-          await storage.createAdminNotification({
-            adminId: updated.adminId,
-            title: "Withdrawal Approved",
-            message: `Your withdrawal of \u20A6${parseFloat(updated.amount).toLocaleString()} to ${updated.bankName} (${updated.accountNumber}) has been approved and paid.`,
-            type: "success",
-          });
-        } else {
+      if (action === 'rejected') {
+        const updated = await storage.processAdminWithdrawal(id, action, ownerAdmin?.id ?? 0, adminNote);
+        try {
           await storage.createAdminNotification({
             adminId: updated.adminId,
             title: "Withdrawal Rejected",
-            message: `Your withdrawal of \u20A6${parseFloat(updated.amount).toLocaleString()} was not approved and the amount has been returned to your wallet.${adminNote ? ` Reason: ${adminNote}` : ''}`,
+            message: `Your withdrawal of ₦${parseFloat(updated.amount).toLocaleString()} was not approved and the amount has been returned to your wallet.${adminNote ? ` Reason: ${adminNote}` : ''}`,
             type: "warning",
           });
-        }
-      } catch (e) {}
+        } catch (e) {}
+        return res.json(updated);
+      }
 
-      res.json(updated);
+      // Approved — first debit admin wallet + flip status, then initiate Paystack transfer
+      const updated = await storage.processAdminWithdrawal(id, action, ownerAdmin?.id ?? 0, adminNote);
+      const reference = `admwd_${updated.adminId}_${Date.now()}`;
+
+      // Store reference on the withdrawal record
+      const { eq: eqOp } = await import('drizzle-orm');
+      const { db: dbConn } = await import('./db');
+      const { adminWithdrawals: aw } = await import('@shared/schema');
+      await dbConn.update(aw).set({ reference }).where(eqOp(aw.id, id));
+
+      const amountNum = parseFloat(updated.amount);
+      const fee = Math.round(amountNum * (WITHDRAWAL_FEE_PERCENT / 100) * 100) / 100;
+      const netAmount = amountNum - fee;
+
+      try {
+        const admin = await storage.getAdminUser(updated.adminId);
+
+        let accountName = updated.accountName;
+        try {
+          const resolveResp = await paystackRequest('GET', `/bank/resolve?account_number=${updated.accountNumber}&bank_code=${updated.bankCode}`);
+          if (resolveResp.status) accountName = resolveResp.data.account_name;
+        } catch {}
+
+        const recipientResp = await paystackRequest('POST', '/transferrecipient', {
+          type: 'nuban',
+          name: accountName || admin?.name || 'Admin',
+          account_number: updated.accountNumber,
+          bank_code: updated.bankCode,
+          currency: 'NGN',
+        });
+        if (!recipientResp.status) throw new Error(recipientResp.message || "Could not set up transfer destination");
+
+        const transferResp = await paystackRequest('POST', '/transfer', {
+          source: 'balance',
+          amount: Math.round(netAmount * 100),
+          recipient: recipientResp.data.recipient_code,
+          reason: 'Admin wallet withdrawal',
+          reference,
+        });
+        if (!transferResp.status) throw new Error(transferResp.message || "Transfer failed");
+
+        try {
+          await storage.createAdminNotification({
+            adminId: updated.adminId,
+            title: "Withdrawal Approved",
+            message: `Your withdrawal of ₦${amountNum.toLocaleString()} to ${updated.bankName} (${updated.accountNumber}) has been approved and is being processed.`,
+            type: "success",
+          });
+        } catch (e) {}
+
+        res.json(updated);
+      } catch (err: any) {
+        // Refund admin wallet on transfer failure
+        await storage.creditAdminWallet(updated.adminId, amountNum);
+        await dbConn.update(aw).set({ status: 'failed', reference, adminNote: err.message || 'Transfer failed' }).where(eqOp(aw.id, id));
+        res.status(400).json({ message: err.message || "Transfer failed. Funds returned to admin wallet." });
+      }
     } catch (err: any) {
       res.status(400).json({ message: err.message || "Failed to process withdrawal" });
     }
@@ -2533,11 +2583,59 @@ export async function registerRoutes(
       return res.status(403).json({ message: "Invalid passcode." });
     }
 
+    const reference = `platwd_${Date.now()}`;
+    const fee = Math.round(amount * (WITHDRAWAL_FEE_PERCENT / 100) * 100) / 100;
+    const netAmount = amount - fee;
+
+    // Deduct from platform balance first
+    let updated;
     try {
-      const updated = await storage.withdrawPlatformEarnings(amount, { bankName, bankCode, accountNumber, accountName });
-      res.json({ newBalance: updated.totalBalance });
+      updated = await storage.withdrawPlatformEarnings(amount, { bankName, bankCode, accountNumber, accountName }, reference);
     } catch (err: any) {
-      res.status(400).json({ message: err.message || "Withdrawal failed" });
+      return res.status(400).json({ message: err.message || "Withdrawal failed" });
+    }
+
+    try {
+      let accountNameResolved = accountName;
+      try {
+        const resolveResp = await paystackRequest('GET', `/bank/resolve?account_number=${accountNumber}&bank_code=${bankCode}`);
+        if (resolveResp.status) accountNameResolved = resolveResp.data.account_name;
+      } catch {}
+
+      const recipientResp = await paystackRequest('POST', '/transferrecipient', {
+        type: 'nuban',
+        name: accountNameResolved || 'ABIB JOBS',
+        account_number: accountNumber,
+        bank_code: bankCode,
+        currency: 'NGN',
+      });
+      if (!recipientResp.status) throw new Error(recipientResp.message || "Could not set up transfer destination");
+
+      const transferResp = await paystackRequest('POST', '/transfer', {
+        source: 'balance',
+        amount: Math.round(netAmount * 100),
+        recipient: recipientResp.data.recipient_code,
+        reason: 'Platform earnings withdrawal',
+        reference,
+      });
+      if (!transferResp.status) throw new Error(transferResp.message || "Transfer failed");
+
+      if (transferResp.data.status === 'success') {
+        await storage.updatePlatformTransactionStatus(reference, 'success');
+        if (fee > 0) await storage.addWithdrawalFee(fee, reference);
+      }
+
+      res.json({ newBalance: updated.totalBalance, reference, status: transferResp.data.status });
+    } catch (err: any) {
+      // Refund platform balance on transfer failure
+      const earnings = await storage.getPlatformEarnings();
+      const { eq: eqOp } = await import('drizzle-orm');
+      const { platformEarnings: pe, platformTransactions: pt } = await import('@shared/schema');
+      const { db: dbConn } = await import('./db');
+      const newBalance = parseFloat(earnings.totalBalance) + amount;
+      await dbConn.update(pe).set({ totalBalance: newBalance.toFixed(2) }).where(eqOp(pe.id, earnings.id));
+      await dbConn.update(pt).set({ status: 'failed' }).where(eqOp(pt.reference, reference));
+      res.status(400).json({ message: err.message || "Withdrawal transfer failed. Funds refunded." });
     }
   });
 
@@ -3449,18 +3547,18 @@ app.get(api.wallet.verifyFunding.path, isAuthenticated, async (req, res) => {
     const amount = data.amount / 100; // kobo -> naira
 
     // Atomic gate: only the request that actually flips pending -> completed gets to credit the wallet.
+    // completeDepositIfPending wraps the status flip + wallet credit in one transaction.
     const completed = await storage.completeDepositIfPending(reference, {
       amount: amount.toString(),
       bankName: data.channel === 'card' ? 'Card Payment' : 'Bank Transfer',
       accountNumber: data.authorization?.last4 ? `****${data.authorization.last4}` : null,
+      userId,
     });
 
     if (!completed) {
       // Lost the race to a concurrent verify call — it already credited the wallet. Just report current state.
       return res.json({ status: 'success', message: "Deposit already processed.", amount: amount.toString() });
     }
-
-    await storage.updateWalletBalance(userId, amount);
 
     const profile = await storage.getProfile(userId);
     const newBalance = parseFloat(profile?.walletBalance || "0");
@@ -3572,6 +3670,56 @@ app.get(api.wallet.verifyFunding.path, isAuthenticated, async (req, res) => {
       const reference = data?.reference;
       if (!reference) return;
 
+      // Route by reference prefix to the correct table.
+      const isPlatformTransfer = reference.startsWith('platwd_');
+      const isAdminTransfer = reference.startsWith('admwd_');
+
+      // ─── Platform earnings withdrawal ───────────────────────────────────────
+      if (isPlatformTransfer) {
+        const { eq: eqOp } = await import('drizzle-orm');
+        const { db: dbConn } = await import('./db');
+        const { platformTransactions: pt } = await import('@shared/schema');
+
+        const [ptRow] = await dbConn.select().from(pt).where(eqOp(pt.reference, reference));
+        if (!ptRow || ptRow.status === 'success' || ptRow.status === 'failed') return;
+
+        if (eventType === 'transfer.success') {
+          await dbConn.update(pt).set({ status: 'success' }).where(eqOp(pt.reference, reference));
+          const fee = Number(data.fee) || 0;
+          if (fee > 0) await storage.addWithdrawalFee(fee, reference);
+        } else if (eventType === 'transfer.failed' || eventType === 'transfer.reversed') {
+          // Refund platform balance
+          const amountNum = Math.abs(Number(ptRow.amount));
+          const earnings = await storage.getPlatformEarnings();
+          const pe = (await import('@shared/schema')).platformEarnings;
+          const newBalance = parseFloat(earnings.totalBalance) + amountNum;
+          await dbConn.update(pe).set({ totalBalance: newBalance.toFixed(2) }).where(eqOp(pe.id, earnings.id));
+          await dbConn.update(pt).set({ status: 'failed' }).where(eqOp(pt.reference, reference));
+        }
+        return;
+      }
+
+      // ─── Admin wallet withdrawal ────────────────────────────────────────────
+      if (isAdminTransfer) {
+        const { eq: eqOp } = await import('drizzle-orm');
+        const { db: dbConn } = await import('./db');
+        const { adminWithdrawals: aw } = await import('@shared/schema');
+
+        const [awRow] = await dbConn.select().from(aw).where(eqOp(aw.reference, reference));
+        if (!awRow || awRow.status === 'success' || awRow.status === 'failed') return;
+
+        if (eventType === 'transfer.success') {
+          await dbConn.update(aw).set({ status: 'success' }).where(eqOp(aw.reference, reference));
+        } else if (eventType === 'transfer.failed' || eventType === 'transfer.reversed') {
+          // Refund admin wallet
+          const amountNum = Math.abs(Number(awRow.amount));
+          await storage.creditAdminWallet(awRow.adminId, amountNum);
+          await dbConn.update(aw).set({ status: 'failed' }).where(eqOp(aw.reference, reference));
+        }
+        return;
+      }
+
+      // ─── User wallet withdrawal (original path) ─────────────────────────────
       const transaction = await storage.getTransactionByReference(reference);
       if (!transaction) {
         console.warn(`[Paystack Webhook] No transaction found for reference ${reference}`);
@@ -3580,7 +3728,6 @@ app.get(api.wallet.verifyFunding.path, isAuthenticated, async (req, res) => {
 
       const currentStatus = (transaction as any).status;
       if (currentStatus === 'success' || currentStatus === 'failed') {
-        // Already reconciled — Paystack can deliver the same event more than once.
         return;
       }
 
@@ -3591,7 +3738,7 @@ app.get(api.wallet.verifyFunding.path, isAuthenticated, async (req, res) => {
         await storage.createNotification({
           userId: transaction.userId,
           title: 'Withdrawal Successful',
-          message: `Your withdrawal of \u20A6${Math.abs(Number(transaction.amount)).toLocaleString()} has been paid out to ${transaction.bankName} (${transaction.accountNumber}).`,
+          message: `Your withdrawal of ₦${Math.abs(Number(transaction.amount)).toLocaleString()} has been paid out to ${transaction.bankName} (${transaction.accountNumber}).`,
           type: 'success',
         });
       } else if (eventType === 'transfer.failed' || eventType === 'transfer.reversed') {
@@ -3600,7 +3747,7 @@ app.get(api.wallet.verifyFunding.path, isAuthenticated, async (req, res) => {
         await storage.createNotification({
           userId: transaction.userId,
           title: 'Withdrawal Failed',
-          message: `Your withdrawal of \u20A6${Math.abs(Number(transaction.amount)).toLocaleString()} could not be completed and has been refunded to your wallet.`,
+          message: `Your withdrawal of ₦${Math.abs(Number(transaction.amount)).toLocaleString()} could not be completed and has been refunded to your wallet.`,
           type: 'warning',
         });
       }

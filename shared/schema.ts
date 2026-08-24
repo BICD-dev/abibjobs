@@ -106,6 +106,8 @@ export const platformTransactions = pgTable("platform_transactions", {
   bankCode: text("bank_code"),
   accountNumber: text("account_number"),
   accountName: text("account_name"),
+  reference: text("reference"),
+  status: text("status").default("success").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -170,6 +172,7 @@ export const adminWithdrawals = pgTable("admin_withdrawals", {
   accountNumber: text("account_number").notNull(),
   accountName: text("account_name"),
   status: text("status").default("pending").notNull(),
+  reference: text("reference"),
   adminNote: text("admin_note"),
   processedBy: integer("processed_by"),
   processedAt: timestamp("processed_at"),

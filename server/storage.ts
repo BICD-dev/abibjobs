@@ -266,18 +266,27 @@ export class DatabaseStorage implements IStorage {
   // whether it's the "winner" allowed to actually credit the wallet.
   async completeDepositIfPending(
     reference: string,
-    data: { amount: string; bankName: string | null; accountNumber: string | null }
+    data: { amount: string; bankName: string | null; accountNumber: string | null; userId: string }
   ): Promise<Transaction | undefined> {
-    const result = await db.update(transactions)
-      .set({
-        status: 'completed',
-        amount: data.amount,
-        bankName: data.bankName,
-        accountNumber: data.accountNumber,
-      })
-      .where(and(eq(transactions.reference, reference), eq(transactions.status, 'pending')))
-      .returning();
-    return result[0];
+    return db.transaction(async (tx) => {
+      const result = await tx.update(transactions)
+        .set({
+          status: 'completed',
+          amount: data.amount,
+          bankName: data.bankName,
+          accountNumber: data.accountNumber,
+        })
+        .where(and(eq(transactions.reference, reference), eq(transactions.status, 'pending')))
+        .returning();
+      if (!result[0]) return undefined;
+
+      const amountNum = parseFloat(data.amount);
+      await tx.update(profiles)
+        .set({ walletBalance: sql`(${profiles.walletBalance}::numeric + ${amountNum}::numeric)` })
+        .where(eq(profiles.userId, data.userId));
+
+      return result[0];
+    });
   }
 
   async getUser(id: string): Promise<any | undefined> {
@@ -744,7 +753,13 @@ export class DatabaseStorage implements IStorage {
     });
   }
 
-  async withdrawPlatformEarnings(amount: number, bankInfo: { bankName: string; bankCode: string; accountNumber: string; accountName?: string }): Promise<PlatformEarning> {
+  async updatePlatformTransactionStatus(reference: string, status: string): Promise<void> {
+    await db.update(platformTransactions)
+      .set({ status })
+      .where(eq(platformTransactions.reference, reference));
+  }
+
+  async withdrawPlatformEarnings(amount: number, bankInfo: { bankName: string; bankCode: string; accountNumber: string; accountName?: string }, reference?: string): Promise<PlatformEarning> {
     const earnings = await this.getPlatformEarnings();
     const currentBalance = parseFloat(earnings.totalBalance);
     if (currentBalance < amount) throw new Error("Insufficient platform balance");
@@ -762,6 +777,8 @@ export class DatabaseStorage implements IStorage {
       bankCode: bankInfo.bankCode,
       accountNumber: bankInfo.accountNumber,
       accountName: bankInfo.accountName || null,
+      reference: reference || null,
+      status: reference ? 'pending' : 'completed',
     });
 
     return updated;
@@ -1609,14 +1626,17 @@ export class DatabaseStorage implements IStorage {
 
   async processWithdrawalRequest(id: number, status: 'approved' | 'rejected', adminId: number, adminNote?: string): Promise<{ request: WithdrawalRequest; walletDebited?: boolean; reference?: string }> {
     return db.transaction(async (tx) => {
-      const [request] = await tx.select().from(withdrawalRequests)
-        .where(and(eq(withdrawalRequests.id, id), eq(withdrawalRequests.status, 'pending')));
-      if (!request) throw new Error("Request not found or already processed");
-
+      // Use the UPDATE with pending check as the atomic gate — if two concurrent
+      // requests arrive, only one will succeed (0 rows returned for the loser).
       const [updated] = await tx.update(withdrawalRequests)
         .set({ status, adminNote: adminNote || null, processedBy: adminId, processedAt: new Date() })
-        .where(eq(withdrawalRequests.id, id))
+        .where(and(eq(withdrawalRequests.id, id), eq(withdrawalRequests.status, 'pending')))
         .returning();
+      if (!updated) throw new Error("Request not found or already processed");
+
+      // Now read the full row (for bank details etc.)
+      const [request] = await tx.select().from(withdrawalRequests)
+        .where(eq(withdrawalRequests.id, id));
 
       if (status === 'approved') {
         const amountNum = parseFloat(request.amount);
