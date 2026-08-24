@@ -209,6 +209,14 @@ export const isAuthenticated: RequestHandler = async (req: any, res, next) => {
     return next();
   }
 
+  // Staff admin login sets adminId on session — treat them as authenticated
+  if (req.session?.adminId) {
+    if (!req.user) {
+      req.user = { claims: { sub: String(req.session.adminId) } };
+    }
+    return next();
+  }
+
   const user = req.user as any;
 
   if (!req.isAuthenticated || !req.isAuthenticated() || !user?.claims?.sub) {

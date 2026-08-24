@@ -174,6 +174,7 @@ export default function Wallet() {
                             <p className="font-bold capitalize text-foreground">{tx.type.replace("_", " ")}</p>
                             {isFailed && <Badge variant="destructive" className="text-[10px] px-1.5 py-0">Failed</Badge>}
                             {isPending && <Badge className="bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 text-[10px] px-1.5 py-0">Pending</Badge>}
+                            {!isFailed && !isPending && <Badge className="bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-400 text-[10px] px-1.5 py-0">Completed</Badge>}
                           </div>
                           {(tx as any).bankName && <p className="text-xs text-muted-foreground">{(tx as any).bankName}</p>}
                           <p className="text-xs text-muted-foreground">{format(new Date(tx.createdAt || Date.now()), "PP p")}</p>
