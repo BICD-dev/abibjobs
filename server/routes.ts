@@ -1880,6 +1880,18 @@ export async function registerRoutes(
 
       const fee = parseNumeric(adjustment.additionalFee);
 
+      // No additional fee owed (e.g. fee percentage configured to 0) —
+      // mark the adjustment paid locally and finalize immediately.
+      if (fee <= 0) {
+        if (!adjustment.paystackReference) {
+          await db.update(negotiationFeeAdjustments)
+            .set({ paystackReference: `nfa_${adjustment.id}_${Date.now().toString(36)}`, status: 'paid', paidAt: new Date() })
+            .where(eq(negotiationFeeAdjustments.id, adjustment.id));
+        }
+        const result = await finalizeOfferAcceptance(offer, job);
+        return res.json({ ...result, requiresPayment: false, authorizationUrl: null, additionalFee: '0.00' });
+      }
+
       // Initiate the delta-fee checkout for the poster
       const posterUser = await storage.getUser(job.posterId);
       const posterEmail = posterUser?.email || `user_${job.posterId}@abib.jobs`;
@@ -3373,6 +3385,7 @@ export async function registerRoutes(
           previousAmount: null,
           newAmount: null,
           status: f.status,
+          reference: f.paystackReference,
           createdAt: f.createdAt ? f.createdAt.toISOString() : null,
         })),
         ...adjustments.map(a => ({
@@ -3384,6 +3397,7 @@ export async function registerRoutes(
           previousAmount: a.previousAmount,
           newAmount: a.newAmount,
           status: a.status,
+          reference: a.paystackReference,
           createdAt: a.createdAt ? a.createdAt.toISOString() : null,
         })),
       ].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
@@ -3395,6 +3409,16 @@ export async function registerRoutes(
   });
 
   // --- ADMIN FEES ---
+
+  app.get('/api/wallet/banks', isAdminOrOwner, async (req, res) => {
+    try {
+      const data = await paystackRequest('GET', '/bank?currency=NGN');
+      const banks = Array.isArray(data?.data) ? data.data.map((b: any) => ({ code: b.code, name: b.name })) : [];
+      res.json({ banks });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to load banks" });
+    }
+  });
 
   app.get(api.transactions.fees.path, isAdminOrOwner, async (req, res) => {
     try {

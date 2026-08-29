@@ -120,9 +120,11 @@ export function useAcceptProposal() {
   const { toast } = useToast();
 
   return useMutation({
-    mutationFn: async ({ disputeId, jobId }: { disputeId: number; jobId: number }) => {
+    mutationFn: async ({ disputeId, jobId, amount }: { disputeId: number; jobId: number; amount?: number }) => {
       const res = await fetch(`/api/disputes/${disputeId}/accept-proposal`, {
         method: 'POST',
+        headers: amount !== undefined ? { "Content-Type": "application/json" } : undefined,
+        body: amount !== undefined ? JSON.stringify({ amount }) : undefined,
         credentials: "include",
       });
       if (!res.ok) {
@@ -135,42 +137,8 @@ export function useAcceptProposal() {
       queryClient.invalidateQueries({ queryKey: ['/api/jobs', vars.jobId, 'dispute'] });
       queryClient.invalidateQueries({ queryKey: ['/api/disputes', vars.disputeId] });
       queryClient.invalidateQueries({ queryKey: [api.jobs.get.path, vars.jobId] });
-      queryClient.invalidateQueries({ queryKey: [api.wallet.get.path] });
-      toast({ title: "Proposal Accepted", description: "The dispute has been resolved and funds distributed." });
-    },
-    onError: (error: Error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-    },
-  });
-}
-
-export function useConfirmDisputePayment() {
-  const queryClient = useQueryClient();
-  const { toast } = useToast();
-
-  return useMutation({
-    mutationFn: async ({ disputeId, jobId }: { disputeId: number; jobId: number }) => {
-      const res = await fetch(`/api/disputes/${disputeId}/confirm-payment`, {
-        method: 'POST',
-        credentials: "include",
-      });
-      if (!res.ok) {
-        const error = await res.json();
-        throw new Error(error.message || "Failed to confirm payment");
-      }
-      return res.json();
-    },
-    onSuccess: (_, vars) => {
-      queryClient.invalidateQueries({ queryKey: ['/api/jobs', vars.jobId, 'dispute'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/disputes', vars.disputeId] });
-      queryClient.invalidateQueries({ queryKey: [api.jobs.get.path, vars.jobId] });
-      queryClient.invalidateQueries({ queryKey: [api.wallet.get.path] });
-      queryClient.invalidateQueries({ queryKey: [api.wallet.heldJobs.path] });
-      queryClient.invalidateQueries({ queryKey: [api.jobs.myJobs.path] });
-      queryClient.invalidateQueries({ queryKey: [api.jobs.history.path] });
-      queryClient.invalidateQueries({ queryKey: [api.notifications.list.path] });
-      queryClient.invalidateQueries({ queryKey: [api.notifications.unreadCount.path] });
-      toast({ title: "Payment Confirmed", description: "Funds have been released to the worker." });
+      queryClient.invalidateQueries({ queryKey: [api.transactions.history.path] });
+      toast({ title: "Proposal Accepted", description: "The dispute has been resolved by mutual agreement." });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -210,17 +178,15 @@ export function useResolveDispute() {
   const { toast } = useToast();
 
   return useMutation({
-    mutationFn: async ({ disputeId, action, workerAmount, posterRefund, message }: {
+    mutationFn: async ({ disputeId, resolution, note }: {
       disputeId: number;
-      action: 'refund_poster' | 'release_worker' | 'custom';
-      workerAmount?: number;
-      posterRefund?: number;
-      message?: string;
+      resolution: 'poster_favored' | 'worker_favored' | 'mutual_agreement';
+      note?: string;
     }) => {
       const res = await fetch(`/api/disputes/${disputeId}/resolve`, {
         method: 'POST',
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, workerAmount, posterRefund, message }),
+        body: JSON.stringify({ resolution, note }),
         credentials: "include",
       });
       if (!res.ok) {
@@ -232,7 +198,7 @@ export function useResolveDispute() {
     onSuccess: (_, vars) => {
       queryClient.invalidateQueries({ queryKey: ['/api/disputes', vars.disputeId] });
       queryClient.invalidateQueries({ queryKey: ['/api/admin/disputes'] });
-      toast({ title: "Dispute Resolved", description: "The dispute has been resolved and funds distributed." });
+      toast({ title: "Dispute Resolved", description: "The dispute has been resolved. Direct payment is the responsibility of the parties." });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });

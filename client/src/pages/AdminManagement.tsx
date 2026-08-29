@@ -1,12 +1,15 @@
 import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Navbar } from "@/components/Navbar";
 import { useAdminAuth, useAdminStaffList, useCreateAdminStaff, useDeleteAdminStaff, useResetAdminPassword, useToggleAdminStaff, useAdminHours } from "@/hooks/use-admin-auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, UserPlus, Trash2, RotateCcw, Shield, Clock, Copy, Check, Power } from "lucide-react";
+import { Loader2, UserPlus, Trash2, RotateCcw, Shield, Clock, Copy, Check, Power, Ban, ShieldOff, UserCheck, Scale, CheckCircle2, XCircle } from "lucide-react";
 import { format } from "date-fns";
+import { useToast } from "@/hooks/use-toast";
 
 export default function AdminManagement() {
   const { isOwner, isLoading: authLoading } = useAdminAuth();
@@ -21,6 +24,122 @@ export default function AdminManagement() {
   const [generatedPassword, setGeneratedPassword] = useState<{ email: string; password: string } | null>(null);
   const [resetResult, setResetResult] = useState<{ id: number; password: string } | null>(null);
   const [copied, setCopied] = useState(false);
+
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [suspendTarget, setSuspendTarget] = useState<string | null>(null);
+  const [suspendReason, setSuspendReason] = useState("");
+  const [banTarget, setBanTarget] = useState<string | null>(null);
+  const [banReason, setBanReason] = useState("");
+  const [appealId, setAppealId] = useState<number | null>(null);
+  const [appealNote, setAppealNote] = useState("");
+
+  const { data: usersList, isLoading: usersLoading } = useQuery<any[]>({
+    queryKey: ['/api/admin/users'],
+    queryFn: async () => {
+      const res = await fetch("/api/admin/users", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch users");
+      return res.json();
+    },
+  });
+
+  const { data: appeals, isLoading: appealsLoading } = useQuery<any[]>({
+    queryKey: ['/api/admin/appeals'],
+    queryFn: async () => {
+      const res = await fetch("/api/admin/appeals", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch appeals");
+      return res.json();
+    },
+  });
+
+  const refreshUsers = () => queryClient.invalidateQueries({ queryKey: ['/api/admin/users'] });
+
+  const suspendMutation = useMutation({
+    mutationFn: async ({ userId, reason }: { userId: string; reason: string }) => {
+      const res = await fetch(`/api/admin/users/${userId}/suspend`, {
+        method: 'POST',
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
+        credentials: "include",
+      });
+      if (!res.ok) { const err = await res.json(); throw new Error(err.message || "Failed to suspend user"); }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "User Suspended", description: "The user has been suspended and their active jobs cancelled." });
+      refreshUsers();
+      setSuspendTarget(null);
+      setSuspendReason("");
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const unsuspendMutation = useMutation({
+    mutationFn: async (userId: string) => {
+      const res = await fetch(`/api/admin/users/${userId}/unsuspend`, { method: 'POST', credentials: "include" });
+      if (!res.ok) { const err = await res.json(); throw new Error(err.message || "Failed to unsuspend user"); }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "User Unsuspended" });
+      refreshUsers();
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const banMutation = useMutation({
+    mutationFn: async ({ userId, reason }: { userId: string; reason: string }) => {
+      const res = await fetch(`/api/admin/users/${userId}/ban`, {
+        method: 'POST',
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
+        credentials: "include",
+      });
+      if (!res.ok) { const err = await res.json(); throw new Error(err.message || "Failed to ban user"); }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "User Banned", description: "The user has been banned and their active jobs cancelled." });
+      refreshUsers();
+      setBanTarget(null);
+      setBanReason("");
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const unbanMutation = useMutation({
+    mutationFn: async (userId: string) => {
+      const res = await fetch(`/api/admin/users/${userId}/unban`, { method: 'POST', credentials: "include" });
+      if (!res.ok) { const err = await res.json(); throw new Error(err.message || "Failed to unban user"); }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "User Unbanned" });
+      refreshUsers();
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const reviewAppealMutation = useMutation({
+    mutationFn: async ({ appealId: id, decision, note }: { appealId: number; decision: string; note?: string }) => {
+      const res = await fetch(`/api/admin/appeals/${id}/review`, {
+        method: 'POST',
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decision, note }),
+        credentials: "include",
+      });
+      if (!res.ok) { const err = await res.json(); throw new Error(err.message || "Failed to review appeal"); }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/admin/appeals'] });
+      refreshUsers();
+      setAppealId(null);
+      setAppealNote("");
+      toast({ title: "Appeal Reviewed" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
 
   const today = new Date().toISOString().split('T')[0];
   const [selectedDate, setSelectedDate] = useState(today);
@@ -168,7 +287,7 @@ export default function AdminManagement() {
                       )}
                     </div>
 
-                    {resetResult?.id === admin.id && (
+                    {resetResult?.id === admin.id && resetResult && (
                       <div className="w-full p-3 bg-primary/5 border border-primary/20 rounded-lg">
                         <div className="flex items-center gap-2">
                           <p className="text-sm text-muted-foreground">New password: <span className="font-mono text-foreground">{resetResult.password}</span></p>
@@ -209,6 +328,181 @@ export default function AdminManagement() {
                       >
                         <Trash2 className="w-4 h-4 text-destructive" />
                       </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-2xl mb-6">
+          <CardContent className="p-6">
+            <h2 className="text-lg font-semibold mb-4 text-foreground flex items-center gap-2">
+              <Scale className="w-5 h-5" />
+              Suspension / Ban Appeals
+            </h2>
+            {appealsLoading ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="w-6 h-6 animate-spin text-primary" />
+              </div>
+            ) : !appeals || appeals.length === 0 ? (
+              <p className="text-center text-muted-foreground py-8">No appeals to review.</p>
+            ) : (
+              <div className="space-y-3">
+                {appeals.map((appeal: any) => (
+                  <div key={appeal.id} className="p-4 rounded-xl bg-muted/30" data-testid={`card-appeal-${appeal.id}`}>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="font-medium text-foreground">{appeal.userName || "User"}</p>
+                        <p className="text-xs text-muted-foreground truncate">{appeal.userEmail}</p>
+                      </div>
+                      <Badge variant={appeal.status === 'approved' ? "default" : appeal.status === 'denied' ? "secondary" : "outline"}>
+                        {appeal.status}
+                      </Badge>
+                    </div>
+                    <p className="text-sm text-muted-foreground mt-2 whitespace-pre-line">{appeal.reason}</p>
+                    {appeal.status === 'pending' && (
+                      <div className="mt-3 space-y-2">
+                        {appealId === appeal.id ? (
+                          <>
+                            <Textarea
+                              placeholder="Optional note to the user..."
+                              value={appealNote}
+                              onChange={(e) => setAppealNote(e.target.value)}
+                              className="resize-none"
+                              rows={2}
+                              data-testid={`input-appeal-note-${appeal.id}`}
+                            />
+                            <div className="flex gap-2">
+                              <Button
+                                size="sm"
+                                className="bg-green-600 hover:bg-green-700 text-white"
+                                disabled={reviewAppealMutation.isPending}
+                                onClick={() => reviewAppealMutation.mutate({ appealId: appeal.id, decision: 'approved', note: appealNote || undefined })}
+                                data-testid={`button-approve-appeal-${appeal.id}`}
+                              >
+                                <CheckCircle2 className="w-4 h-4 mr-1" /> Approve
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                disabled={reviewAppealMutation.isPending}
+                                onClick={() => reviewAppealMutation.mutate({ appealId: appeal.id, decision: 'denied', note: appealNote || undefined })}
+                                data-testid={`button-deny-appeal-${appeal.id}`}
+                              >
+                                <XCircle className="w-4 h-4 mr-1" /> Deny
+                              </Button>
+                              <Button size="sm" variant="outline" onClick={() => { setAppealId(null); setAppealNote(""); }}>
+                                Cancel
+                              </Button>
+                            </div>
+                          </>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => { setAppealId(appeal.id); setAppealNote(""); }}
+                            data-testid={`button-review-appeal-${appeal.id}`}
+                          >
+                            Review Appeal
+                          </Button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-2xl mb-6">
+          <CardContent className="p-6">
+            <h2 className="text-lg font-semibold mb-4 text-foreground flex items-center gap-2">
+              <ShieldOff className="w-5 h-5" />
+              Users
+            </h2>
+            {usersLoading ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="w-6 h-6 animate-spin text-primary" />
+              </div>
+            ) : !usersList || usersList.length === 0 ? (
+              <p className="text-center text-muted-foreground py-8">No users yet.</p>
+            ) : (
+              <div className="space-y-3">
+                {usersList.map((u: any) => (
+                  <div key={u.userId} className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-xl bg-muted/30" data-testid={`card-user-${u.userId}`}>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-medium text-foreground">{u.userName || "User"}</p>
+                        {u.isBanned && <Badge variant="destructive">Banned</Badge>}
+                        {u.isSuspended && !u.isBanned && <Badge variant="secondary">Suspended</Badge>}
+                        {u.verificationStatus === 'approved' ? (
+                          <Badge variant="outline" className="text-green-600 border-green-200 bg-green-50"><UserCheck className="w-3 h-3 mr-1" />Verified</Badge>
+                        ) : (
+                          <Badge variant="outline">{u.verificationStatus || "unverified"}</Badge>
+                        )}
+                      </div>
+                      <p className="text-sm text-muted-foreground truncate">{u.userEmail}</p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1">
+                      {u.isBanned ? (
+                        <Button size="sm" variant="outline" onClick={() => unbanMutation.mutate(u.userId)} disabled={unbanMutation.isPending} data-testid={`button-unban-${u.userId}`}>
+                          <UserCheck className="w-4 h-4 mr-1" /> Unban
+                        </Button>
+                      ) : (
+                        <>
+                          {u.isSuspended && (
+                            <Button size="sm" variant="outline" onClick={() => unsuspendMutation.mutate(u.userId)} disabled={unsuspendMutation.isPending} data-testid={`button-unsuspend-${u.userId}`}>
+                              <ShieldOff className="w-4 h-4 mr-1" /> Unsuspend
+                            </Button>
+                          )}
+                          {!u.isSuspended && (suspendTarget === u.userId ? (
+                            <div className="flex items-center gap-1">
+                              <Input
+                                placeholder="Reason (required)"
+                                value={suspendReason}
+                                onChange={(e) => setSuspendReason(e.target.value)}
+                                className="w-40 h-9 text-sm"
+                                data-testid={`input-suspend-${u.userId}`}
+                              />
+                              <Button size="sm" onClick={() => suspendReason.trim() && suspendMutation.mutate({ userId: u.userId, reason: suspendReason.trim() })} disabled={suspendMutation.isPending || !suspendReason.trim()}>
+                                Confirm
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => { setSuspendTarget(null); setSuspendReason(""); }}>
+                                Cancel
+                              </Button>
+                            </div>
+                          ) : (
+                            <Button size="sm" variant="outline" onClick={() => { setSuspendTarget(u.userId); setSuspendReason(""); }} data-testid={`button-suspend-${u.userId}`}>
+                              <Shield className="w-4 h-4 mr-1" /> Suspend
+                            </Button>
+                          ))}
+                          {banTarget === u.userId ? (
+                            <div className="flex items-center gap-1">
+                              <Input
+                                placeholder="Reason (required)"
+                                value={banReason}
+                                onChange={(e) => setBanReason(e.target.value)}
+                                className="w-40 h-9 text-sm"
+                                data-testid={`input-ban-${u.userId}`}
+                              />
+                              <Button size="sm" variant="destructive" onClick={() => banReason.trim() && banMutation.mutate({ userId: u.userId, reason: banReason.trim() })} disabled={banMutation.isPending || !banReason.trim()}>
+                                Confirm
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => { setBanTarget(null); setBanReason(""); }}>
+                                Cancel
+                              </Button>
+                            </div>
+                          ) : (
+                            <Button size="sm" variant="destructive" onClick={() => { setBanTarget(u.userId); setBanReason(""); }} data-testid={`button-ban-${u.userId}`}>
+                              <Ban className="w-4 h-4 mr-1" /> Ban
+                            </Button>
+                          )}
+                        </>
+                      )}
                     </div>
                   </div>
                 ))}

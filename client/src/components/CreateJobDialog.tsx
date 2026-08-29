@@ -112,7 +112,7 @@ export function CreateJobDialog() {
   const watchedPrice = form.watch("price");
   const watchedPriceType = form.watch("priceType");
 
-  const totalEscrow = watchedPrice && watchedWorkersNeeded > 1 && watchedPriceType === "per_person"
+  const totalPrice = watchedPrice && watchedWorkersNeeded > 1 && watchedPriceType === "per_person"
     ? watchedPrice * watchedWorkersNeeded
     : watchedPrice || 0;
 
@@ -198,7 +198,7 @@ export function CreateJobDialog() {
       ...(jobLat !== null && jobLng !== null ? { latitude: String(jobLat), longitude: String(jobLng) } : {}),
       ...(uploadedImages.length > 0 ? { images: uploadedImages.map(img => img.objectPath) } : {}),
     } as unknown as CreateJobInput, {
-      onSuccess: () => {
+      onSuccess: (res: any) => {
         setOpen(false);
         form.reset();
         setJobLat(null);
@@ -206,6 +206,11 @@ export function CreateJobDialog() {
         setLocationStatus("idle");
         uploadedImages.forEach(img => URL.revokeObjectURL(img.previewUrl));
         setUploadedImages([]);
+        if (res?.authorizationUrl) {
+          window.open(res.authorizationUrl, '_self');
+        } else if (res?.reference) {
+          window.location.href = `/payment/callback?reference=${encodeURIComponent(res.reference)}`;
+        }
       },
     });
   };
@@ -222,7 +227,7 @@ export function CreateJobDialog() {
         <DialogHeader className="shrink-0">
           <DialogTitle className="text-2xl font-bold font-display text-primary">Post a New Job</DialogTitle>
           <DialogDescription>
-            Describe what needs to be done. Payment is held in escrow once a worker accepts.
+            Describe what needs to be done. A small posting fee is charged when you publish, and you pay the worker directly once the job is done.
           </DialogDescription>
         </DialogHeader>
 
@@ -331,7 +336,7 @@ export function CreateJobDialog() {
                       Each worker earns: <span className="font-semibold text-foreground">{"\u20A6"}{Number(watchedPrice).toLocaleString()}</span>
                     </p>
                     <p className="text-muted-foreground">
-                      Total held on acceptance: <span className="font-semibold text-foreground">{"\u20A6"}{totalEscrow.toLocaleString()}</span> ({watchedWorkersNeeded} workers)
+                      Total price: <span className="font-semibold text-foreground">{"\u20A6"}{totalPrice.toLocaleString()}</span> ({watchedWorkersNeeded} workers)
                     </p>
                   </>
                 ) : (
@@ -540,7 +545,7 @@ export function CreateJobDialog() {
               disabled={isPending || uploadingCount > 0}
             >
               {isPending ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : null}
-              {isPending ? "Creating Job..." : "Post Job & Hold Funds"}
+              {isPending ? "Creating Job..." : "Post Job & Pay Fee"}
             </Button>
           </form>
         </Form>

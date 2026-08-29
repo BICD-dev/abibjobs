@@ -14,7 +14,6 @@ import Home from "@/pages/Home";
 import AuthPage from "@/pages/AuthPage";
 import Jobs from "@/pages/Jobs";
 import JobDetails from "@/pages/JobDetails";
-import Wallet from "@/pages/Wallet";
 import Profile from "@/pages/Profile";
 import VerifyPage from "@/pages/VerifyPage";
 import AdminEarnings from "@/pages/AdminEarnings";
@@ -34,9 +33,11 @@ import Notifications from "@/pages/Notifications";
 import MyJobs from "@/pages/MyJobs";
 import NotFound from "@/pages/not-found";
 import ResetPassword from "@/pages/ResetPassword";
+import PaymentCallback from "./pages/PaymentCallback";
+import TransactionHistory from "./pages/TransactionHistory";
+import AppealSuspension from "./pages/AppealSuspension";
 import { SupportChat } from "@/components/SupportChat";
 import { CallProvider } from "@/components/CallProvider";
-import PaymentVerify from "./pages/PaymentVerify";
 
 // Redirects OIDC (non-manual) new users to /verify once per browser session.
 // Manual-signup users are already redirected inline on the AuthPage.
@@ -114,11 +115,14 @@ function Router() {
       <Route path="/my-jobs">
         {() => <ProtectedRoute component={MyJobs} />}
       </Route>
-      <Route path="/wallet">
-        {() => <ProtectedRoute component={Wallet} />}
+      <Route path="/transactions">
+        {() => <ProtectedRoute component={TransactionHistory} />}
       </Route>
-      <Route path="/payment/verify">
-        {() => <ProtectedRoute component={PaymentVerify} />}
+      <Route path="/payment/callback">
+        {() => <ProtectedRoute component={PaymentCallback} />}
+      </Route>
+      <Route path="/appeals">
+        {() => <ProtectedRoute component={AppealSuspension} />}
       </Route>
       <Route path="/profile">
         {() => <ProtectedRoute component={Profile} />}

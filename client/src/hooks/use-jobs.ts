@@ -97,11 +97,10 @@ export function useCreateJob() {
       queryClient.invalidateQueries({ queryKey: [api.jobs.list.path] });
       queryClient.invalidateQueries({ queryKey: [api.jobs.myJobs.path] });
       queryClient.invalidateQueries({ queryKey: [api.jobs.history.path] });
-      queryClient.invalidateQueries({ queryKey: [api.wallet.get.path] });
-      queryClient.invalidateQueries({ queryKey: [api.wallet.heldJobs.path] });
+      queryClient.invalidateQueries({ queryKey: [api.transactions.history.path] });
       toast({
-        title: "Success",
-        description: "Job posted! The cost is now held in escrow from your wallet.",
+        title: "Job Posted",
+        description: "Pay the posting fee to activate your job.",
         variant: "default",
       });
     },
@@ -174,15 +173,13 @@ export function useCompleteJob() {
     onSuccess: (_, id) => {
       queryClient.invalidateQueries({ queryKey: [api.jobs.list.path] });
       queryClient.invalidateQueries({ queryKey: [api.jobs.get.path, id] });
-      queryClient.invalidateQueries({ queryKey: [api.wallet.get.path] });
-      queryClient.invalidateQueries({ queryKey: [api.wallet.heldJobs.path] });
       queryClient.invalidateQueries({ queryKey: [api.jobs.myJobs.path] });
       queryClient.invalidateQueries({ queryKey: [api.jobs.history.path] });
       queryClient.invalidateQueries({ queryKey: [api.notifications.list.path] });
       queryClient.invalidateQueries({ queryKey: [api.notifications.unreadCount.path] });
       toast({
         title: "Job Completed",
-        description: "Funds have been released to the worker(s).",
+        description: "Pay the worker(s) directly for the completed work.",
       });
     },
     onError: (error: Error) => {
@@ -285,15 +282,13 @@ export function useCancelJob() {
     onSuccess: (_, id) => {
       queryClient.invalidateQueries({ queryKey: [api.jobs.list.path] });
       queryClient.invalidateQueries({ queryKey: [api.jobs.get.path, id] });
-      queryClient.invalidateQueries({ queryKey: [api.wallet.get.path] });
-      queryClient.invalidateQueries({ queryKey: [api.wallet.heldJobs.path] });
       queryClient.invalidateQueries({ queryKey: [api.jobs.myJobs.path] });
       queryClient.invalidateQueries({ queryKey: [api.jobs.history.path] });
       queryClient.invalidateQueries({ queryKey: [api.notifications.list.path] });
       queryClient.invalidateQueries({ queryKey: [api.notifications.unreadCount.path] });
       toast({
         title: "Job Cancelled",
-        description: "Your escrow funds have been refunded to your wallet.",
+        description: "The posting fee is non-refundable.",
       });
     },
     onError: (error: Error) => {
@@ -329,15 +324,13 @@ export function useReportNoShow() {
     onSuccess: (data, { id }) => {
       queryClient.invalidateQueries({ queryKey: [api.jobs.list.path] });
       queryClient.invalidateQueries({ queryKey: [api.jobs.get.path, id] });
-      queryClient.invalidateQueries({ queryKey: [api.wallet.get.path] });
-      queryClient.invalidateQueries({ queryKey: [api.wallet.heldJobs.path] });
       queryClient.invalidateQueries({ queryKey: [api.jobs.myJobs.path] });
       queryClient.invalidateQueries({ queryKey: [api.jobs.history.path] });
       toast({
         title: "No-Show Reported",
-        description: data.reposted 
-          ? "The job has been reposted for new workers. Escrow refunded."
-          : "The job has been removed and your escrow has been refunded.",
+        description: data.reposted
+          ? "The job has been reposted for new workers."
+          : "The job has been removed.",
       });
     },
     onError: (error: Error) => {

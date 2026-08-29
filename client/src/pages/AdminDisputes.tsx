@@ -32,9 +32,7 @@ export default function AdminDisputes() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  const [resolveAction, setResolveAction] = useState<'refund_poster' | 'release_worker' | 'custom'>('release_worker');
-  const [customWorkerAmount, setCustomWorkerAmount] = useState("");
-  const [customPosterRefund, setCustomPosterRefund] = useState("");
+  const [resolveAction, setResolveAction] = useState<'poster_favored' | 'worker_favored' | 'mutual_agreement'>('worker_favored');
   const [resolveNote, setResolveNote] = useState("");
 
   useEffect(() => {
@@ -124,41 +122,17 @@ export default function AdminDisputes() {
   };
 
   const handleResolve = (dispute: DisputeWithDetails) => {
-    const jobPrice = Number(dispute.job?.price || 0);
-    const originalPrice = dispute.job?.priceType === 'per_person' ? jobPrice * (dispute.job?.workersNeeded || 1) : jobPrice;
-
-    if (resolveAction === 'custom') {
-      const wa = parseFloat(customWorkerAmount) || 0;
-      const pr = parseFloat(customPosterRefund) || 0;
-      if (wa + pr > originalPrice) return;
-      resolveDispute({
-        disputeId: dispute.id,
-        action: 'custom',
-        workerAmount: wa,
-        posterRefund: pr,
-        message: resolveNote || undefined,
-      }, {
-        onSuccess: () => {
-          setCustomWorkerAmount("");
-          setCustomPosterRefund("");
-          setResolveNote("");
-          refetchSelected();
-          refetch();
-        }
-      });
-    } else {
-      resolveDispute({
-        disputeId: dispute.id,
-        action: resolveAction,
-        message: resolveNote || undefined,
-      }, {
-        onSuccess: () => {
-          setResolveNote("");
-          refetchSelected();
-          refetch();
-        }
-      });
-    }
+    resolveDispute({
+      disputeId: dispute.id,
+      resolution: resolveAction,
+      note: resolveNote || undefined,
+    }, {
+      onSuccess: () => {
+        setResolveNote("");
+        refetchSelected();
+        refetch();
+      }
+    });
   };
 
   const escalatedCount = disputes.filter(d => d.status === 'escalated').length;
@@ -239,7 +213,7 @@ export default function AdminDisputes() {
                     </Badge>
                   </div>
                   <p className="text-sm text-muted-foreground">
-                    Dispute #{dispute.id} &middot; Escrowed: {"\u20A6"}{originalPrice.toLocaleString()}
+                    Dispute #{dispute.id} &middot; Job price: {"\u20A6"}{originalPrice.toLocaleString()}
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
                     {dispute.createdAt ? format(new Date(dispute.createdAt), "PPP 'at' p") : ""}
@@ -415,146 +389,64 @@ export default function AdminDisputes() {
                   Resolve Dispute
                 </h3>
                 <p className="text-sm text-muted-foreground mb-5">
-                  Escrowed amount: <span className="font-bold text-foreground">{"\u20A6"}{originalPrice.toLocaleString()}</span>. Choose how to distribute the funds.
+                  No funds are held by the platform. Record which party the dispute favors and add an optional note. Both parties must arrange direct payment between themselves.
                 </p>
 
                 <div className="space-y-3 mb-5">
                   <button
-                    onClick={() => setResolveAction('refund_poster')}
+                    onClick={() => setResolveAction('poster_favored')}
                     className={`w-full text-left p-4 rounded-xl border transition-all ${
-                      resolveAction === 'refund_poster'
+                      resolveAction === 'poster_favored'
                         ? 'border-primary bg-primary/5 ring-1 ring-primary/20'
                         : 'border-border hover-elevate'
                     }`}
-                    data-testid="button-action-refund"
+                    data-testid="button-action-poster-favored"
                   >
                     <div className="flex items-center gap-3">
-                      <Undo2 className={`w-5 h-5 ${resolveAction === 'refund_poster' ? 'text-primary' : 'text-muted-foreground'}`} />
+                      <User className={`w-5 h-5 ${resolveAction === 'poster_favored' ? 'text-primary' : 'text-muted-foreground'}`} />
                       <div>
-                        <p className="font-medium text-foreground">Full Refund to Poster</p>
-                        <p className="text-xs text-muted-foreground">Return all {"\u20A6"}{originalPrice.toLocaleString()} to the job poster. Worker gets nothing.</p>
+                        <p className="font-medium text-foreground">In Favor of the Poster</p>
+                        <p className="text-xs text-muted-foreground">The job poster was not satisfied with the work or service provided.</p>
                       </div>
                     </div>
                   </button>
 
                   <button
-                    onClick={() => setResolveAction('release_worker')}
+                    onClick={() => setResolveAction('worker_favored')}
                     className={`w-full text-left p-4 rounded-xl border transition-all ${
-                      resolveAction === 'release_worker'
+                      resolveAction === 'worker_favored'
                         ? 'border-primary bg-primary/5 ring-1 ring-primary/20'
                         : 'border-border hover-elevate'
                     }`}
-                    data-testid="button-action-release"
+                    data-testid="button-action-worker-favored"
                   >
                     <div className="flex items-center gap-3">
-                      <ArrowRight className={`w-5 h-5 ${resolveAction === 'release_worker' ? 'text-primary' : 'text-muted-foreground'}`} />
+                      <ArrowRight className={`w-5 h-5 ${resolveAction === 'worker_favored' ? 'text-primary' : 'text-muted-foreground'}`} />
                       <div>
-                        <p className="font-medium text-foreground">Release to Worker</p>
-                        <p className="text-xs text-muted-foreground">
-                          Pay worker {"\u20A6"}{(originalPrice * 0.78).toLocaleString()} (after 22% platform fee of {"\u20A6"}{(originalPrice * 0.22).toLocaleString()}).
-                        </p>
+                        <p className="font-medium text-foreground">In Favor of the Worker</p>
+                        <p className="text-xs text-muted-foreground">The worker fulfilled their obligations and deserves to be paid.</p>
                       </div>
                     </div>
                   </button>
 
                   <button
-                    onClick={() => setResolveAction('custom')}
+                    onClick={() => setResolveAction('mutual_agreement')}
                     className={`w-full text-left p-4 rounded-xl border transition-all ${
-                      resolveAction === 'custom'
+                      resolveAction === 'mutual_agreement'
                         ? 'border-primary bg-primary/5 ring-1 ring-primary/20'
                         : 'border-border hover-elevate'
                     }`}
-                    data-testid="button-action-custom"
+                    data-testid="button-action-mutual-agreement"
                   >
                     <div className="flex items-center gap-3">
-                      <Sliders className={`w-5 h-5 ${resolveAction === 'custom' ? 'text-primary' : 'text-muted-foreground'}`} />
+                      <Scale className={`w-5 h-5 ${resolveAction === 'mutual_agreement' ? 'text-primary' : 'text-muted-foreground'}`} />
                       <div>
-                        <p className="font-medium text-foreground">Custom Split</p>
-                        <p className="text-xs text-muted-foreground">Set exact amounts for the worker and poster. Remainder goes to platform.</p>
+                        <p className="font-medium text-foreground">Mutual Agreement</p>
+                        <p className="text-xs text-muted-foreground">Both parties reached a settlement between themselves.</p>
                       </div>
                     </div>
                   </button>
                 </div>
-
-                {resolveAction === 'custom' && (
-                  <div className="space-y-3 mb-5 p-4 rounded-xl bg-muted/30 border border-border">
-                    <div>
-                      <label className="text-sm font-medium mb-1 block text-foreground">Amount to Worker ({"\u20A6"})</label>
-                      <Input
-                        type="number"
-                        placeholder="0"
-                        value={customWorkerAmount}
-                        onChange={(e) => setCustomWorkerAmount(e.target.value)}
-                        min={0}
-                        max={originalPrice}
-                        data-testid="input-worker-amount"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium mb-1 block text-foreground">Refund to Poster ({"\u20A6"})</label>
-                      <Input
-                        type="number"
-                        placeholder="0"
-                        value={customPosterRefund}
-                        onChange={(e) => setCustomPosterRefund(e.target.value)}
-                        min={0}
-                        max={originalPrice}
-                        data-testid="input-poster-refund"
-                      />
-                    </div>
-                    {(customWorkerAmount || customPosterRefund) && (
-                      <div className="bg-background p-3 rounded-lg text-sm space-y-1 border border-border">
-                        <div className="flex justify-between gap-2">
-                          <span className="text-muted-foreground">Worker Payout</span>
-                          <span className="font-medium text-green-600 dark:text-green-400">{"\u20A6"}{(parseFloat(customWorkerAmount) || 0).toLocaleString()}</span>
-                        </div>
-                        <div className="flex justify-between gap-2">
-                          <span className="text-muted-foreground">Poster Refund</span>
-                          <span className="font-medium text-blue-600 dark:text-blue-400">{"\u20A6"}{(parseFloat(customPosterRefund) || 0).toLocaleString()}</span>
-                        </div>
-                        <div className="flex justify-between gap-2 border-t border-border pt-1">
-                          <span className="text-muted-foreground">Platform Keeps</span>
-                          <span className="font-medium text-foreground">
-                            {"\u20A6"}{Math.max(0, originalPrice - (parseFloat(customWorkerAmount) || 0) - (parseFloat(customPosterRefund) || 0)).toLocaleString()}
-                          </span>
-                        </div>
-                        {(parseFloat(customWorkerAmount) || 0) + (parseFloat(customPosterRefund) || 0) > originalPrice && (
-                          <p className="text-xs text-red-500 font-medium mt-1">Total exceeds escrowed amount!</p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {resolveAction === 'release_worker' && (
-                  <div className="mb-5 p-4 rounded-xl bg-muted/30 border border-border">
-                    <div className="text-sm space-y-1">
-                      <div className="flex justify-between gap-2">
-                        <span className="text-muted-foreground">Worker Payout</span>
-                        <span className="font-medium text-green-600 dark:text-green-400">{"\u20A6"}{(originalPrice * 0.78).toLocaleString()}</span>
-                      </div>
-                      <div className="flex justify-between gap-2">
-                        <span className="text-muted-foreground">Platform Fee (22%)</span>
-                        <span className="font-medium text-foreground">{"\u20A6"}{(originalPrice * 0.22).toLocaleString()}</span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {resolveAction === 'refund_poster' && (
-                  <div className="mb-5 p-4 rounded-xl bg-muted/30 border border-border">
-                    <div className="text-sm space-y-1">
-                      <div className="flex justify-between gap-2">
-                        <span className="text-muted-foreground">Full Refund to Poster</span>
-                        <span className="font-medium text-blue-600 dark:text-blue-400">{"\u20A6"}{originalPrice.toLocaleString()}</span>
-                      </div>
-                      <div className="flex justify-between gap-2">
-                        <span className="text-muted-foreground">Worker Payout</span>
-                        <span className="font-medium text-muted-foreground">{"\u20A6"}0</span>
-                      </div>
-                    </div>
-                  </div>
-                )}
 
                 <div className="mb-4">
                   <label className="text-sm font-medium mb-1 block text-foreground">Resolution Note (optional)</label>
@@ -571,19 +463,17 @@ export default function AdminDisputes() {
                 <Button
                   className="w-full"
                   onClick={() => handleResolve(dispute)}
-                  disabled={isResolving || (resolveAction === 'custom' && (parseFloat(customWorkerAmount) || 0) + (parseFloat(customPosterRefund) || 0) > originalPrice)}
+                  disabled={isResolving}
                   data-testid="button-resolve"
                 >
                   {isResolving ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : <Gavel className="mr-2 h-4 w-4" />}
-                  {resolveAction === 'refund_poster' ? 'Refund Poster' :
-                   resolveAction === 'release_worker' ? 'Release to Worker' :
-                   'Apply Custom Split'}
+                  Resolve Dispute
                 </Button>
               </CardContent>
             </Card>
           )}
 
-          {dispute.status === 'resolved' && dispute.resolvedAmount && (
+          {dispute.status === 'resolved' && (
             <Card className="rounded-2xl border-green-200 dark:border-green-900">
               <CardContent className="p-6">
                 <div className="flex items-start gap-3">
@@ -591,11 +481,15 @@ export default function AdminDisputes() {
                   <div>
                     <p className="font-bold text-green-800 dark:text-green-200 text-lg">Dispute Resolved</p>
                     <p className="text-sm text-green-700 dark:text-green-300 mt-1">
-                      Resolved by: {dispute.resolvedBy === 'admin' ? 'Admin decision' : 'Mutual agreement'}
+                      {dispute.resolution === 'poster_favored' ? 'Resolved in favor of the poster.'
+                        : dispute.resolution === 'worker_favored' ? 'Resolved in favor of the worker.'
+                        : 'Resolved by mutual agreement.'}
                     </p>
-                    <p className="text-sm text-green-700 dark:text-green-300">
-                      Resolved amount: {"\u20A6"}{Number(dispute.resolvedAmount).toLocaleString()}
-                    </p>
+                    {dispute.resolvedNote && (
+                      <p className="text-sm text-green-700 dark:text-green-300 mt-1">
+                        {dispute.resolvedNote}
+                      </p>
+                    )}
                     {dispute.updatedAt && (
                       <p className="text-xs text-green-600 dark:text-green-400 mt-1">
                         {format(new Date(dispute.updatedAt), "PPP 'at' p")}

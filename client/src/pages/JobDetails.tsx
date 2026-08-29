@@ -4,7 +4,7 @@ import WorkerLocationTracker from "@/components/WorkerLocationTracker";
 import { useRoute, useLocation } from "wouter";
 import { useJob, useAcceptJob, useCompleteJob, useCancelJob, useUpdateJobProgress, useConfirmArrival, useReportNoShow } from "@/hooks/use-jobs";
 import { useOffers, useCreateOffer, useAcceptOffer, useDeclineOffer, useCounterOffer } from "@/hooks/use-offers";
-import { useDisputeByJob, useCreateDispute, useDisputeMessage, useAcceptProposal, useConfirmDisputePayment, useEscalateDispute, useUploadDisputeImage } from "@/hooks/use-disputes";
+import { useDisputeByJob, useCreateDispute, useDisputeMessage, useAcceptProposal, useEscalateDispute, useUploadDisputeImage } from "@/hooks/use-disputes";
 import { useAuth } from "@/hooks/use-auth";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Navbar } from "@/components/Navbar";
@@ -16,7 +16,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card } from "@/components/ui/card";
 import {
   Loader2, MapPin, Calendar, ArrowLeft, CheckCircle, Shield, Users, XCircle,
-  MessageSquare, ArrowUpDown, Send, Check, X, AlertTriangle, Wallet,
+  MessageSquare, ArrowUpDown, Send, Check, X, AlertTriangle,
   Flag, Scale, ArrowUpCircle, Image as ImageIcon, Navigation, Clock, MapPinCheck, UserX, Lock,
   RefreshCw, Trash2, CalendarPlus, LocateFixed, Radio, Camera, ChevronLeft, ChevronRight, Phone
 } from "lucide-react";
@@ -30,7 +30,8 @@ import { useCall } from "@/components/CallProvider";
 import { format } from "date-fns";
 import type { OfferWithSender, DisputeMessageWithSender } from "@shared/schema";
 
-function generateIcsFile(job: { title: string; description: string; location: string; scheduledDate: string | Date }) {
+function generateIcsFile(job: { title: string; description: string; location: string; scheduledDate: string | Date | null }) {
+  if (!job.scheduledDate) return;
   const start = new Date(job.scheduledDate);
   const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
   const pad = (n: number) => n.toString().padStart(2, '0');
@@ -107,7 +108,6 @@ export default function JobDetails() {
   const { mutate: sendDisputeMessage, isPending: isSendingMessage } = useDisputeMessage();
   const { mutateAsync: uploadDisputeImage, isPending: isUploadingImage } = useUploadDisputeImage();
   const { mutate: acceptProposal, isPending: isAcceptingProposal } = useAcceptProposal();
-  const { mutate: confirmDisputePayment, isPending: isConfirmingPayment } = useConfirmDisputePayment();
   const { mutate: escalateDispute, isPending: isEscalating } = useEscalateDispute();
 
   const [offerAmount, setOfferAmount] = useState("");
@@ -116,8 +116,7 @@ export default function JobDetails() {
   const [counterAmount, setCounterAmount] = useState("");
   const [counterMessage, setCounterMessage] = useState("");
   const [counteringOfferId, setCounteringOfferId] = useState<number | null>(null);
-  const [showInsufficientFunds, setShowInsufficientFunds] = useState(false);
-  const [shortfallAmount, setShortfallAmount] = useState(0);
+  const [pendingAcceptFee, setPendingAcceptFee] = useState<{ authorizationUrl: string; additionalFee: number } | null>(null);
   const [confirmingNoShow, setConfirmingNoShow] = useState(false);
   const [noShowStep, setNoShowStep] = useState<'confirm' | 'choose'>('confirm');
   const [showPenaltyConfirm, setShowPenaltyConfirm] = useState(false);
@@ -169,6 +168,7 @@ export default function JobDetails() {
 
   const dispute = disputeData;
   const isDisputeParticipant = dispute && user && (dispute.posterId === user.id || dispute.workerId === user.id);
+  const pendingProposal = [...(dispute?.messages || [])].reverse().find((m) => m.type === 'proposal');
 
   const handleCreateOffer = () => {
     const amount = parseFloat(offerAmount);
@@ -189,9 +189,8 @@ export default function JobDetails() {
   const handleAcceptOffer = (offerId: number) => {
     acceptOffer({ offerId, jobId: job.id }, {
       onSuccess: (data: any) => {
-        if (data.insufficientFunds) {
-          setShowInsufficientFunds(true);
-          setShortfallAmount(data.shortfall);
+        if (data.requiresPayment && data.authorizationUrl) {
+          setPendingAcceptFee({ authorizationUrl: data.authorizationUrl, additionalFee: Number(data.additionalFee || 0) });
         }
       }
     });
@@ -363,7 +362,7 @@ export default function JobDetails() {
                 </p>
               )}
               <div className="mt-3 flex items-center justify-center gap-1.5 text-xs text-primary/80 font-medium">
-                <Shield className="w-3.5 h-3.5" /> Escrow Secured
+                <Shield className="w-3.5 h-3.5" /> Direct Payment
               </div>
               {job.workersNeeded > 1 && (
                 <div className="mt-3 flex items-center justify-center gap-1.5 text-xs text-muted-foreground font-medium" data-testid="text-workers-info">
@@ -512,12 +511,12 @@ export default function JobDetails() {
                 ) : isCancelled ? (
                   <div className="flex items-center text-red-600 bg-red-50 dark:bg-red-950/30 p-4 rounded-xl border border-red-100 dark:border-red-900">
                     <XCircle className="w-5 h-5 mr-2" />
-                    This job has been cancelled. Funds were refunded.
+                    This job was cancelled. The posting fee is non-refundable.
                   </div>
                 ) : isDisputed ? (
                   <div className="flex items-center text-amber-600 bg-amber-50 dark:bg-amber-950/30 p-4 rounded-xl border border-amber-100 dark:border-amber-900">
                     <Flag className="w-5 h-5 mr-2 shrink-0" />
-                    <span>This job is under dispute. Funds remain in escrow until resolved.</span>
+                    <span>This job is under mediation. An admin is reviewing the concern raised.</span>
                   </div>
                 ) : (
                   <div className="space-y-4">
@@ -590,13 +589,13 @@ export default function JobDetails() {
                                 data-testid="button-complete-job"
                               >
                                 {isCompleting ? <Loader2 className="animate-spin mr-2" /> : <CheckCircle className="mr-2 h-5 w-5" />}
-                                Mark as Completed & Release Funds
+                                Mark as Completed
                               </Button>
                             )}
                             {job.workerMarkedComplete && !job.posterMarkedComplete && (
                               <div className="flex items-center text-amber-600 bg-amber-50 dark:bg-amber-950/30 p-3 rounded-xl border border-amber-100 dark:border-amber-900 text-sm" data-testid="text-worker-waiting-poster">
                                 <CheckCircle className="w-4 h-4 mr-2 shrink-0" />
-                                The worker has already confirmed — tap above to release their payment!
+                                The worker has already confirmed — tap above to confirm completion.
                               </div>
                             )}
                             {!job.workerMarkedComplete && !job.posterConfirmedArrival && !job.workerProgress && (
@@ -622,7 +621,7 @@ export default function JobDetails() {
                               ) : noShowStep === 'confirm' ? (
                                 <div className="p-4 bg-red-50 dark:bg-red-950/30 rounded-xl border border-red-200 dark:border-red-800 space-y-3" data-testid="section-confirm-no-show">
                                   <p className="text-sm font-medium text-red-700 dark:text-red-300">
-                                    Are you sure the worker didn't show up? This will refund your escrow and the worker will receive a warning.
+                                    Are you sure the worker didn't show up? The job will be removed or reposted and the worker will receive a warning.
                                   </p>
                                   <div className="flex gap-2">
                                     <Button
@@ -700,19 +699,14 @@ export default function JobDetails() {
 
                         {!job.workerMarkedComplete && (isOpen || isInProgress) && (() => {
                           const workerEnRoute = job.workerProgress === 'on_the_way' || job.workerProgress === 'at_location';
-                          const price = parseFloat(job.price);
-                          const escrowAmount = job.priceType === 'per_person' ? price * job.workersNeeded : price;
-                          const penalty = Math.round(escrowAmount * 0.1 * 100) / 100;
-                          const refundAmount = escrowAmount - penalty;
 
                           if (workerEnRoute && showPenaltyConfirm) {
                             return (
                               <div className="space-y-3 p-4 rounded-xl border border-destructive/30 bg-destructive/5" data-testid="section-penalty-confirm">
-                                <p className="text-sm font-medium text-destructive">Cancellation Penalty</p>
+                                <p className="text-sm font-medium text-destructive">Confirm Cancellation</p>
                                 <p className="text-sm text-muted-foreground">
-                                  The worker is already on the way. If you cancel now, 10% of the job price
-                                  (₦{penalty.toLocaleString()}) will be sent to the worker as compensation within 24 hours.
-                                  You will receive ₦{refundAmount.toLocaleString()} back immediately.
+                                  The worker is already on the way. This cancellation will be escalated for admin
+                                  review. The posting fee remains non-refundable.
                                 </p>
                                 <div className="flex gap-2">
                                   <Button
@@ -723,7 +717,7 @@ export default function JobDetails() {
                                     data-testid="button-confirm-penalty-cancel"
                                   >
                                     {isCancelling ? <Loader2 className="animate-spin mr-2" /> : <XCircle className="mr-2 h-4 w-4" />}
-                                    Yes, Cancel & Pay Penalty
+                                    Yes, Cancel Job
                                   </Button>
                                   <Button
                                     variant="outline"
@@ -747,7 +741,7 @@ export default function JobDetails() {
                               data-testid="button-cancel-job"
                             >
                               {isCancelling ? <Loader2 className="animate-spin mr-2" /> : <XCircle className="mr-2 h-4 w-4" />}
-                              {workerEnRoute ? "Cancel Job (10% Penalty)" : "Cancel Job & Get Refund"}
+                              {workerEnRoute ? "Cancel Job" : "Cancel Job"}
                             </Button>
                           );
                         })()}
@@ -1024,15 +1018,17 @@ export default function JobDetails() {
                     {getDisputeStatusBadge(dispute.status)}
                   </div>
 
-                  {dispute.status === 'resolved' && dispute.resolvedAmount && (
+                  {dispute.status === 'resolved' && (
                     <Card className="p-4 border-green-200 bg-green-50 dark:bg-green-950/30 dark:border-green-900">
                       <div className="flex items-start gap-3">
                         <CheckCircle className="w-5 h-5 text-green-600 mt-0.5 shrink-0" />
                         <div>
                           <p className="font-medium text-green-800 dark:text-green-200">Dispute Resolved</p>
                           <p className="text-sm text-green-700 dark:text-green-300">
-                            Final amount: {"\u20A6"}{Number(dispute.resolvedAmount).toLocaleString()}
-                            {dispute.resolvedBy === 'admin' ? ' (decided by admin)' : ' (agreed by both parties)'}
+                            {dispute.resolution === 'poster_favored' ? 'Resolved in favor of the job poster.'
+                              : dispute.resolution === 'worker_favored' ? 'Resolved in favor of the worker.'
+                              : 'Resolved by mutual agreement.'}
+                            {dispute.resolvedNote ? ` ${dispute.resolvedNote}` : ''} Arrange payment directly with the other party.
                           </p>
                         </div>
                       </div>
@@ -1086,68 +1082,23 @@ export default function JobDetails() {
 
                   {dispute.status !== 'resolved' && (
                     <div className="space-y-3">
-                      {/* ── AWAITING PAYMENT STATE ── */}
-                      {dispute.status === 'awaiting_payment' && dispute.proposedAmount && (
+                      {/* ── ACTIVE CHAT ── */}
+                      {dispute.status !== 'resolved' && (
                         <>
-                          {/* Worker view: waiting */}
-                          {dispute.workerId === user?.id && (
-                            <Card className="p-4 border-purple-200 bg-purple-50 dark:bg-purple-950/30 dark:border-purple-800">
-                              <div className="flex items-start gap-3">
-                                <Loader2 className="w-5 h-5 text-purple-600 mt-0.5 shrink-0 animate-spin" />
-                                <div>
-                                  <p className="font-medium text-purple-800 dark:text-purple-200">Agreement Reached!</p>
-                                  <p className="text-sm text-purple-700 dark:text-purple-300 mt-1">
-                                    You accepted {"\u20A6"}{Number(dispute.proposedAmount).toLocaleString()}. Waiting for the poster to confirm payment and release your funds.
-                                  </p>
-                                </div>
-                              </div>
-                            </Card>
-                          )}
-                          {/* Poster view: confirm payment */}
-                          {isPoster && (
-                            <Card className="p-4 border-green-200 bg-green-50 dark:bg-green-950/30 dark:border-green-800">
-                              <div className="flex items-start gap-3">
-                                <Check className="w-5 h-5 text-green-600 mt-0.5 shrink-0" />
-                                <div className="space-y-3 w-full">
-                                  <div>
-                                    <p className="font-medium text-green-800 dark:text-green-200">Worker Accepted Your Proposal</p>
-                                    <p className="text-sm text-green-700 dark:text-green-300 mt-1">
-                                      The worker agreed to {"\u20A6"}{Number(dispute.proposedAmount).toLocaleString()}. Confirm payment to release funds from escrow.
-                                    </p>
-                                  </div>
-                                  <Button
-                                    className="bg-green-600 hover:bg-green-700 text-white w-full sm:w-auto"
-                                    onClick={() => confirmDisputePayment({ disputeId: dispute.id, jobId: job.id })}
-                                    disabled={isConfirmingPayment}
-                                    data-testid="button-confirm-dispute-payment"
-                                  >
-                                    {isConfirmingPayment ? <Loader2 className="animate-spin mr-2 h-4 w-4" /> : <Check className="mr-2 h-4 w-4" />}
-                                    Confirm Payment of {"\u20A6"}{Number(dispute.proposedAmount).toLocaleString()}
-                                  </Button>
-                                </div>
-                              </div>
-                            </Card>
-                          )}
-                        </>
-                      )}
-
-                      {/* ── ACTIVE CHAT (not awaiting_payment) ── */}
-                      {dispute.status !== 'awaiting_payment' && (
-                        <>
-                          {dispute.proposedAmount && dispute.workerId === user?.id && dispute.status === 'negotiating' && (
+                          {pendingProposal && dispute.workerId === user?.id && dispute.status === 'negotiating' && (
                             <Card className="p-4 border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-800">
                               <div className="flex items-start gap-3">
                                 <Scale className="w-5 h-5 text-blue-600 mt-0.5 shrink-0" />
                                 <div className="space-y-2 w-full">
                                   <p className="font-medium text-blue-800 dark:text-blue-200">Price Proposal</p>
                                   <p className="text-sm text-blue-700 dark:text-blue-300">
-                                    The poster is proposing {"\u20A6"}{Number(dispute.proposedAmount).toLocaleString()} instead of the original {"\u20A6"}{Number(job.price).toLocaleString()}.
+                                    The poster is proposing {"\u20A6"}{Number(pendingProposal.amount).toLocaleString()} instead of the original {"\u20A6"}{Number(job.price).toLocaleString()}.
                                   </p>
                                   <div className="flex flex-wrap gap-2">
                                     <Button
                                       size="sm"
                                       className="bg-green-600 text-white"
-                                      onClick={() => acceptProposal({ disputeId: dispute.id, jobId: job.id })}
+                                      onClick={() => acceptProposal({ disputeId: dispute.id, jobId: job.id, amount: Number(pendingProposal.amount) })}
                                       disabled={isAcceptingProposal}
                                       data-testid="button-accept-proposal"
                                     >
@@ -1350,24 +1301,25 @@ export default function JobDetails() {
                     )}
                   </h3>
 
-                  {showInsufficientFunds && (
+                  {pendingAcceptFee && (
                     <Card className="p-4 border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-900">
                       <div className="flex items-start gap-3">
                         <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
                         <div className="space-y-2">
-                          <p className="font-medium text-amber-800 dark:text-amber-200">Insufficient Wallet Balance</p>
+                          <p className="font-medium text-amber-800 dark:text-amber-200">Pay the price-increase fee</p>
                           <p className="text-sm text-amber-700 dark:text-amber-300">
-                            You need {"\u20A6"}{Number(shortfallAmount).toLocaleString()} more in your wallet to accept this offer.
-                            Please add funds to your wallet first.
+                            This offer raises the job price. Pay the extra fee of {"\u20A6"}{Number(pendingAcceptFee.additionalFee || 0).toLocaleString()} to finalize the new price with the worker.
                           </p>
                           <Button
-                            variant="outline"
                             className="mt-2"
-                            onClick={() => setLocation("/wallet")}
-                            data-testid="button-goto-wallet"
+                            data-testid="button-pay-fee"
+                            onClick={() => {
+                              const url = pendingAcceptFee.authorizationUrl;
+                              setPendingAcceptFee(null);
+                              window.open(url, '_self');
+                            }}
                           >
-                            <Wallet className="mr-2 h-4 w-4" />
-                            Go to Wallet
+                            Pay {"\u20A6"}{Number(pendingAcceptFee.additionalFee || 0).toLocaleString()} Fee
                           </Button>
                         </div>
                       </div>
@@ -1533,26 +1485,6 @@ export default function JobDetails() {
                   </div>
                 </div>
               </section>
-
-              {(job.status === 'in_progress' || job.status === 'completed') && job.worker && (
-                <section>
-                  <h3 className="text-lg font-bold font-display mb-4">Accepted By</h3>
-                  <div className="flex items-center gap-3">
-                    <Avatar className="h-10 w-10 border border-border">
-                      <AvatarImage src={job.worker?.profileImageUrl || undefined} />
-                      <AvatarFallback className="bg-green-500/10 text-green-600 font-bold">
-                        {job.worker?.firstName?.[0] || "?"}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-0.5">Worker</p>
-                      <p className="font-medium text-foreground" data-testid="text-worker-fullname">
-                        {[job.worker?.firstName, job.worker?.lastName].filter(Boolean).join(' ') || "Unknown"}
-                      </p>
-                    </div>
-                  </div>
-                </section>
-              )}
             </div>
           </div>
         </div>

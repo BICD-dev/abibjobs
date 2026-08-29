@@ -61,15 +61,13 @@ export function useAcceptOffer() {
     onSuccess: (data, vars) => {
       queryClient.invalidateQueries({ queryKey: ['/api/jobs', vars.jobId, 'offers'] });
       queryClient.invalidateQueries({ queryKey: [api.jobs.get.path, vars.jobId] });
-      queryClient.invalidateQueries({ queryKey: [api.wallet.get.path] });
-      queryClient.invalidateQueries({ queryKey: [api.wallet.heldJobs.path] });
+      queryClient.invalidateQueries({ queryKey: [api.transactions.history.path] });
       queryClient.invalidateQueries({ queryKey: [api.jobs.myJobs.path] });
       queryClient.invalidateQueries({ queryKey: [api.jobs.history.path] });
-      if (data.insufficientFunds) {
+      if (data.requiresPayment) {
         toast({
-          title: "Insufficient Funds",
-          description: `You need ₦${Number(data.shortfall).toLocaleString()} more in your wallet to accept this offer. Please add funds first.`,
-          variant: "destructive",
+          title: "Price increase accepted",
+          description: `Pay the ₦${Number(data.additionalFee).toLocaleString()} fee to finalize this new price.`,
         });
       } else {
         toast({ title: "Offer Accepted", description: "The new price has been agreed upon." });

@@ -9,6 +9,7 @@ import {
   X, 
   Briefcase, 
   Wallet, 
+  Receipt, 
   User, 
   LogOut,
   TrendingUp,
@@ -70,7 +71,7 @@ export function Navbar() {
     : [
         { href: "/jobs", label: "Find Jobs", icon: Briefcase },
         { href: "/my-jobs", label: "My Jobs", icon: ClipboardList },
-        { href: "/wallet", label: "Wallet", icon: Wallet },
+        { href: "/transactions", label: "Transactions", icon: Receipt },
       ];
 
   const adminLinks = [];

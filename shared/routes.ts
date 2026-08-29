@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { createJobSchema, createOfferSchema, jobs, profiles, platformEarnings, platformTransactions, offers, disputes, disputeMessages, notifications, jobPostingFees, negotiationFeeAdjustments, suspensionAppeals } from './schema';
+import { createJobSchema, createOfferSchema, jobs, profiles, platformEarnings, platformTransactions, offers, disputes, disputeMessages, notifications, jobPostingFees, negotiationFeeAdjustments, suspensionAppeals, type JobWithDetails } from './schema';
 
 export const errorSchemas = {
   validation: z.object({
@@ -38,7 +38,7 @@ export const api = {
       method: 'GET' as const,
       path: '/api/jobs/:id' as const,
       responses: {
-        200: z.custom<typeof jobs.$inferSelect>(),
+        200: z.custom<JobWithDetails>(),
         404: errorSchemas.notFound,
       },
     },
@@ -47,7 +47,12 @@ export const api = {
       path: '/api/jobs' as const,
       input: createJobSchema,
       responses: {
-        201: z.custom<typeof jobs.$inferSelect>(),
+        201: z.object({
+          job: z.custom<typeof jobs.$inferSelect>(),
+          fee: z.any(),
+          authorizationUrl: z.string().nullable(),
+          reference: z.string().nullable(),
+        }),
         400: errorSchemas.validation,
         401: errorSchemas.unauthorized,
       },
@@ -223,6 +228,7 @@ export const api = {
               previousAmount: z.string().nullable(),
               newAmount: z.string().nullable(),
               status: z.string(),
+              reference: z.string().nullable(),
               createdAt: z.string().nullable(),
             }),
           ),

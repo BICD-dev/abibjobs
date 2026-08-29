@@ -57,7 +57,7 @@ export default function Home() {
             
             <p className="text-xl text-muted-foreground max-w-2xl mx-auto leading-relaxed animate-in fade-in slide-in-from-bottom-8 duration-1000 delay-200">
               Connect with verified workers for cleaning, repairs, and errands. 
-              We hold payments in escrow so everyone stays safe.
+              Post for free decisions — pay a small fee only when you publish, then pay the worker directly when the job is done.
             </p>
             
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4 animate-in fade-in slide-in-from-bottom-8 duration-1000 delay-300">
@@ -79,8 +79,8 @@ export default function Home() {
             {[
               {
                 icon: ShieldCheck,
-                title: "Secure Escrow",
-                desc: "Money is held safely by us until the job is completed to your satisfaction."
+                title: "Simple Fees",
+                desc: "A small posting fee covers the job. Pay the worker directly once the work is done to your satisfaction."
               },
               {
                 icon: CheckCircle2,
