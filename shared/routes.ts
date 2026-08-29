@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { createJobSchema, createOfferSchema, jobs, profiles, transactions, platformEarnings, platformTransactions, offers, disputes, disputeMessages, notifications } from './schema';
+import { createJobSchema, createOfferSchema, jobs, profiles, platformEarnings, platformTransactions, offers, disputes, disputeMessages, notifications, jobPostingFees, negotiationFeeAdjustments, suspensionAppeals } from './schema';
 
 export const errorSchemas = {
   validation: z.object({
@@ -52,6 +52,42 @@ export const api = {
         401: errorSchemas.unauthorized,
       },
     },
+    createWithFee: {
+      method: 'POST' as const,
+      path: '/api/jobs/create-with-fee' as const,
+      input: createJobSchema,
+      responses: {
+        200: z.object({
+          jobId: z.number(),
+          fee: z.number(),
+          authorizationUrl: z.string(),
+          reference: z.string(),
+        }),
+        400: errorSchemas.validation,
+        401: errorSchemas.unauthorized,
+      },
+    },
+    verifyPayment: {
+      method: 'POST' as const,
+      path: '/api/jobs/verify-payment/:jobId' as const,
+      responses: {
+        200: z.object({ success: z.boolean(), job: z.any() }),
+        400: errorSchemas.validation,
+      },
+    },
+    cancel: {
+      method: 'POST' as const,
+      path: '/api/jobs/:id/cancel' as const,
+      responses: {
+        200: z.object({
+          job: z.any(),
+          message: z.string(),
+          escalated: z.boolean().optional(),
+        }),
+        400: errorSchemas.validation,
+        401: errorSchemas.unauthorized,
+      },
+    },
     accept: {
       method: 'POST' as const,
       path: '/api/jobs/:id/accept' as const,
@@ -64,15 +100,6 @@ export const api = {
     complete: {
       method: 'POST' as const,
       path: '/api/jobs/:id/complete' as const,
-      responses: {
-        200: z.custom<typeof jobs.$inferSelect>(),
-        400: errorSchemas.validation,
-        401: errorSchemas.unauthorized,
-      },
-    },
-    cancel: {
-      method: 'POST' as const,
-      path: '/api/jobs/:id/cancel' as const,
       responses: {
         200: z.custom<typeof jobs.$inferSelect>(),
         400: errorSchemas.validation,
@@ -180,160 +207,40 @@ export const api = {
       },
     },
   },
-  wallet: {
-  get: {
-    method: 'GET' as const,
-    path: '/api/wallet' as const,
-    responses: {
-      200: z.object({
-        balance: z.string(),
-        heldBalance: z.string(),
-        transactions: z.array(z.custom<typeof transactions.$inferSelect>()),
-      }),
+  transactions: {
+    history: {
+      method: 'GET' as const,
+      path: '/api/transactions/history' as const,
+      responses: {
+        200: z.object({
+          transactions: z.array(
+            z.object({
+              id: z.number(),
+              type: z.string(),
+              amount: z.string(),
+              jobId: z.number().nullable(),
+              jobTitle: z.string().nullable(),
+              previousAmount: z.string().nullable(),
+              newAmount: z.string().nullable(),
+              status: z.string(),
+              createdAt: z.string().nullable(),
+            }),
+          ),
+        }),
+      },
+    },
+    fees: {
+      method: 'GET' as const,
+      path: '/api/admin/fees' as const,
+      responses: {
+        200: z.object({
+          totalFees: z.string(),
+          postingFees: z.array(z.custom<typeof jobPostingFees.$inferSelect>()),
+          adjustments: z.array(z.custom<typeof negotiationFeeAdjustments.$inferSelect>()),
+        }),
+      },
     },
   },
-  /**
-   * Breakdown of funds currently held in escrow for the user's own pending jobs.
-   */
-  heldJobs: {
-    method: 'GET' as const,
-    path: '/api/wallet/held-jobs' as const,
-    responses: {
-      200: z.object({
-        jobs: z.array(
-          z.object({
-            jobId: z.number(),
-            jobTitle: z.string(),
-            amount: z.string(),
-            createdAt: z.string(),
-          }),
-        ),
-      }),
-    },
-  },
-  /**
-   * Initialize a Paystack transaction.
-   * Returns the hosted checkout URL.
-   */
-  initializeFunding: {
-    method: 'POST' as const,
-    path: '/api/wallet/fund/initialize' as const,
-    input: z.object({
-      amount: z.number().min(100),
-    }),
-    responses: {
-      200: z.object({
-        checkoutUrl: z.string().url(),
-        reference: z.string(),
-      }),
-      400: errorSchemas.payment,
-    },
-  },
-
-  /**
-   * Called by the frontend after Paystack redirects back.
-   * Used to determine the final state of the payment.
-   * Does NOT credit the wallet.
-   */
-  verifyFunding: {
-    method: 'GET' as const,
-    path: '/api/wallet/fund/verify/:reference' as const,
-    input: z.object({
-      reference: z.string(),
-    }),
-    responses: {
-      200: z.object({
-        status: z.enum([
-          'pending',
-          'success',
-          'failed',
-        ]),
-        message: z.string(),
-        amount: z.string(),
-      }),
-      400: errorSchemas.payment,
-    },
-  },
-
-  /**
-   * Returns saved beneficiary accounts for withdrawals.
-   */
-  withdrawalAccounts: {
-    method: 'GET' as const,
-    path: '/api/wallet/withdrawal-accounts' as const,
-    responses: {
-      200: z.object({
-        accounts: z.array(
-          z.object({
-            bankCode: z.string(),
-            bankName: z.string(),
-            accountNumber: z.string(),
-            accountName: z.string(),
-          }),
-        ),
-      }),
-    },
-  },
-
-  /**
-   * Fetch available Nigerian banks from Paystack.
-   */
-  banks: {
-    method: 'GET' as const,
-    path: '/api/wallet/banks' as const,
-    responses: {
-      200: z.object({
-        banks: z.array(
-          z.object({
-            name: z.string(),
-            code: z.string(),
-          }),
-        ),
-      }),
-    },
-  },
-
-  /**
-   * Resolve account name before withdrawal.
-   */
-  resolveAccount: {
-    method: 'POST' as const,
-    path: '/api/wallet/resolve-account' as const,
-    input: z.object({
-      accountNumber: z.string().length(10),
-      bankCode: z.string(),
-    }),
-    responses: {
-      200: z.object({
-        accountName: z.string(),
-      }),
-      400: errorSchemas.payment,
-    },
-  },
-  // deposit money into wallet 
-  deposit: {
-    method: 'POST' as const,
-    path: '/api/wallet/deposit' as const,
-    input: z.object({
-      amount: z.number().min(100),
-      bankCode: z.string(),
-      accountNumber: z.string().length(10),
-      accountName: z.string().optional(),
-      bankName: z.string().optional(),
-    }),
-    responses: {
-      200: z.object({
-        reference: z.string(),
-        status: z.enum([
-          'pending',
-          'success',
-        ]),
-        message: z.string(),
-      }),
-      400: errorSchemas.payment,
-    },
-  },
-},
   offers: {
     list: {
       method: 'GET' as const,
@@ -359,9 +266,23 @@ export const api = {
       method: 'POST' as const,
       path: '/api/offers/:id/accept' as const,
       responses: {
-        200: z.object({ offer: z.any(), job: z.any(), insufficientFunds: z.boolean().optional(), shortfall: z.number().optional() }),
+        200: z.object({
+          offer: z.any(),
+          job: z.any(),
+          requiresPayment: z.boolean().optional(),
+          authorizationUrl: z.string().optional(),
+          additionalFee: z.number().optional(),
+        }),
         400: errorSchemas.validation,
         401: errorSchemas.unauthorized,
+      },
+    },
+    acceptWithPaymentVerify: {
+      method: 'POST' as const,
+      path: '/api/offers/accept/:negotiationId/verify' as const,
+      responses: {
+        200: z.object({ offer: z.any(), job: z.any() }),
+        400: errorSchemas.validation,
       },
     },
     decline: {
@@ -448,10 +369,8 @@ export const api = {
       method: 'POST' as const,
       path: '/api/disputes/:id/resolve' as const,
       input: z.object({
-        action: z.enum(['refund_poster', 'release_worker', 'custom']),
-        workerAmount: z.number().min(0).optional(),
-        posterRefund: z.number().min(0).optional(),
-        message: z.string().optional(),
+        resolution: z.enum(['poster_favored', 'worker_favored', 'mutual_agreement']),
+        note: z.string().optional(),
       }),
       responses: {
         200: z.any(),
@@ -596,6 +515,102 @@ export const api = {
       }),
       responses: {
         200: z.object({ message: z.string() }),
+      },
+    },
+    users: {
+      method: 'GET' as const,
+      path: '/api/admin/users' as const,
+      responses: {
+        200: z.array(z.any()),
+      },
+    },
+    suspendUser: {
+      method: 'POST' as const,
+      path: '/api/admin/users/:userId/suspend' as const,
+      input: z.object({
+        reason: z.string().min(1),
+        duration: z.string().optional(),
+      }),
+      responses: {
+        200: z.object({
+          success: z.boolean(),
+          cancelledJobs: z.number(),
+        }),
+      },
+    },
+    unsuspendUser: {
+      method: 'POST' as const,
+      path: '/api/admin/users/:userId/unsuspend' as const,
+      responses: {
+        200: z.object({ success: z.boolean() }),
+      },
+    },
+    banUser: {
+      method: 'POST' as const,
+      path: '/api/admin/users/:userId/ban' as const,
+      input: z.object({
+        reason: z.string().min(1),
+      }),
+      responses: {
+        200: z.object({
+          success: z.boolean(),
+          cancelledJobs: z.number(),
+        }),
+      },
+    },
+    unbanUser: {
+      method: 'POST' as const,
+      path: '/api/admin/users/:userId/unban' as const,
+      responses: {
+        200: z.object({ success: z.boolean() }),
+      },
+    },
+    appeals: {
+      method: 'GET' as const,
+      path: '/api/admin/appeals' as const,
+      responses: {
+        200: z.array(z.any()),
+      },
+    },
+    reviewAppeal: {
+      method: 'POST' as const,
+      path: '/api/admin/appeals/:id/review' as const,
+      input: z.object({
+        decision: z.enum(['approved', 'denied']),
+        note: z.string().optional(),
+      }),
+      responses: {
+        200: z.object({ success: z.boolean() }),
+      },
+    },
+  },
+  appeals: {
+    create: {
+      method: 'POST' as const,
+      path: '/api/appeals' as const,
+      input: z.object({
+        reason: z.string().min(10),
+      }),
+      responses: {
+        200: z.object({ success: z.boolean(), message: z.string() }),
+        400: errorSchemas.validation,
+      },
+    },
+    my: {
+      method: 'GET' as const,
+      path: '/api/appeals/my' as const,
+      responses: {
+        200: z.array(z.custom<typeof suspensionAppeals.$inferSelect>()),
+      },
+    },
+  },
+  negotiationFees: {
+    verify: {
+      method: 'POST' as const,
+      path: '/api/offers/accept/:negotiationId/verify' as const,
+      responses: {
+        200: z.object({ offer: z.any(), job: z.any() }),
+        400: errorSchemas.validation,
       },
     },
   },

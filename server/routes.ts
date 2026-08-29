@@ -9,8 +9,9 @@ import { setupAuth, isAuthenticated, registerAuthRoutes } from "./replit_integra
 import { registerObjectStorageRoutes, ObjectStorageService, ObjectNotFoundError, getObjectAclPolicy } from "./replit_integrations/object_storage";
 import { setupCallSignaling } from "./call";
 import { db } from "./db";
-import { users, disputeMessages, jobs, disputes, adminUsers } from "@shared/schema";
+import { users, disputeMessages, jobs, disputes, adminUsers, profiles, jobPostingFees, negotiationFeeAdjustments, suspensionAppeals } from "@shared/schema";
 import { eq, sql, and } from "drizzle-orm";
+import { getJobPostingFee, getAdditionalFee } from "./config";
 import {
   sendWelcomeEmail,
   sendPasswordResetEmail,
@@ -22,8 +23,16 @@ import {
   sendCompletionRequestedEmail,
   sendJobCancelledToWorkerEmail,
   sendNoShowWarningEmail,
-  sendWalletDepositEmail,
-  sendWithdrawalEmail,
+  sendJobPostingFeeReceiptEmail,
+  sendNegotiationFeeReceiptEmail,
+  sendJobPayableToPosterEmail,
+  sendUserSuspendedEmail,
+  sendUserBannedEmail,
+  sendUserUnsuspendedEmail,
+  sendCounterPartyJobCancelledEmail,
+  sendSuspensionAppealReceivedEmail,
+  sendSuspensionAppealDecisionEmail,
+  sendEscalatedCancellationAdminEmail,
 } from "./email";
 
 interface PaystackSession {
@@ -40,6 +49,8 @@ interface PaystackSession {
 }
 
 const paystackSessions = new Map<string, PaystackSession>();
+
+const WITHDRAWAL_FEE_PERCENT = parseFloat(process.env.PAYSTACK_WITHDRAWAL_FEE_PERCENT || '1.5');
 
 // Upload intents track which user requested each presigned upload URL.
 // When the client later submits a path (verification docs, dispute evidence),
@@ -121,6 +132,37 @@ function cleanExpiredSessions() {
 }
 
 setInterval(cleanExpiredSessions, 60000);
+
+// Initialize a Paystack hosted checkout for a platform fee payment.
+// Returns the authorization URL and the transaction reference, which is stored
+// on the relevant fee row and used to reconcile the payment on the webhook and
+// when the user returns from the callback URL.
+async function initializeFeePayment(
+  email: string,
+  amount: number,
+  metadata: Record<string, any>
+): Promise<{ authorizationUrl: string; reference: string }> {
+  const amountKobo = Math.round(amount * 100);
+  const callbackUrl = `${process.env.APP_URL || `${process.env.REPLIT_DOMAINS ? `https://${process.env.REPLIT_DOMAINS.split(",")[0]}` : "http://localhost:5000"}`}/payment/callback`;
+  const initResp = await paystackRequest('POST', '/transaction/initialize', {
+    email,
+    amount: amountKobo,
+    callback_url: callbackUrl,
+    metadata,
+  });
+  if (!initResp.status || !initResp.data?.authorization_url) {
+    throw new Error(initResp.message || "Unable to initialize payment.");
+  }
+  return {
+    authorizationUrl: initResp.data.authorization_url,
+    reference: initResp.data.reference,
+  };
+}
+
+function parseNumeric(value: string | null | undefined): number {
+  const n = parseFloat(value || '0');
+  return isFinite(n) ? n : 0;
+}
 
 export async function registerRoutes(
   httpServer: Server,
@@ -455,13 +497,15 @@ export async function registerRoutes(
     res.json(job);
   });
 
-  app.post(api.jobs.create.path, isAuthenticated, async (req, res) => {
+  const createJobWithFee = async (req: any, res: any) => {
     try {
       const input = api.jobs.create.input.parse(req.body);
       const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
       const profile = await storage.getProfile(userId);
 
       if (!profile) return res.status(404).json({ message: "Profile not found" });
+      if (profile.isBanned) return res.status(403).json({ message: "Your account has been banned. You cannot post jobs." });
+      if (profile.isSuspended) return res.status(403).json({ message: "Your account is suspended. You cannot post jobs at this time." });
       if (profile.verificationStatus !== 'verified') {
         return res.status(403).json({ message: verificationBlockMessage(profile.verificationStatus, 'posting') });
       }
@@ -474,36 +518,57 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Please enter a valid job price greater than ₦0." });
       }
 
-      // Poster must have enough in their wallet to cover the full job cost
-      const posterBalance = parseFloat(profile.walletBalance || '0');
-      if (posterBalance < totalCost) {
-        const shortfall = totalCost - posterBalance;
-        return res.status(400).json({
-          message: `You need ₦${totalCost.toLocaleString()} in your wallet to post this job, but your balance is ₦${posterBalance.toLocaleString()}. Please fund your wallet with at least ₦${shortfall.toLocaleString()} more, then try again.`
-        });
-      }
-      
+      const fee = getJobPostingFee(totalCost);
+
       const jobInput = {
         ...input,
         posterId: userId,
         scheduledDate: input.scheduledDate ? new Date(input.scheduledDate as any) : undefined,
       };
       const job = await storage.createJob(jobInput);
-      // lock the portion of the user's fund allocated for the job
-      await storage.updateWalletBalance(userId, -totalCost);
-      await storage.createJobEscrow({ jobId: job.id, posterId: userId, amount: totalCost.toString() });
-      await storage.createTransaction({
+
+      const userRecord = await storage.getUser(userId);
+      const userEmail = userRecord?.email || `user_${userId}@abib.jobs`;
+      const reference = `jpf_${job.id}_${Date.now().toString(36)}`;
+
+      await storage.createJobPostingFee({
         userId,
-        amount: (-totalCost).toString(),
-        type: 'escrow_hold',
         jobId: job.id,
+        jobAmount: totalCost.toFixed(2),
+        feeAmount: fee.toFixed(2),
+        paystackReference: fee > 0 ? null : reference,
+        status: 'pending',
       });
-      await storage.createAdminNotification({
+
+      let authorizationUrl: string | null = null;
+      if (fee > 0) {
+        try {
+          const init = await initializeFeePayment(userEmail, fee, {
+            type: 'job_posting_fee',
+            jobId: job.id,
+            userId,
+            feeAmount: fee.toFixed(2),
+            jobAmount: totalCost.toFixed(2),
+          });
+          authorizationUrl = init.authorizationUrl;
+          await db.update(jobPostingFees)
+            .set({ paystackReference: init.reference })
+            .where(eq(jobPostingFees.jobId, job.id));
+        } catch (err: any) {
+          await db.update(jobs).set({ status: 'cancelled' }).where(eq(jobs.id, job.id));
+          return res.status(502).json({ message: err.message || "Could not initialize payment." });
+        }
+      } else {
+        await storage.markJobPostingFeePaid(reference);
+        await db.update(jobs).set({ status: 'open' }).where(eq(jobs.id, job.id));
+      }
+
+      storage.createAdminNotification({
         adminId: 0,
         title: 'New Job Posted',
         message: `"${job.title}" posted in ${job.category} for ₦${parseFloat(job.price).toLocaleString()}${job.priceType === 'per_person' ? '/person' : ''} (${job.workersNeeded} worker${job.workersNeeded > 1 ? 's' : ''} needed).`,
         type: 'info'
-      });
+      }).catch(() => {});
 
       storage.broadcastNotificationToAll({
         title: 'New Job Available',
@@ -513,19 +578,55 @@ export async function registerRoutes(
         excludeUserId: userId,
       }).catch(() => {});
 
-      // Email the poster a confirmation
-      storage.getUser(userId).then(poster => {
-        if (poster?.email) {
-          const priceDisplay = `₦${parseFloat(job.price).toLocaleString()}${job.priceType === 'per_person' ? '/person' : ''}`;
-          sendJobPostedEmail(poster.email, poster.firstName || poster.email, job.title, job.id, priceDisplay, job.location, job.category).catch(() => {});
-        }
-      }).catch(() => {});
-
-      res.status(201).json(job);
+      res.status(201).json({ job, fee: fee.toFixed(2), authorizationUrl, reference });
     } catch (err) {
       if (err instanceof z.ZodError) {
         return res.status(400).json({ message: err.errors[0].message });
       }
+      res.status(500).json({ message: "Internal server error" });
+    }
+  };
+
+  app.post(api.jobs.create.path, isAuthenticated, createJobWithFee);
+  app.post(api.jobs.createWithFee.path, isAuthenticated, createJobWithFee);
+
+  app.post(api.jobs.verifyPayment.path, isAuthenticated, async (req, res) => {
+    try {
+      const jobId = Number(req.params.jobId);
+      const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
+
+      const job = await storage.getJob(jobId);
+      if (!job) return res.status(404).json({ message: "Job not found" });
+      if (job.posterId !== userId) return res.status(403).json({ message: "You can only verify payments for your own jobs" });
+
+      if (job.status === 'open') {
+        return res.json({ success: true, job });
+      }
+      if (job.status !== 'pending_payment') {
+        return res.status(400).json({ message: "This job is not awaiting payment." });
+      }
+
+      const [feeRow] = await db.select().from(jobPostingFees).where(eq(jobPostingFees.jobId, job.id)).limit(1);
+      let paid = false;
+      if (feeRow && feeRow.status === 'paid') {
+        paid = true;
+      } else if (feeRow?.paystackReference) {
+        // Fall back to verifying directly with Paystack if the webhook hasn't landed yet.
+        const verifyResp = await paystackRequest('GET', `/transaction/verify/${feeRow.paystackReference}`);
+        if (verifyResp.status && verifyResp.data?.status === 'success') {
+          paid = true;
+          await storage.markJobPostingFeePaid(feeRow.paystackReference);
+          await storage.addPlatformEarning(parseNumeric(feeRow.feeAmount), job.id, job.title);
+        }
+      }
+
+      if (!paid) {
+        return res.status(400).json({ success: false, message: "Payment for this job has not been confirmed yet." });
+      }
+
+      const updated = await storage.updateJob(job.id, { status: 'open' });
+      res.json({ success: true, job: updated });
+    } catch (err) {
       res.status(500).json({ message: "Internal server error" });
     }
   });
@@ -535,6 +636,9 @@ export async function registerRoutes(
     const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
 
     const acceptorProfile = await storage.getProfile(userId);
+    if (acceptorProfile?.isBanned) {
+      return res.status(403).json({ message: "Your account has been banned. You cannot accept jobs." });
+    }
     if (acceptorProfile && acceptorProfile.verificationStatus !== 'verified') {
       return res.status(403).json({ message: verificationBlockMessage(acceptorProfile.verificationStatus, 'accepting') });
     }
@@ -657,12 +761,6 @@ export async function registerRoutes(
     const workerDone = isWorker ? true : !!job.workerMarkedComplete;
 
     if (posterDone && workerDone) {
-      const price = parseFloat(job.price);
-      const totalEscrow = job.priceType === 'per_person' ? price * job.workersNeeded : price;
-      const fee = totalEscrow * 0.22;
-      const totalPayout = totalEscrow - fee;
-      const payoutPerWorker = totalPayout / workerIds.length;
-
       const [atomicCompleted] = await db.update(jobs)
         .set({ status: 'completed', completedAt: new Date(), posterMarkedComplete: true, workerMarkedComplete: true })
         .where(and(eq(jobs.id, jobId), eq(jobs.status, 'in_progress')))
@@ -675,34 +773,23 @@ export async function registerRoutes(
         }
         return res.status(409).json({ message: "Job state changed concurrently. Please refresh and try again." });
       }
-      // releasing the hold now that it's been fully consumed by worker payouts + platform fee:
-      await storage.releaseJobEscrow(jobId);
-
-      for (const wId of workerIds) {
-        await storage.updateWalletBalance(wId, payoutPerWorker);
-        await storage.createTransaction({
-          userId: wId,
-          amount: payoutPerWorker.toFixed(2),
-          type: 'job_earning',
-          jobId: job.id
-        });
-      }
-
-      await storage.addPlatformEarning(fee, job.id, job.title);
       const completed = atomicCompleted;
+      const price = parseFloat(job.price);
+      const totalPayout = job.priceType === 'per_person' ? price * job.workersNeeded : price;
+      const payoutPerWorker = workerIds.length > 0 ? totalPayout / workerIds.length : 0;
 
       await storage.createAdminNotification({
         adminId: 0,
         title: 'Job Completed',
-        message: `"${job.title}" has been completed. Platform fee earned: ₦${fee.toFixed(2)}. Total payout to ${workerIds.length} worker(s): ₦${totalPayout.toFixed(2)}.`,
+        message: `"${job.title}" has been completed. Poster pays the worker(s) directly: ₦${totalPayout.toFixed(2)}.`,
         type: 'success'
-      });
+      }).catch(() => {});
 
       for (const wId of workerIds) {
         storage.createNotification({
           userId: wId,
-          title: 'Job Completed — Payment Received!',
-          message: `"${job.title}" is complete. ₦${payoutPerWorker.toLocaleString()} has been added to your wallet.`,
+          title: 'Job Completed',
+          message: `"${job.title}" is complete. Coordinate with the poster to receive your payment of ₦${payoutPerWorker.toLocaleString()} directly.`,
           type: 'success',
           jobId: job.id,
         }).catch(() => {});
@@ -711,7 +798,7 @@ export async function registerRoutes(
       storage.createNotification({
         userId: job.posterId,
         title: 'Job Completed',
-        message: `"${job.title}" has been completed and payment released to the worker(s).`,
+        message: `"${job.title}" has been completed. Please pay the worker(s) ${workerIds.length > 1 ? 'their agreed amounts' : `₦${payoutPerWorker.toLocaleString()}`} directly.`,
         type: 'success',
         jobId: job.id,
       }).catch(() => {});
@@ -775,117 +862,66 @@ export async function registerRoutes(
       return res.status(400).json({ message: "Job is already " + job.status });
     }
 
-    // A disputed job must be resolved through the dispute flow — the poster
-    // cannot cancel it to claw back escrow while a concern is open.
+    // A disputed job must be resolved through the dispute flow.
     if (job.status === 'disputed') {
-      return res.status(400).json({ message: "Cannot cancel a job that is under dispute. The escrow stays locked until the dispute is resolved." });
+      return res.status(400).json({ message: "Cannot cancel a job that is under dispute. Resolve the dispute first." });
     }
 
     // Once the worker has marked the job complete, the poster can no longer
-    // cancel and claw back escrow — the work has been done. They must confirm
-    // completion (which releases payment) or use the dispute flow.
+    // cancel — the work has been done. They must confirm completion or raise a concern.
     if (job.workerMarkedComplete) {
-      return res.status(400).json({ message: "Cannot cancel: the worker has already marked this job as complete. Confirm completion to release their payment, or raise a concern." });
+      return res.status(400).json({ message: "Cannot cancel: the worker has already marked this job as complete. Confirm completion and pay the worker directly, or raise a concern." });
     }
 
     if (job.posterConfirmedArrival) {
       return res.status(403).json({ message: "You cannot cancel this job after confirming the worker has arrived on site." });
     }
 
-    const price = parseFloat(job.price);
-    const escrowAmount = job.priceType === 'per_person' ? price * job.workersNeeded : price;
     const workerIsEnRoute = job.workerProgress === 'on_the_way' || job.workerProgress === 'at_location';
+    const workerIds = job.workerId ? job.workerId.split(',').filter(Boolean) : [];
 
-    const escrowRow = await storage.getJobEscrow(jobId);
-    if (!escrowRow) {
-      // Shouldn't happen for any job created after this change, but don't silently proceed if it does.
-      return res.status(500).json({ message: "No escrow record found for this job. Please contact support before cancelling." });
+    // The posting fee was already paid and is non-refundable — no money is held
+    // by the platform, so there is nothing to refund on cancellation.
+    const escalationNote = workerIsEnRoute
+      ? "The worker was already on the way or at the location when the poster cancelled. This cancellation requires admin review so the parties can still arrange payment for any work started."
+      : null;
+
+    const updated = await storage.updateJob(jobId, {
+      status: 'cancelled',
+      cancellationEscalated: workerIsEnRoute,
+      cancellationEscalatedAt: workerIsEnRoute ? new Date() : null,
+      cancellationReason: escalationNote,
+    });
+
+    for (const wId of workerIds) {
+      storage.getUser(wId).then(worker => {
+        if (worker?.email) sendJobCancelledToWorkerEmail(worker.email, worker.firstName || worker.email, job.title, null).catch(() => {});
+      }).catch(() => {});
+      storage.createNotification({
+        userId: wId,
+        title: 'Job Cancelled',
+        message: `The poster cancelled "${job.title}". ${workerIsEnRoute ? "Your work on this job will be reviewed by an admin — arrange direct payment with the poster for any work already done." : ""}`,
+        type: 'warning',
+        jobId: jobId,
+      }).catch(() => {});
     }
-    if (escrowRow.status !== 'held') {
-      return res.status(400).json({ message: "This job's escrow has already been resolved." });
-    }
-
-    if (workerIsEnRoute) {
-      const penalty = Math.round(escrowAmount * 0.1 * 100) / 100;
-      const posterRefund = escrowAmount - penalty;
-
-      await storage.updateWalletBalance(userId, posterRefund);
-      await storage.createTransaction({
-        userId,
-        amount: posterRefund.toString(),
-        type: 'escrow_refund',
-        jobId: job.id,
-      });
-
-      const workerIds = job.workerId!.includes(',') ? job.workerId!.split(',').map(id => id.trim()) : [job.workerId!];
-      let remaining = penalty;
-      for (let i = 0; i < workerIds.length; i++) {
-        const isLast = i === workerIds.length - 1;
-        const share = isLast ? remaining : Math.floor((penalty / workerIds.length) * 100) / 100;
-        remaining = Math.round((remaining - share) * 100) / 100;
-
-        await storage.updateWalletBalance(workerIds[i], share);
-        await storage.createTransaction({
-          userId: workerIds[i],
-          amount: share.toString(),
-          type: 'cancellation_compensation',
-          jobId: job.id,
-        });
-
-        await storage.createNotification({
-          userId: workerIds[i],
-          title: "Compensation Received",
-          message: `The poster cancelled "${job.title}" while you were on the way. ₦${share.toLocaleString()} has been added to your wallet.`,
-          type: "success",
-          jobId: job.id,
-        });
-
-        storage.getUser(workerIds[i]).then(worker => {
-          if (worker?.email) sendJobCancelledToWorkerEmail(worker.email, worker.firstName || worker.email, job.title, share).catch(() => {});
-        }).catch(() => {});
-      }
-
-      await storage.refundJobEscrow(jobId, {
-        status: 'partially_refunded',
-        refundedAmount: posterRefund.toString(),
-        releasedAmount: penalty.toString(),
-      });
-    } else {
-      await storage.updateWalletBalance(userId, escrowAmount);
-      await storage.createTransaction({
-        userId,
-        amount: escrowAmount.toString(),
-        type: 'escrow_refund',
-        jobId: job.id,
-      });
-
-      if (job.workerId) {
-        const wIds = job.workerId.split(',').filter(Boolean);
-        for (const wId of wIds) {
-          storage.getUser(wId).then(worker => {
-            if (worker?.email) sendJobCancelledToWorkerEmail(worker.email, worker.firstName || worker.email, job.title, null).catch(() => {});
-          }).catch(() => {});
-        }
-      }
-
-      await storage.refundJobEscrow(jobId, {
-        status: 'refunded',
-        refundedAmount: escrowAmount.toString(),
-        releasedAmount: '0',
-      });
-    }
-    // If no worker has accepted yet, no escrow was held — nothing to refund
-
-    const updated = await storage.updateJob(jobId, { status: 'cancelled' });
 
     await storage.createAdminNotification({
       adminId: 0,
-      title: 'Job Cancelled',
-      message: `"${job.title}" was cancelled by the poster.${workerIsEnRoute ? ` 10% cancellation fee (₦${(Math.round(escrowAmount * 0.1 * 100) / 100).toLocaleString()}) paid immediately to worker. Poster refunded 90%.` : ' Full escrow refunded to poster.'}`,
+      title: workerIsEnRoute ? 'Job Cancelled — ESCALATED' : 'Job Cancelled',
+      message: `"${job.title}" was cancelled by the poster.${workerIsEnRoute ? ' The worker was on the way/at location — review required.' : ''}`,
       type: 'warning'
-    });
+    }).catch(() => {});
 
-    res.json(updated);
+    if (workerIsEnRoute) {
+      storage.getAdminUsers().then(admins => {
+        for (const admin of admins) {
+          if (admin?.email) sendEscalatedCancellationAdminEmail(admin.email, admin.name || 'Admin', job.title, job.id, escalationNote || undefined).catch(() => {});
+        }
+      }).catch(() => {});
+    }
+
+    res.json({ job: updated, message: "Job cancelled. The posting fee is non-refundable.", escalated: workerIsEnRoute });
   });
 
   // --- WORKER PROGRESS ---
@@ -1046,15 +1082,6 @@ export async function registerRoutes(
 
       const workerIds = job.workerId.split(',').filter(Boolean);
       const price = parseFloat(job.price);
-      const totalEscrow = job.priceType === 'per_person' ? price * job.workersNeeded : price;
-
-      await storage.updateWalletBalance(job.posterId, totalEscrow);
-      await storage.createTransaction({
-        userId: job.posterId,
-        amount: totalEscrow.toFixed(2),
-        type: 'escrow_refund',
-        jobId: job.id
-      });
 
       for (const wId of workerIds) {
         const workerProfile = await storage.getProfile(wId);
@@ -1104,7 +1131,7 @@ export async function registerRoutes(
         res.json({ message: "No-show reported. Job has been reposted for new workers.", reposted: true });
       } else {
         await storage.updateJob(jobId, { status: 'cancelled' });
-        res.json({ message: "No-show reported. Job has been deleted and escrow refunded.", reposted: false });
+        res.json({ message: "No-show reported. Job has been deleted.", reposted: false });
       }
     } catch (err) {
       console.error("No-show error:", err);
@@ -1775,6 +1802,20 @@ export async function registerRoutes(
     }
   });
 
+  const finalizeOfferAcceptance = async (offer: any, job: any) => {
+    const updatedOffer = await storage.updateOffer(offer.id, { status: 'accepted' });
+    const updatedJob = await storage.updateJob(job.id, { price: offer.amount });
+
+    const remainingOffers = await storage.getOffersByJob(job.id);
+    for (const o of remainingOffers) {
+      if (o.id !== offer.id && o.status === 'pending') {
+        await storage.updateOffer(o.id, { status: 'declined' });
+      }
+    }
+
+    return { offer: updatedOffer, job: updatedJob };
+  };
+
   app.post('/api/offers/:id/accept', isAuthenticated, async (req, res) => {
     try {
       const offerId = Number(req.params.id);
@@ -1805,67 +1846,101 @@ export async function registerRoutes(
       const newPrice = parseFloat(offer.amount);
       const oldPrice = parseFloat(job.price);
       const multiplier = job.priceType === 'per_person' ? job.workersNeeded : 1;
-      const escrowDiff = (newPrice - oldPrice) * multiplier;
+      const oldTotal = oldPrice * multiplier;
+      const newTotal = newPrice * multiplier;
+      const increase = newTotal - oldTotal;
 
-      if (isPoster && escrowDiff > 0) {
-        const profile = await storage.getProfile(userId);
-        if (!profile) return res.status(404).json({ message: "Profile not found" });
-        const balance = parseFloat(profile.walletBalance);
+      // No price increase — accept immediately. Nothing more to collect.
+      if (increase <= 0) {
+        const result = await finalizeOfferAcceptance(offer, job);
+        return res.json(result);
+      }
 
-        if (balance < escrowDiff) {
-          return res.json({
-            offer,
-            job,
-            insufficientFunds: true,
-            shortfall: escrowDiff - balance,
-          });
-        }
-
-        try {
-          await storage.updateWalletBalance(userId, -escrowDiff);
-        } catch (err) {
-          // Balance could have changed between the read above and this write
-          // (e.g. another job posted concurrently). Report it the same way as the pre-check
-          // instead of letting it fall through as a 500.
-          const freshProfile = await storage.getProfile(userId);
-          const freshBalance = parseFloat(freshProfile?.walletBalance || '0');
-          return res.json({
-            offer,
-            job,
-            insufficientFunds: true,
-            shortfall: escrowDiff - freshBalance,
-          });
-        }
-
-        await storage.adjustJobEscrowAmount(job.id, escrowDiff);
-        await storage.createTransaction({
-          userId,
-          amount: (-escrowDiff).toString(),
-          type: 'escrow_hold',
+      // The offer raises the price above the posted amount. The poster owes a
+      // fee on the delta before the offer can be finalized.
+      let adjustment = await storage.getNegotiationFeeAdjustmentByOffer(offerId);
+      if (!adjustment) {
+        const feeAmount = getAdditionalFee(oldTotal, newTotal);
+        adjustment = await storage.createNegotiationFeeAdjustment({
+          userId: job.posterId,
+          offerId,
           jobId: job.id,
-        });
-      } else if (isPoster && escrowDiff < 0) {
-        await storage.updateWalletBalance(userId, Math.abs(escrowDiff));
-        await storage.adjustJobEscrowAmount(job.id, escrowDiff); // escrowDiff is negative — reduces the held amount
-        await storage.createTransaction({
-          userId,
-          amount: Math.abs(escrowDiff).toString(),
-          type: 'escrow_refund',
-          jobId: job.id,
+          previousAmount: oldTotal.toFixed(2),
+          newAmount: newTotal.toFixed(2),
+          additionalFee: feeAmount.toFixed(2),
+          paystackReference: null,
+          status: 'pending',
         });
       }
 
-      const updatedOffer = await storage.updateOffer(offerId, { status: 'accepted' });
-      const updatedJob = await storage.updateJob(job.id, { price: newPrice.toFixed(2) });
-
-      const remainingOffers = await storage.getOffersByJob(job.id);
-      for (const o of remainingOffers) {
-        if (o.id !== offerId && o.status === 'pending') {
-          await storage.updateOffer(o.id, { status: 'declined' });
-        }
+      if (adjustment.status === 'paid') {
+        const result = await finalizeOfferAcceptance(offer, job);
+        return res.json(result);
       }
 
-      res.json({ offer: updatedOffer, job: updatedJob });
+      const fee = parseNumeric(adjustment.additionalFee);
+
+      // Initiate the delta-fee checkout for the poster
+      const posterUser = await storage.getUser(job.posterId);
+      const posterEmail = posterUser?.email || `user_${job.posterId}@abib.jobs`;
+      let authorizationUrl: string | null = null;
+      if (!adjustment.paystackReference) {
+        const init = await initializeFeePayment(posterEmail, fee, {
+          type: 'negotiation_fee',
+          offerId,
+          jobId: job.id,
+          negotiationId: offerId,
+          feeAmount: adjustment.additionalFee,
+          previousAmount: adjustment.previousAmount,
+          newAmount: adjustment.newAmount,
+        });
+        authorizationUrl = init.authorizationUrl;
+        await db.update(negotiationFeeAdjustments)
+          .set({ paystackReference: init.reference })
+          .where(eq(negotiationFeeAdjustments.id, adjustment.id));
+      }
+
+      res.json({ offer, job, requiresPayment: true, authorizationUrl, additionalFee: fee });
+    } catch (err) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post(api.negotiationFees.verify.path, isAuthenticated, async (req, res) => {
+    try {
+      const negotiationId = Number(req.params.negotiationId);
+      const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
+
+      const offer = await storage.getOffer(negotiationId);
+      if (!offer) return res.status(404).json({ message: "Offer not found" });
+
+      const job = await storage.getJob(offer.jobId);
+      if (!job) return res.status(404).json({ message: "Job not found" });
+
+      const adjustment = await storage.getNegotiationFeeAdjustmentByOffer(negotiationId);
+      if (!adjustment) {
+        return res.status(400).json({ message: "No fee is required for this offer." });
+      }
+
+      if (adjustment.status === 'paid') {
+        const result = await finalizeOfferAcceptance(offer, job);
+        return res.json(result);
+      }
+
+      if (!adjustment.paystackReference) {
+        return res.status(400).json({ message: "This offer has no pending fee payment." });
+      }
+
+      // Fall back to verifying directly with Paystack if the webhook hasn't landed yet.
+      const verifyResp = await paystackRequest('GET', `/transaction/verify/${adjustment.paystackReference}`);
+      if (verifyResp.status && verifyResp.data?.status === 'success') {
+        await storage.markNegotiationFeeAdjustmentPaid(adjustment.paystackReference);
+        await storage.addPlatformEarning(parseNumeric(adjustment.additionalFee), job.id, job.title);
+        const result = await finalizeOfferAcceptance(offer, job);
+        return res.json(result);
+      }
+
+      return res.status(400).json({ message: "The fee payment for this offer has not been confirmed yet." });
     } catch (err) {
       res.status(500).json({ message: "Internal server error" });
     }
@@ -2793,6 +2868,7 @@ export async function registerRoutes(
         jobId,
         posterId,
         workerId,
+        raisedBy: userId,
       });
 
       await storage.createDisputeMessage({
@@ -2978,13 +3054,6 @@ export async function registerRoutes(
         imageUrl: parsed.data.imageUrl,
       });
 
-      if (parsed.data.type === 'proposal') {
-        await storage.updateDispute(disputeId, {
-          status: 'negotiating',
-          proposedAmount: parsed.data.amount!.toFixed(2),
-        });
-      }
-
       // Notify the other party about the new message
       try {
         const disputeJob = await storage.getJob(dispute.jobId);
@@ -3036,135 +3105,45 @@ export async function registerRoutes(
         return res.status(400).json({ message: "This dispute has already been resolved" });
       }
 
-      if (dispute.workerId !== userId) {
-        return res.status(403).json({ message: "Only the worker can accept a proposal" });
-      }
-
-      if (!dispute.proposedAmount) {
-        return res.status(400).json({ message: "No proposal to accept" });
+      if (dispute.workerId !== userId && dispute.posterId !== userId) {
+        return res.status(403).json({ message: "Only dispute participants can accept a settlement" });
       }
 
       const job = await storage.getJob(dispute.jobId);
       if (!job) return res.status(404).json({ message: "Job not found" });
 
-      const resolvedAmount = parseFloat(dispute.proposedAmount);
+      const agreedAmount = req.body?.amount ? Number(req.body.amount) : null;
 
       await storage.createDisputeMessage({
         disputeId,
         senderId: userId,
-        message: `Accepted the proposed amount of \u20A6${resolvedAmount.toLocaleString()}. Waiting for poster to confirm payment.`,
+        message: `Agreed to a mutual settlement${agreedAmount ? ` of \u20A6${agreedAmount.toLocaleString()}` : ''}. Payment will be arranged directly between the parties.`,
         type: 'acceptance',
-        amount: resolvedAmount.toFixed(2),
+        amount: agreedAmount ? agreedAmount.toFixed(2) : undefined,
       });
 
-      await storage.updateDispute(disputeId, { status: 'awaiting_payment' });
-
-      await storage.createNotification({
-        userId: dispute.posterId,
-        title: 'Worker Accepted Your Proposal',
-        message: `The worker agreed to your proposed price of \u20A6${resolvedAmount.toLocaleString()} for "${job.title}". Please confirm payment to release funds.`,
-        type: 'info',
-        jobId: dispute.jobId,
-      });
-
-      const full = await storage.getDispute(disputeId);
-      res.json(full);
-    } catch (err) {
-      res.status(500).json({ message: "Internal server error" });
-    }
-  });
-
-  app.post('/api/disputes/:id/confirm-payment', isAuthenticated, async (req, res) => {
-    try {
-      const disputeId = Number(req.params.id);
-      const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
-
-      const dispute = await storage.getDispute(disputeId);
-      if (!dispute) return res.status(404).json({ message: "Dispute not found" });
-
-      if (dispute.posterId !== userId) {
-        return res.status(403).json({ message: "Only the job poster can confirm payment" });
-      }
-
-      if (dispute.status !== 'awaiting_payment') {
-        return res.status(400).json({ message: "This dispute is not awaiting payment confirmation" });
-      }
-
-      if (!dispute.proposedAmount) {
-        return res.status(400).json({ message: "No agreed amount found" });
-      }
-
-      const job = await storage.getJob(dispute.jobId);
-      if (!job) return res.status(404).json({ message: "Job not found" });
-
-      const resolvedAmount = parseFloat(dispute.proposedAmount);
-      const originalPrice = job.priceType === 'per_person' ? parseFloat(job.price) * job.workersNeeded : parseFloat(job.price);
-      const fee = resolvedAmount * 0.22;
-      const workerPayout = resolvedAmount - fee;
-      const refundToPoster = originalPrice - resolvedAmount;
-
-      const workerIds = job.workerId ? job.workerId.split(',').filter(Boolean) : [];
-      const payoutPerWorker = workerPayout / workerIds.length;
-
-      const [atomicResolved] = await db.update(disputes)
-        .set({ status: 'resolved', resolvedAmount: resolvedAmount.toFixed(2), resolvedBy: 'agreement' })
-        .where(and(eq(disputes.id, disputeId), eq(disputes.status, 'awaiting_payment')))
-        .returning();
-
-      if (!atomicResolved) {
-        const currentDispute = await storage.getDispute(disputeId);
-        if (currentDispute?.status === 'resolved') {
-          return res.json(currentDispute);
-        }
-        return res.status(409).json({ message: "Dispute state changed concurrently. Please refresh and try again." });
-      }
-
-      for (const wId of workerIds) {
-        await storage.updateWalletBalance(wId, payoutPerWorker);
-        await storage.createTransaction({
-          userId: wId,
-          amount: payoutPerWorker.toFixed(2),
-          type: 'job_earning',
-          jobId: job.id,
-        });
-      }
-
-      if (refundToPoster > 0) {
-        await storage.updateWalletBalance(dispute.posterId, refundToPoster);
-        await storage.createTransaction({
-          userId: dispute.posterId,
-          amount: refundToPoster.toFixed(2),
-          type: 'escrow_refund',
-          jobId: job.id,
-        });
-      }
-
-      await storage.addPlatformEarning(fee, job.id, job.title);
-
-      await storage.createDisputeMessage({
-        disputeId,
-        senderId: userId,
-        message: `Payment confirmed. \u20A6${resolvedAmount.toLocaleString()} released to worker (platform fee: \u20A6${fee.toFixed(2)}).`,
-        type: 'system',
-        amount: resolvedAmount.toFixed(2),
+      await storage.updateDispute(disputeId, {
+        status: 'resolved',
+        resolution: 'mutual_agreement',
+        resolvedNote: `Mutual agreement reached${agreedAmount ? ` at \u20A6${agreedAmount.toLocaleString()}` : ''}.`,
       });
 
       await storage.updateJob(dispute.jobId, { status: 'completed', completedAt: new Date() });
 
       await storage.createNotification({
-        userId: dispute.workerId,
-        title: 'Payment Released!',
-        message: `The poster confirmed payment of \u20A6${workerPayout.toFixed(2)} for "${job.title}" has been added to your wallet.`,
-        type: 'success',
+        userId: dispute.posterId,
+        title: 'Dispute Resolved by Agreement',
+        message: `The dispute for "${job.title}" was resolved. Arrrange payment directly with the other party.`,
+        type: 'info',
         jobId: dispute.jobId,
-      });
-
-      await storage.createAdminNotification({
-        adminId: 0,
-        title: 'Dispute Resolved - Job Completed',
-        message: `"${job.title}" completed via dispute resolution. Resolved amount: \u20A6${resolvedAmount.toLocaleString()}. Platform fee: \u20A6${fee.toFixed(2)}.`,
-        type: 'success'
-      });
+      }).catch(() => {});
+      await storage.createNotification({
+        userId: dispute.workerId,
+        title: 'Dispute Resolved by Agreement',
+        message: `The dispute for "${job.title}" was resolved. Coordinate with the other party to receive your payment directly.`,
+        type: 'info',
+        jobId: dispute.jobId,
+      }).catch(() => {});
 
       const full = await storage.getDispute(disputeId);
       res.json(full);
@@ -3289,37 +3268,11 @@ export async function registerRoutes(
       const job = await storage.getJob(dispute.jobId);
       if (!job) return res.status(404).json({ message: "Job not found" });
 
-      const originalPrice = job.priceType === 'per_person' ? parseFloat(job.price) * job.workersNeeded : parseFloat(job.price);
       const workerIds = job.workerId ? job.workerId.split(',').filter(Boolean) : [];
-      const { action } = parsed.data;
-
-      let workerTotal = 0;
-      let posterRefund = 0;
-      let platformFee = 0;
-      let summaryMsg = '';
-
-      if (action === 'refund_poster') {
-        posterRefund = originalPrice;
-        workerTotal = 0;
-        platformFee = 0;
-        summaryMsg = `Admin refunded full amount (\u20A6${originalPrice.toLocaleString()}) to job poster.`;
-      } else if (action === 'release_worker') {
-        platformFee = originalPrice * 0.22;
-        workerTotal = originalPrice - platformFee;
-        posterRefund = 0;
-        summaryMsg = `Admin released funds to worker(s). Worker receives \u20A6${workerTotal.toLocaleString()}, platform fee \u20A6${platformFee.toLocaleString()}.`;
-      } else if (action === 'custom') {
-        workerTotal = parsed.data.workerAmount ?? 0;
-        posterRefund = parsed.data.posterRefund ?? 0;
-        if (workerTotal + posterRefund > originalPrice) {
-          return res.status(400).json({ message: `Total distribution (\u20A6${(workerTotal + posterRefund).toLocaleString()}) exceeds escrowed amount (\u20A6${originalPrice.toLocaleString()})` });
-        }
-        platformFee = originalPrice - workerTotal - posterRefund;
-        summaryMsg = `Admin resolved with custom split: Worker \u20A6${workerTotal.toLocaleString()}, Poster refund \u20A6${posterRefund.toLocaleString()}, Platform \u20A6${platformFee.toLocaleString()}.`;
-      }
+      const { resolution, note } = parsed.data;
 
       const [atomicAdminResolved] = await db.update(disputes)
-        .set({ status: 'resolved', resolvedAmount: (action === 'refund_poster' ? posterRefund : workerTotal).toFixed(2), resolvedBy: 'admin' })
+        .set({ status: 'resolved', resolution, resolvedNote: note || null })
         .where(and(eq(disputes.id, disputeId), sql`${disputes.status} != 'resolved'`))
         .returning();
 
@@ -3327,38 +3280,20 @@ export async function registerRoutes(
         return res.status(409).json({ message: "This dispute has already been resolved." });
       }
 
-      if (workerTotal > 0 && workerIds.length > 0) {
-        const payoutPerWorker = workerTotal / workerIds.length;
-        for (const wId of workerIds) {
-          await storage.updateWalletBalance(wId, payoutPerWorker);
-          await storage.createTransaction({
-            userId: wId,
-            amount: payoutPerWorker.toFixed(2),
-            type: 'job_earning',
-            jobId: job.id,
-          });
-        }
-      }
+      const resolutionLabels: Record<string, string> = {
+        poster_favored: 'resolved in favor of the job poster',
+        worker_favored: 'resolved in favor of the worker',
+        mutual_agreement: 'resolved by mutual agreement',
+      };
+      const summaryMsg = `Admin ${resolutionLabels[resolution] || 'resolved'}.${note ? ` Note: ${note}` : ''}`;
 
-      if (posterRefund > 0) {
-        await storage.updateWalletBalance(dispute.posterId, posterRefund);
-        await storage.createTransaction({
-          userId: dispute.posterId,
-          amount: posterRefund.toFixed(2),
-          type: 'escrow_refund',
-          jobId: job.id,
-        });
-      }
-
-      if (platformFee > 0) {
-        await storage.addPlatformEarning(platformFee, job.id, job.title);
-      }
-
-      if (parsed.data.message) {
+      // Mediation only — no funds are held by the platform. The parties arrange
+      // payment directly per the admin's recommendation.
+      if (note) {
         await storage.createDisputeMessage({
           disputeId,
           senderId: userId,
-          message: parsed.data.message,
+          message: note,
           type: 'message',
         });
       }
@@ -3368,14 +3303,30 @@ export async function registerRoutes(
         senderId: userId,
         message: summaryMsg,
         type: 'acceptance',
-        amount: (action === 'refund_poster' ? posterRefund : workerTotal).toFixed(2),
       });
 
-      const newStatus = action === 'refund_poster' ? 'cancelled' : 'completed';
-      await storage.updateJob(dispute.jobId, { 
+      const newStatus = resolution === 'poster_favored' ? 'cancelled' : 'completed';
+      await storage.updateJob(dispute.jobId, {
         status: newStatus,
         ...(newStatus === 'completed' ? { completedAt: new Date() } : {}),
       });
+
+      for (const wId of workerIds) {
+        storage.createNotification({
+          userId: wId,
+          title: 'Dispute Resolved',
+          message: `The dispute for "${job.title}" was ${resolution === 'worker_favored' ? 'resolved in your favor' : 'resolved'}. Arrange payment directly with the other party as recommended.`,
+          type: 'info',
+          jobId: dispute.jobId,
+        }).catch(() => {});
+      }
+      storage.createNotification({
+        userId: dispute.posterId,
+        title: 'Dispute Resolved',
+        message: `The dispute for "${job.title}" was ${resolution === 'poster_favored' ? 'resolved in your favor' : 'resolved'}.`,
+        type: 'info',
+        jobId: dispute.jobId,
+      }).catch(() => {});
 
       try {
         await storage.createAdminNotificationForAll({
@@ -3393,248 +3344,299 @@ export async function registerRoutes(
       res.status(500).json({ message: "Internal server error" });
     }
   });
-// --- WALLET ---
+// --- TRANSACTIONS (fees only — money is paid directly off-platform) ---
 
-app.get(api.wallet.get.path, isAuthenticated, async (req, res) => {
-  const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
-  const profile = await storage.getProfile(userId);
-  const transactions = await storage.getTransactions(userId);
-  const heldBalance = await storage.getHeldBalance(userId);
-
-  if (!profile) return res.status(404).json({ message: "Profile not found" });
-
-  res.json({
-    balance: profile.walletBalance,
-    heldBalance,
-    transactions
-  });
-});
-
-app.get(api.wallet.heldJobs.path, isAuthenticated, async (req, res) => {
-    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
-    const escrows = await storage.getUserJobEscrows(userId, 'held');
-
-    const jobs = await Promise.all(
-      escrows.map(async (e) => {
-        const job = await storage.getJob(e.jobId);
-        return {
-          jobId: e.jobId,
-          jobTitle: job?.title || 'Untitled job',
-          amount: e.amount,
-          createdAt: e.createdAt?.toISOString() ?? new Date().toISOString(),
-        };
-      })
-    );
-
-    res.json({ jobs });
-  });
-// Admin/owner: manually credit a user's wallet (e.g. reconciling an off-platform bank transfer).
-// NOTE: this is a separate admin action from the user-facing Paystack deposit flow below —
-// left untouched. Flag if this should actually be removed/merged.
-app.post(api.wallet.deposit.path, isAuthenticated, isAdminOrOwner, async (req, res) => {
-  const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
-  const parsed = api.wallet.deposit.input.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
-  const { amount, bankCode, bankName, accountNumber, accountName } = parsed.data;
-
-  await storage.updateWalletBalance(userId, amount);
-  await storage.createTransaction({
-    userId,
-    amount: amount.toString(),
-    type: 'deposit',
-    bankName: bankName || null,
-    bankCode: bankCode || null,
-    accountNumber: accountNumber || null,
-    accountName: accountName || null,
-  });
-
-  const profile = await storage.getProfile(userId);
-  const newBalance = parseFloat(profile?.walletBalance || "0");
-  storage.getUser(userId).then(u => {
-    if (u?.email) sendWalletDepositEmail(u.email, u.firstName || u.email, amount, newBalance).catch(() => {});
-  }).catch(() => {});
-  res.json({ newBalance: profile?.walletBalance || "0" });
-});
-// --- Paystack hosted checkout flow ---
-
-app.post(api.wallet.initializeFunding.path, isAuthenticated, async (req, res) => {
-  const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
-  const parsed = api.wallet.initializeFunding.input.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
-  const { amount } = parsed.data;
-
-  if (amount <= 0) return res.status(400).json({ message: "Amount must be greater than zero" });
-
-  const userRecord = await storage.getUser(userId);
-  const userEmail = userRecord?.email || `user_${userId}@abib.jobs`;
-
-  const amountKobo = Math.round(amount * 100);
-  const callbackUrl = `${process.env.APP_URL}/payment/verify`;
-
-  try {
-    const initResp = await paystackRequest('POST', '/transaction/initialize', {
-      email: userEmail,
-      amount: amountKobo,
-      callback_url: callbackUrl,
-      metadata: { userId, amount },
-    });
-
-    if (!initResp.status || !initResp.data?.authorization_url) {
-      return res.status(400).json({ message: initResp.message || "Unable to initialize payment." });
-    }
-
-    const reference = initResp.data.reference;
-
-    // Record the attempt now — this row is what verifyFunding reconciles against.
-    // Replaces the old in-memory Set, which didn't survive restarts or work across instances.
-    await storage.createTransaction({
-      userId,
-      amount: amount.toString(),
-      type: 'deposit',
-      status: 'pending',
-      reference,
-    });
-
-    return res.json({
-      checkoutUrl: initResp.data.authorization_url,
-      reference,
-    });
-  } catch (err: any) {
-    console.error('[Paystack] initialize error:', err);
-    return res.status(500).json({ message: "Payment service error. Please try again." });
-  }
-});
-
-app.get(api.wallet.verifyFunding.path, isAuthenticated, async (req, res) => {
-  const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
-  const { reference } = req.params as { reference?: string };
-
-  if (!reference) return res.status(400).json({ message: "Reference is required" });
-
-  try {
-    const transaction = await storage.getTransactionByReference(reference);
-    if (!transaction) {
-      return res.status(400).json({ message: "No matching deposit found for this reference." });
-    }
-    if (transaction.userId !== userId) {
-      return res.status(403).json({ message: "This payment does not belong to your account." });
-    }
-
-    // Already resolved — safe to hit repeatedly (refresh, duplicate calls) without re-querying Paystack.
-    if (transaction.status === 'completed') {
-      return res.json({ status: 'success', message: "Deposit already processed.", amount: transaction.amount });
-    }
-    if (transaction.status === 'failed') {
-      return res.status(400).json({ message: "This payment attempt was not successful." });
-    }
-
-    const verifyResp = await paystackRequest('GET', `/transaction/verify/${reference}`);
-    console.log(`[Paystack] verify response:`, JSON.stringify(verifyResp));
-
-    if (!verifyResp.status || verifyResp.data?.status !== 'success') {
-      await storage.updateTransactionStatus(reference, 'failed');
-      return res.status(400).json({ message: verifyResp.data?.gateway_response || "Payment could not be verified." });
-    }
-
-    const data = verifyResp.data;
-
-    // Defense in depth — our own row already ties this reference to userId,
-    // but confirm Paystack's metadata agrees before crediting anything.
-    if (data.metadata?.userId && data.metadata.userId !== userId) {
-      return res.status(403).json({ message: "This payment does not belong to your account." });
-    }
-
-    const amount = data.amount / 100; // kobo -> naira
-
-    // Atomic gate: only the request that actually flips pending -> completed gets to credit the wallet.
-    // completeDepositIfPending wraps the status flip + wallet credit in one transaction.
-    const completed = await storage.completeDepositIfPending(reference, {
-      amount: amount.toString(),
-      bankName: data.channel === 'card' ? 'Card Payment' : 'Bank Transfer',
-      accountNumber: data.authorization?.last4 ? `****${data.authorization.last4}` : null,
-      userId,
-    });
-
-    if (!completed) {
-      // Lost the race to a concurrent verify call — it already credited the wallet. Just report current state.
-      return res.json({ status: 'success', message: "Deposit already processed.", amount: amount.toString() });
-    }
-
-    const profile = await storage.getProfile(userId);
-    const newBalance = parseFloat(profile?.walletBalance || "0");
-    storage.getUser(userId).then(u => {
-      if (u?.email) sendWalletDepositEmail(u.email, u.firstName || u.email, amount, newBalance).catch(() => {});
-    }).catch(() => {});
-
-    return res.json({
-      status: 'success',
-      message: "Deposit successful!",
-      amount: amount.toString(),
-    });
-  } catch (err: any) {
-    console.error('[Paystack] verify error:', err);
-    return res.status(500).json({ message: "Payment service error. Please try again." });
-  }
-});
-// Withdrawal fee — percentage deducted from the requested amount before payout.
-  // e.g. user requests ₦10,000 → fee ₦150 (1.5%) → they receive ₦9,850, wallet debited ₦10,000.
-  const WITHDRAWAL_FEE_PERCENT = parseFloat(process.env.PAYSTACK_WITHDRAWAL_FEE_PERCENT || '1.5');
-
-  // Simple in-memory cache for the bank list — it rarely changes, no need to hit Paystack every load.
-  let banksCache: { name: string; code: string }[] | null = null;
-  let banksCacheExpiry = 0;
-
-  async function getBanksList(): Promise<{ name: string; code: string }[]> {
-    if (banksCache && Date.now() < banksCacheExpiry) return banksCache;
-    const banksResp = await paystackRequest('GET', '/bank?currency=NGN&country=nigeria');
-    if (!banksResp.status) throw new Error(banksResp.message || "Could not fetch bank list.");
-    banksCache = banksResp.data.map((b: any) => ({ name: b.name, code: b.code }));
-    banksCacheExpiry = Date.now() + 24 * 60 * 60 * 1000; // 24h
-    return banksCache!;
-  }
-
-  app.get(api.wallet.banks.path, isAuthenticated, async (req, res) => {
+  app.get(api.transactions.history.path, isAuthenticated, async (req, res) => {
     try {
-      const banks = await getBanksList();
-      res.json({ banks });
-    } catch (err: any) {
-      console.error('[Paystack] banks error:', err);
-      res.status(500).json({ message: err.message || "Could not fetch bank list." });
-    }
-  });
+      const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
 
-  app.post(api.wallet.resolveAccount.path, isAuthenticated, async (req, res) => {
-    const parsed = api.wallet.resolveAccount.input.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
-    const { accountNumber, bankCode } = parsed.data;
+      const postingFees = await storage.getJobPostingFeesForUser(userId);
+      const adjustments = await storage.getNegotiationFeeAdjustmentsForUser(userId);
 
-    try {
-      const resolveResp = await paystackRequest('GET', `/bank/resolve?account_number=${accountNumber}&bank_code=${bankCode}`);
-      if (!resolveResp.status) {
-        return res.status(400).json({ message: resolveResp.message || "Could not resolve account. Check the details and try again." });
+      const jobIds = Array.from(new Set([
+        ...postingFees.map(f => f.jobId),
+        ...adjustments.map(a => a.jobId),
+      ]));
+      const titles = new Map<number, string>();
+      for (const jid of jobIds) {
+        const j = await storage.getJob(jid);
+        if (j) titles.set(jid, j.title);
       }
-      res.json({ accountName: resolveResp.data.account_name });
-    } catch (err: any) {
-      console.error('[Paystack] resolve-account error:', err);
-      res.status(400).json({ message: "Could not resolve account. Check the details and try again." });
+
+      const transactions = [
+        ...postingFees.map(f => ({
+          id: f.id,
+          type: 'job_posting_fee',
+          amount: f.feeAmount,
+          jobId: f.jobId,
+          jobTitle: titles.get(f.jobId) || null,
+          previousAmount: null,
+          newAmount: null,
+          status: f.status,
+          createdAt: f.createdAt ? f.createdAt.toISOString() : null,
+        })),
+        ...adjustments.map(a => ({
+          id: a.id,
+          type: 'negotiation_fee',
+          amount: a.additionalFee,
+          jobId: a.jobId,
+          jobTitle: titles.get(a.jobId) || null,
+          previousAmount: a.previousAmount,
+          newAmount: a.newAmount,
+          status: a.status,
+          createdAt: a.createdAt ? a.createdAt.toISOString() : null,
+        })),
+      ].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+      res.json({ transactions });
+    } catch (err) {
+      res.status(500).json({ message: "Internal server error" });
     }
   });
 
-  // Returns saved beneficiary accounts from the user_beneficiaries table.
-  app.get(api.wallet.withdrawalAccounts.path, isAuthenticated, async (req, res) => {
-    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
-    if (!userId) return res.status(401).json({ message: "Not authenticated" });
-    const beneficiaries = await storage.getUserBeneficiaries(userId);
-    const accounts = beneficiaries.map((b) => ({
-      bankCode: b.bankCode || '',
-      bankName: b.bankName,
-      accountNumber: b.accountNumber,
-      accountName: b.accountName || '',
-    }));
-    res.json({ accounts });
+  // --- ADMIN FEES ---
+
+  app.get(api.transactions.fees.path, isAdminOrOwner, async (req, res) => {
+    try {
+      const postingFees = await storage.getAllJobPostingFees();
+      const adjustments = await storage.getAllNegotiationFeeAdjustments();
+      const totalFees =
+        postingFees.filter(f => f.status === 'paid').reduce((s, f) => s + parseNumeric(f.feeAmount), 0) +
+        adjustments.filter(a => a.status === 'paid').reduce((s, a) => s + parseNumeric(a.additionalFee), 0);
+      res.json({ totalFees: totalFees.toFixed(2), postingFees, adjustments });
+    } catch (err) {
+      res.status(500).json({ message: "Internal server error" });
+    }
   });
 
-  // Paystack webhook — reconciles transfers that didn't resolve synchronously above.
+  // --- SUSPENSION / BAN APPEALS ---
+
+  app.post(api.appeals.create.path, isAuthenticated, async (req, res) => {
+    try {
+      const parsed = api.appeals.create.input.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+
+      const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
+      const profile = await storage.getProfile(userId);
+      if (!profile) return res.status(404).json({ message: "Profile not found" });
+      if (!profile.isSuspended && !profile.isBanned) {
+        return res.status(400).json({ message: "Your account is not currently suspended or banned." });
+      }
+
+      const existing = await storage.getUserSuspensionAppeals(userId);
+      if (existing.some(a => a.status === 'pending')) {
+        return res.status(400).json({ message: "You already have a pending appeal. Please wait for it to be reviewed." });
+      }
+
+      await storage.createSuspensionAppeal({ userId, reason: parsed.data.reason });
+
+      const user = await storage.getUser(userId);
+      const name = user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || (user?.email || 'User') : 'User';
+      if (user?.email) sendSuspensionAppealReceivedEmail(user.email, name).catch(() => {});
+
+      res.json({ success: true, message: "Appeal submitted. You will be notified by email when it's reviewed." });
+    } catch (err) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.get(api.appeals.my.path, isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
+      const appeals = await storage.getUserSuspensionAppeals(userId);
+      res.json(appeals);
+    } catch (err) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // --- ADMIN USER MANAGEMENT (suspend / ban) ---
+
+  const cancelActiveJobsForUser = async (targetUserId: string): Promise<number> => {
+    const activeJobs = await storage.getUserActiveJobs(targetUserId);
+    let count = 0;
+    for (const j of activeJobs) {
+      const inActiveStatus = ['pending_payment', 'open', 'in_progress'].includes(j.status);
+      const isParticipant = j.posterId === targetUserId || (j.workerId ? j.workerId.split(',').filter(Boolean).includes(targetUserId) : false);
+      if (!inActiveStatus || !isParticipant) continue;
+
+      await storage.updateJob(j.id, {
+        status: 'cancelled',
+        cancellationReason: 'Cancelled because your account was restricted by an admin.',
+        cancellationEscalated: false,
+      });
+
+      const counterpartyIds = j.posterId === targetUserId
+        ? (j.workerId ? j.workerId.split(',').filter(Boolean) : [])
+        : [j.posterId];
+
+      for (const cp of counterpartyIds) {
+        storage.createNotification({
+          userId: cp,
+          title: 'Job Cancelled',
+          message: `"${j.title}" was cancelled because the other party's account was restricted by an admin.`,
+          type: 'warning',
+          jobId: j.id,
+        }).catch(() => {});
+        storage.getUser(cp).then(u => {
+          if (u?.email) sendCounterPartyJobCancelledEmail(u.email, `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.email, j.title, true).catch(() => {});
+        }).catch(() => {});
+      }
+      count++;
+    }
+    return count;
+  };
+
+  app.get(api.admin.users.path, isAdminOrOwner, async (req, res) => {
+    try {
+      const usersList = await storage.getAllUsers();
+      res.json(usersList);
+    } catch (err) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post(api.admin.suspendUser.path, isAdminOrOwner, async (req, res) => {
+    try {
+      const parsed = api.admin.suspendUser.input.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+
+      const targetUserId = req.params.userId;
+      const profile = await storage.getProfile(targetUserId);
+      if (!profile) return res.status(404).json({ message: "User not found" });
+      if (profile.isBanned) return res.status(400).json({ message: "This user is banned. Unban them before suspending." });
+
+      const cancelledJobs = await cancelActiveJobsForUser(targetUserId);
+      await storage.suspendUser(targetUserId, parsed.data.reason, parsed.data.duration);
+
+      const user = await storage.getUser(targetUserId);
+      const name = user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || (user?.email || 'User') : 'User';
+      if (user?.email) sendUserSuspendedEmail(user.email, name, parsed.data.reason, parsed.data.duration ?? null).catch(() => {});
+
+      res.json({ success: true, cancelledJobs });
+    } catch (err) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post(api.admin.unsuspendUser.path, isAdminOrOwner, async (req, res) => {
+    try {
+      const targetUserId = req.params.userId;
+      const profile = await storage.getProfile(targetUserId);
+      if (!profile) return res.status(404).json({ message: "User not found" });
+      if (!profile.isSuspended) return res.status(400).json({ message: "This user is not suspended." });
+
+      await storage.unsuspendUser(targetUserId);
+
+      const user = await storage.getUser(targetUserId);
+      const name = user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || (user?.email || 'User') : 'User';
+      if (user?.email) sendUserUnsuspendedEmail(user.email, name).catch(() => {});
+
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post(api.admin.banUser.path, isAdminOrOwner, async (req, res) => {
+    try {
+      const parsed = api.admin.banUser.input.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+
+      const targetUserId = req.params.userId;
+      const profile = await storage.getProfile(targetUserId);
+      if (!profile) return res.status(404).json({ message: "User not found" });
+      if (profile.isBanned) return res.status(400).json({ message: "This user is already banned." });
+
+      const cancelledJobs = await cancelActiveJobsForUser(targetUserId);
+      await storage.suspendUser(targetUserId, parsed.data.reason, undefined);
+      await storage.banUser(targetUserId, parsed.data.reason);
+
+      const user = await storage.getUser(targetUserId);
+      const name = user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || (user?.email || 'User') : 'User';
+      if (user?.email) sendUserBannedEmail(user.email, name, parsed.data.reason).catch(() => {});
+
+      res.json({ success: true, cancelledJobs });
+    } catch (err) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post(api.admin.unbanUser.path, isAdminOrOwner, async (req, res) => {
+    try {
+      const targetUserId = req.params.userId;
+      const profile = await storage.getProfile(targetUserId);
+      if (!profile) return res.status(404).json({ message: "User not found" });
+      if (!profile.isBanned) return res.status(400).json({ message: "This user is not banned." });
+
+      await storage.unbanUser(targetUserId);
+      await storage.unsuspendUser(targetUserId);
+
+      const user = await storage.getUser(targetUserId);
+      const name = user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || (user?.email || 'User') : 'User';
+      if (user?.email) sendUserUnsuspendedEmail(user.email, name).catch(() => {});
+
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.get(api.admin.appeals.path, isAdminOrOwner, async (req, res) => {
+    try {
+      const status = req.query.status as string | undefined;
+      const appeals = await storage.getSuspensionAppeals(status);
+      res.json(appeals);
+    } catch (err) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post(api.admin.reviewAppeal.path, isAdminOrOwner, async (req, res) => {
+    try {
+      const parsed = api.admin.reviewAppeal.input.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0]?.message || "Invalid input" });
+
+      const appealId = Number(req.params.id);
+      const appeal = await storage.getSuspensionAppeal(appealId);
+      if (!appeal) return res.status(404).json({ message: "Appeal not found" });
+      if (appeal.status === 'approved' || appeal.status === 'denied') {
+        return res.status(400).json({ message: "This appeal has already been reviewed." });
+      }
+
+      await storage.reviewSuspensionAppeal(appealId, parsed.data.decision, parsed.data.note);
+
+      if (parsed.data.decision === 'approved') {
+        await storage.unsuspendUser(appeal.userId);
+        await storage.unbanUser(appeal.userId);
+        storage.createNotification({
+          userId: appeal.userId,
+          title: 'Appeal Approved',
+          message: 'Your account restriction appeal was approved and your account has been restored.',
+          type: 'success',
+        }).catch(() => {});
+      } else {
+        storage.createNotification({
+          userId: appeal.userId,
+          title: 'Appeal Denied',
+          message: 'Your account restriction appeal was denied.',
+          type: 'warning',
+        }).catch(() => {});
+      }
+
+      const user = await storage.getUser(appeal.userId);
+      const name = user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || (user?.email || 'User') : 'User';
+      if (user?.email) sendSuspensionAppealDecisionEmail(user.email, name, parsed.data.decision === 'approved', parsed.data.note ?? null).catch(() => {});
+
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // --- PAYSTACK WEBHOOK ---
+  // Reconciles fee payments (charge.success for job_posting_fee / negotiation_fee)
+  // and platform/admin transfers (transfer.success / transfer.failed / transfer.reversed).
   // IMPORTANT: the global express.json() middleware in server/index.ts runs before this
   // route and captures the raw bytes into req.rawBody via its verify() callback. We sign
   // and hash THAT buffer (req.body here is already the parsed JSON object, which would
@@ -3665,469 +3667,122 @@ app.get(api.wallet.verifyFunding.path, isAuthenticated, async (req, res) => {
     try {
       const eventType = event?.event as string | undefined;
       const data = event?.data;
-      if (!eventType?.startsWith('transfer.')) return;
+      if (!data?.reference) return;
 
-      const reference = data?.reference;
-      if (!reference) return;
+      // ─── Transfers (platform earnings & admin wallet withdrawals) ──────────
+      if (eventType?.startsWith('transfer.')) {
+        const reference = data.reference;
 
-      // Route by reference prefix to the correct table.
-      const isPlatformTransfer = reference.startsWith('platwd_');
-      const isAdminTransfer = reference.startsWith('admwd_');
+        const isPlatformTransfer = reference.startsWith('platwd_');
+        const isAdminTransfer = reference.startsWith('admwd_');
 
-      // ─── Platform earnings withdrawal ───────────────────────────────────────
-      if (isPlatformTransfer) {
-        const { eq: eqOp } = await import('drizzle-orm');
-        const { db: dbConn } = await import('./db');
-        const { platformTransactions: pt } = await import('@shared/schema');
+        if (isPlatformTransfer) {
+          const { eq: eqOp } = await import('drizzle-orm');
+          const { db: dbConn } = await import('./db');
+          const { platformTransactions: pt } = await import('@shared/schema');
 
-        const [ptRow] = await dbConn.select().from(pt).where(eqOp(pt.reference, reference));
-        if (!ptRow || ptRow.status === 'success' || ptRow.status === 'failed') return;
+          const [ptRow] = await dbConn.select().from(pt).where(eqOp(pt.reference, reference));
+          if (!ptRow || ptRow.status === 'success' || ptRow.status === 'failed') return;
 
-        if (eventType === 'transfer.success') {
-          await dbConn.update(pt).set({ status: 'success' }).where(eqOp(pt.reference, reference));
-          const fee = Number(data.fee) || 0;
-          if (fee > 0) await storage.addWithdrawalFee(fee, reference);
-        } else if (eventType === 'transfer.failed' || eventType === 'transfer.reversed') {
-          // Refund platform balance
-          const amountNum = Math.abs(Number(ptRow.amount));
-          const earnings = await storage.getPlatformEarnings();
-          const pe = (await import('@shared/schema')).platformEarnings;
-          const newBalance = parseFloat(earnings.totalBalance) + amountNum;
-          await dbConn.update(pe).set({ totalBalance: newBalance.toFixed(2) }).where(eqOp(pe.id, earnings.id));
-          await dbConn.update(pt).set({ status: 'failed' }).where(eqOp(pt.reference, reference));
+          if (eventType === 'transfer.success') {
+            await dbConn.update(pt).set({ status: 'success' }).where(eqOp(pt.reference, reference));
+            const fee = Number(data.fee) || 0;
+            if (fee > 0) await storage.addWithdrawalFee(fee, reference);
+          } else if (eventType === 'transfer.failed' || eventType === 'transfer.reversed') {
+            const amountNum = Math.abs(Number(ptRow.amount));
+            const earnings = await storage.getPlatformEarnings();
+            const pe = (await import('@shared/schema')).platformEarnings;
+            const newBalance = parseFloat(earnings.totalBalance) + amountNum;
+            await dbConn.update(pe).set({ totalBalance: newBalance.toFixed(2) }).where(eqOp(pe.id, earnings.id));
+            await dbConn.update(pt).set({ status: 'failed' }).where(eqOp(pt.reference, reference));
+          }
+          return;
+        }
+
+        if (isAdminTransfer) {
+          const { eq: eqOp } = await import('drizzle-orm');
+          const { db: dbConn } = await import('./db');
+          const { adminWithdrawals: aw } = await import('@shared/schema');
+
+          const [awRow] = await dbConn.select().from(aw).where(eqOp(aw.reference, reference));
+          if (!awRow || awRow.status === 'success' || awRow.status === 'failed') return;
+
+          if (eventType === 'transfer.success') {
+            await dbConn.update(aw).set({ status: 'success' }).where(eqOp(aw.reference, reference));
+          } else if (eventType === 'transfer.failed' || eventType === 'transfer.reversed') {
+            const amountNum = Math.abs(Number(awRow.amount));
+            await storage.creditAdminWallet(awRow.adminId, amountNum);
+            await dbConn.update(aw).set({ status: 'failed' }).where(eqOp(aw.reference, reference));
+          }
+          return;
+        }
+
+        return;
+      }
+
+      // ─── Fee payments (charge.success) ─────────────────────────────────────
+      if (eventType === 'charge.success') {
+        const reference = data.reference;
+        const metadata = data?.metadata;
+        if (!metadata?.type) return;
+
+        if (metadata.type === 'job_posting_fee') {
+          const [feeRow] = await db.select().from(jobPostingFees)
+            .where(eq(jobPostingFees.paystackReference, reference)).limit(1);
+          if (!feeRow || feeRow.status === 'paid' || !feeRow.paystackReference) return;
+
+          await storage.markJobPostingFeePaid(feeRow.paystackReference);
+          const job = await storage.getJob(feeRow.jobId);
+          if (job && job.status === 'pending_payment') {
+            await storage.updateJob(job.id, { status: 'open' });
+          }
+          await storage.addPlatformEarning(parseNumeric(feeRow.feeAmount), feeRow.jobId, job?.title ?? 'Job');
+
+          const poster = await storage.getUser(feeRow.userId);
+          const posterName = poster ? `${poster.firstName || ''} ${poster.lastName || ''}`.trim() || (poster?.email || 'User') : 'User';
+          if (poster?.email && job) {
+            sendJobPostingFeeReceiptEmail(poster.email, posterName, job.title, job.id, parseNumeric(feeRow.jobAmount), parseNumeric(feeRow.feeAmount)).catch(() => {});
+          }
+        } else if (metadata.type === 'negotiation_fee') {
+          const [adjRow] = await db.select().from(negotiationFeeAdjustments)
+            .where(eq(negotiationFeeAdjustments.paystackReference, reference)).limit(1);
+          if (!adjRow || adjRow.status === 'paid' || !adjRow.paystackReference) return;
+
+          await storage.markNegotiationFeeAdjustmentPaid(adjRow.paystackReference);
+          const job = await storage.getJob(adjRow.jobId);
+          await storage.addPlatformEarning(parseNumeric(adjRow.additionalFee), adjRow.jobId, job?.title ?? 'Job');
+
+          if (job) {
+            const poster = await storage.getUser(job.posterId);
+            const posterName = poster ? `${poster.firstName || ''} ${poster.lastName || ''}`.trim() || (poster?.email || 'User') : 'User';
+            if (poster?.email) {
+              sendNegotiationFeeReceiptEmail(
+                poster.email, posterName, job.title, job.id,
+                parseNumeric(adjRow.previousAmount), parseNumeric(adjRow.newAmount), parseNumeric(adjRow.additionalFee),
+              ).catch(() => {});
+            }
+          }
         }
         return;
-      }
-
-      // ─── Admin wallet withdrawal ────────────────────────────────────────────
-      if (isAdminTransfer) {
-        const { eq: eqOp } = await import('drizzle-orm');
-        const { db: dbConn } = await import('./db');
-        const { adminWithdrawals: aw } = await import('@shared/schema');
-
-        const [awRow] = await dbConn.select().from(aw).where(eqOp(aw.reference, reference));
-        if (!awRow || awRow.status === 'success' || awRow.status === 'failed') return;
-
-        if (eventType === 'transfer.success') {
-          await dbConn.update(aw).set({ status: 'success' }).where(eqOp(aw.reference, reference));
-        } else if (eventType === 'transfer.failed' || eventType === 'transfer.reversed') {
-          // Refund admin wallet
-          const amountNum = Math.abs(Number(awRow.amount));
-          await storage.creditAdminWallet(awRow.adminId, amountNum);
-          await dbConn.update(aw).set({ status: 'failed' }).where(eqOp(aw.reference, reference));
-        }
-        return;
-      }
-
-      // ─── User wallet withdrawal (original path) ─────────────────────────────
-      const transaction = await storage.getTransactionByReference(reference);
-      if (!transaction) {
-        console.warn(`[Paystack Webhook] No transaction found for reference ${reference}`);
-        return;
-      }
-
-      const currentStatus = (transaction as any).status;
-      if (currentStatus === 'success' || currentStatus === 'failed') {
-        return;
-      }
-
-      if (eventType === 'transfer.success') {
-        await storage.updateTransactionStatus(reference, 'success');
-        const fee = Number((transaction as any).fee) || 0;
-        if (fee > 0) await storage.addWithdrawalFee(fee, reference);
-        await storage.createNotification({
-          userId: transaction.userId,
-          title: 'Withdrawal Successful',
-          message: `Your withdrawal of ₦${Math.abs(Number(transaction.amount)).toLocaleString()} has been paid out to ${transaction.bankName} (${transaction.accountNumber}).`,
-          type: 'success',
-        });
-      } else if (eventType === 'transfer.failed' || eventType === 'transfer.reversed') {
-        await storage.updateWalletBalance(transaction.userId, Math.abs(Number(transaction.amount)));
-        await storage.updateTransactionStatus(reference, 'failed');
-        await storage.createNotification({
-          userId: transaction.userId,
-          title: 'Withdrawal Failed',
-          message: `Your withdrawal of ₦${Math.abs(Number(transaction.amount)).toLocaleString()} could not be completed and has been refunded to your wallet.`,
-          type: 'warning',
-        });
       }
     } catch (err) {
       console.error('[Paystack Webhook] processing error:', err);
     }
   });
-  // --- WITHDRAWAL OTP ---
 
-  app.post('/api/wallet/withdraw-otp', isAuthenticated, async (req, res) => {
-    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
-    if (!userId) return res.status(401).json({ message: "Not authenticated" });
 
-    const { amount, bankCode, bankName, accountNumber, accountName, reason, type } = req.body;
-    if (!amount || !bankCode || !accountNumber || accountNumber.length !== 10) {
-      return res.status(400).json({ message: "Missing required fields" });
-    }
-    if (type === 'request' && (!reason || !reason.trim())) {
-      return res.status(400).json({ message: "Reason is required for withdrawal requests" });
-    }
-    const amountNum = parseFloat(amount);
-    if (!isFinite(amountNum) || amountNum <= 0) {
-      return res.status(400).json({ message: "Invalid amount" });
-    }
 
-    const profile = await storage.getProfile(userId);
-    if (!profile || parseFloat(profile.walletBalance) < amountNum) {
-      return res.status(400).json({ message: "Insufficient funds" });
-    }
 
-    const [user] = await db.select().from(users).where(eq(users.id, userId));
-    const email = user?.email;
-    if (!email) return res.status(400).json({ message: "No email on file" });
-    const userName = user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User' : 'User';
 
-    const otpCode = String(Math.floor(100000 + Math.random() * 900000));
-    const prefix = type === 'request' ? 'wdrq' : 'wdotp';
-    const reference = `${prefix}_${userId}_${Date.now()}`;
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-    const created = await storage.createWithdrawalRequest({
-      userId,
-      userName,
-      amount: amountNum.toFixed(2),
-      bankName,
-      bankCode: bankCode || null,
-      accountNumber,
-      accountName: accountName || null,
-      reason: reason?.trim() || null,
-    });
 
-    const { db: dbConn } = await import('./db');
-    const { withdrawalRequests: wr } = await import('@shared/schema');
-    const { eq: eqOp } = await import('drizzle-orm');
-    await dbConn.update(wr).set({ otpCode, otpExpiresAt: expiresAt, reference }).where(eqOp(wr.id, created.id));
+  
 
-    try {
-      const { sendWithdrawalOtpEmail } = await import('./email');
-      await sendWithdrawalOtpEmail(email, userName, otpCode, amountNum);
-    } catch (err) {
-      console.error('[OTP] Failed to send email:', err);
-    }
+  
 
-    res.json({ reference, message: "OTP sent to your email" });
-  });
+  
 
-  app.post('/api/wallet/verify-otp', isAuthenticated, async (req, res) => {
-    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
-    if (!userId) return res.status(401).json({ message: "Not authenticated" });
-
-    const { reference, otpCode } = req.body;
-    if (!reference || !otpCode) {
-      return res.status(400).json({ message: "Reference and OTP code required" });
-    }
-
-    const { db: dbConn } = await import('./db');
-    const { withdrawalRequests: wr } = await import('@shared/schema');
-    const { eq: eqOp, and: andOp } = await import('drizzle-orm');
-
-    const [request] = await dbConn.select().from(wr).where(andOp(eqOp(wr.reference, reference), eqOp(wr.userId, userId)));
-    if (!request) return res.status(400).json({ message: "Invalid request" });
-    if (request.otpCode !== otpCode) return res.status(400).json({ message: "Invalid OTP code" });
-    if (!request.otpExpiresAt || new Date() > request.otpExpiresAt) return res.status(400).json({ message: "OTP has expired" });
-    if (request.status !== 'pending') return res.status(400).json({ message: "Request already processed" });
-
-    // Admin-mediated withdrawal request — OTP validates, but admin must approve
-    if (reference.startsWith('wdrq_')) {
-      await dbConn.update(wr).set({ otpCode: null, otpExpiresAt: null }).where(eqOp(wr.id, request.id));
-      return res.json({ reference, status: 'pending', message: "Your withdrawal request has been submitted and is awaiting admin approval." });
-    }
-
-    // Direct beneficiary withdrawal — auto-approve and initiate Paystack transfer
-    await dbConn.update(wr).set({ status: 'approved', processedAt: new Date() }).where(eqOp(wr.id, request.id));
-
-    const amountNum = parseFloat(request.amount);
-    const fee = Math.round(amountNum * (WITHDRAWAL_FEE_PERCENT / 100) * 100) / 100;
-    const netAmount = amountNum - fee;
-
-    await storage.updateWalletBalance(userId, -amountNum);
-    await storage.createTransaction({
-      userId,
-      amount: (-amountNum).toString(),
-      type: 'withdrawal',
-      bankName: request.bankName,
-      bankCode: request.bankCode,
-      accountNumber: request.accountNumber,
-      accountName: request.accountName,
-      reference,
-      status: 'pending',
-      fee: fee.toString(),
-    });
-
-    let accountName = request.accountName;
-    try {
-      const resolveResp = await paystackRequest('GET', `/bank/resolve?account_number=${request.accountNumber}&bank_code=${request.bankCode}`);
-      if (resolveResp.status) accountName = resolveResp.data.account_name;
-    } catch {}
-
-    let recipientCode: string;
-    try {
-      const recipientResp = await paystackRequest('POST', '/transferrecipient', {
-        type: 'nuban',
-        name: accountName || 'User',
-        account_number: request.accountNumber,
-        bank_code: request.bankCode,
-        currency: 'NGN',
-      });
-      if (!recipientResp.status) {
-        await storage.updateWalletBalance(userId, amountNum);
-        await storage.updateTransactionStatus(reference, 'failed');
-        return res.status(400).json({ message: recipientResp.message || "Could not set up transfer destination. Funds refunded." });
-      }
-      recipientCode = recipientResp.data.recipient_code;
-    } catch {
-      await storage.updateWalletBalance(userId, amountNum);
-      await storage.updateTransactionStatus(reference, 'failed');
-      return res.status(400).json({ message: "Could not set up transfer destination. Funds refunded." });
-    }
-
-    try {
-      const transferResp = await paystackRequest('POST', '/transfer', {
-        source: 'balance',
-        amount: Math.round(netAmount * 100),
-        recipient: recipientCode,
-        reason: 'Wallet withdrawal',
-        reference,
-      });
-
-      if (!transferResp.status) {
-        await storage.updateWalletBalance(userId, amountNum);
-        await storage.updateTransactionStatus(reference, 'failed');
-        return res.status(400).json({ message: transferResp.message || "Withdrawal failed. Funds refunded." });
-      }
-
-      const transferStatus = transferResp.data.status;
-      if (transferStatus === 'otp') {
-        await storage.updateWalletBalance(userId, amountNum);
-        await storage.updateTransactionStatus(reference, 'failed');
-        return res.status(400).json({ message: "Withdrawals temporarily unavailable. Funds refunded." });
-      }
-
-      if (transferStatus === 'success') {
-        await storage.updateTransactionStatus(reference, 'success');
-        await storage.addWithdrawalFee(fee, reference);
-        return res.json({ reference, status: 'success', fee, netAmount, message: 'Withdrawal successful.' });
-      }
-
-      return res.json({ reference, status: 'pending', fee, netAmount, message: "Withdrawal is being processed." });
-    } catch (err: any) {
-      await storage.updateWalletBalance(userId, amountNum);
-      await storage.updateTransactionStatus(reference, 'failed');
-      return res.status(400).json({ message: "Withdrawal failed. Funds returned." });
-    }
-  });
-
-  // --- BENEFICIARIES ---
-
-  app.get('/api/wallet/beneficiaries', isAuthenticated, async (req, res) => {
-    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
-    if (!userId) return res.status(401).json({ message: "Not authenticated" });
-    const beneficiaries = await storage.getUserBeneficiaries(userId);
-    res.json(beneficiaries);
-  });
-
-  app.post('/api/wallet/beneficiaries', isAuthenticated, async (req, res) => {
-    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
-    if (!userId) return res.status(401).json({ message: "Not authenticated" });
-    const { bankName, bankCode, accountNumber, accountName } = req.body;
-    if (!bankName || !accountNumber || accountNumber.length !== 10) {
-      return res.status(400).json({ message: "Bank name and 10-digit account number required" });
-    }
-    const beneficiary = await storage.createBeneficiary({ userId, bankName, bankCode, accountNumber, accountName });
-    res.status(201).json(beneficiary);
-  });
-
-  app.delete('/api/wallet/beneficiaries/:id', isAuthenticated, async (req, res) => {
-    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
-    if (!userId) return res.status(401).json({ message: "Not authenticated" });
-    const id = parseInt(req.params.id as string);
-    await storage.deleteBeneficiary(id, userId);
-    res.json({ message: "Beneficiary removed" });
-  });
-
-  app.put('/api/wallet/beneficiaries/:id/default', isAuthenticated, async (req, res) => {
-    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
-    if (!userId) return res.status(401).json({ message: "Not authenticated" });
-    const id = parseInt(req.params.id as string);
-    await storage.setDefaultBeneficiary(id, userId);
-    res.json({ message: "Default beneficiary updated" });
-  });
-
-  // --- USER WITHDRAWAL REQUESTS (admin-mediated) ---
-
-  app.get('/api/wallet/withdrawal-requests', isAuthenticated, async (req, res) => {
-    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
-    if (!userId) return res.status(401).json({ message: "Not authenticated" });
-    const requests = await storage.getUserWithdrawalRequests(userId);
-    res.json(requests);
-  });
-
-  app.post('/api/wallet/withdrawal-requests', isAuthenticated, async (req, res) => {
-    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
-    if (!userId) return res.status(401).json({ message: "Not authenticated" });
-
-    const { amount, bankName, bankCode, accountNumber, accountName, reason } = req.body;
-    if (!amount || !bankName || !accountNumber || accountNumber.length !== 10) {
-      return res.status(400).json({ message: "Amount, bank name, and 10-digit account number are required" });
-    }
-    const amountNum = parseFloat(amount);
-    if (!isFinite(amountNum) || amountNum <= 0) {
-      return res.status(400).json({ message: "Invalid amount" });
-    }
-
-    const profile = await storage.getProfile(userId);
-    if (!profile || parseFloat(profile.walletBalance) < amountNum) {
-      return res.status(400).json({ message: "Insufficient wallet balance" });
-    }
-
-    const [user] = await db.select().from(users).where(eq(users.id, userId));
-    const userName = user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User' : 'User';
-
-    const request = await storage.createWithdrawalRequest({
-      userId,
-      userName,
-      amount: amountNum.toFixed(2),
-      bankName,
-      bankCode: bankCode || null,
-      accountNumber,
-      accountName: accountName || null,
-      reason: reason || null,
-    });
-
-    try {
-      const { sendWithdrawalEmail } = await import('./email');
-      if (user?.email) sendWithdrawalEmail(user.email, userName, amountNum);
-    } catch {}
-
-    res.status(201).json(request);
-  });
-
-  // --- ADMIN WITHDRAWAL REQUESTS ---
-
-  app.get('/api/admin/withdrawal-requests', isAdminOrOwner, async (req, res) => {
-    const status = req.query.status as string | undefined;
-    const requests = await storage.getAllWithdrawalRequests(status);
-    res.json(requests);
-  });
-
-  app.post('/api/admin/withdrawal-requests/:id/process', isAdminOrOwner, async (req, res) => {
-    const id = parseInt(req.params.id);
-    const { action, adminNote } = req.body;
-    if (action !== 'approved' && action !== 'rejected') {
-      return res.status(400).json({ message: "action must be 'approved' or 'rejected'" });
-    }
-
-    const adminId = (req as any).adminUser?.id || 0;
-
-    try {
-      const result = await storage.processWithdrawalRequest(id, action, adminId, adminNote);
-
-      if (action === 'approved' && result.walletDebited && result.reference) {
-        const request = result.request;
-        let accountName = request.accountName;
-        let bankName = request.bankName;
-
-        try {
-          const resolveResp = await paystackRequest('GET', `/bank/resolve?account_number=${request.accountNumber}&bank_code=${request.bankCode}`);
-          console.log('[Admin Withdrawal] Resolve account response:', JSON.stringify(resolveResp));
-          if (resolveResp.status) accountName = resolveResp.data.account_name;
-        } catch (err) {
-          console.error('[Admin Withdrawal] Resolve account error:', err);
-        }
-
-        try {
-          const banks = await getBanksList();
-          bankName = banks.find((b: any) => b.code === request.bankCode)?.name || request.bankName;
-        } catch {}
-
-        let recipientCode: string;
-        try {
-          const recipientResp = await paystackRequest('POST', '/transferrecipient', {
-            type: 'nuban',
-            name: accountName || 'User',
-            account_number: request.accountNumber,
-            bank_code: request.bankCode,
-            currency: 'NGN',
-          });
-          console.log('[Admin Withdrawal] Create recipient response:', JSON.stringify(recipientResp));
-          if (!recipientResp.status) throw new Error(recipientResp.message);
-          recipientCode = recipientResp.data.recipient_code;
-        } catch (err: any) {
-          console.error('[Admin Withdrawal] Create recipient failed:', err.message);
-          await storage.updateWalletBalance(request.userId, parseFloat(request.amount));
-          await storage.updateTransactionStatus(result.reference, 'failed');
-          await storage.revertWithdrawalRequest(id);
-          return res.status(400).json({ message: "Could not set up transfer destination. Funds refunded." });
-        }
-
-        const fee = Math.round(parseFloat(request.amount) * (WITHDRAWAL_FEE_PERCENT / 100) * 100) / 100;
-        const netAmount = parseFloat(request.amount) - fee;
-
-        try {
-          const transferResp = await paystackRequest('POST', '/transfer', {
-            source: 'balance',
-            amount: Math.round(netAmount * 100),
-            recipient: recipientCode,
-            reason: 'Admin-approved withdrawal',
-            reference: result.reference,
-          });
-          console.log('[Admin Withdrawal] Transfer response:', JSON.stringify(transferResp));
-
-          if (!transferResp.status) {
-            console.error('[Admin Withdrawal] Transfer rejected:', transferResp.message);
-            await storage.updateWalletBalance(request.userId, parseFloat(request.amount));
-            await storage.updateTransactionStatus(result.reference, 'failed');
-            await storage.revertWithdrawalRequest(id);
-            return res.status(400).json({ message: `Transfer failed: ${transferResp.message}. Funds refunded.` });
-          }
-
-          const transferStatus = transferResp.data.status;
-          if (transferStatus === 'success') {
-            await storage.updateTransactionStatus(result.reference, 'success');
-            await storage.addWithdrawalFee(fee, result.reference);
-          } else if (transferStatus === 'otp') {
-            console.error('[Admin Withdrawal] Transfer requires OTP — dashboard setting blocks automated transfers');
-            await storage.updateWalletBalance(request.userId, parseFloat(request.amount));
-            await storage.updateTransactionStatus(result.reference, 'failed');
-            await storage.revertWithdrawalRequest(id);
-            return res.status(400).json({ message: "Withdrawals temporarily unavailable. Funds refunded." });
-          } else {
-            console.error('[Admin Withdrawal] Unexpected transfer status:', transferStatus);
-          }
-        } catch (err: any) {
-          console.error('[Admin Withdrawal] Transfer error:', err.message || err);
-          await storage.updateWalletBalance(request.userId, parseFloat(request.amount));
-          await storage.updateTransactionStatus(result.reference, 'failed');
-          await storage.revertWithdrawalRequest(id);
-          return res.status(400).json({ message: "Transfer failed. Funds refunded." });
-        }
-      }
-
-      try {
-        const targetUser = await storage.getProfile(result.request.userId);
-        if (targetUser?.userId) {
-          await storage.createNotification({
-            userId: result.request.userId,
-            title: action === 'approved' ? 'Withdrawal Approved' : 'Withdrawal Rejected',
-            message: action === 'approved'
-              ? `Your withdrawal of ₦${parseFloat(result.request.amount).toLocaleString()} has been approved and is being processed.`
-              : `Your withdrawal request was rejected.${adminNote ? ` Reason: ${adminNote}` : ''}`,
-            type: action === 'approved' ? 'success' : 'warning',
-          });
-        }
-      } catch {}
-
-      res.json(result.request);
-    } catch (err: any) {
-      res.status(400).json({ message: err.message || "Failed to process request" });
-    }
-  });
+  
 
   // --- VERIFICATION ---
 

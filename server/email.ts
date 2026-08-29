@@ -266,39 +266,115 @@ export async function sendPasswordResetReadyEmail(to: string, firstName: string,
   await sendPasswordResetEmail(to, firstName, resetToken);
 }
 
-// ─── WALLET ─────────────────────────────────────────────────────────────────
+// ─── FEES ───────────────────────────────────────────────────────────────────
 
-export async function sendWalletDepositEmail(to: string, name: string, amount: number, newBalance: number) {
-  const body = wrap("Wallet Funded",
-    heading("Wallet Funded Successfully! 💳") +
-    para(`Hi ${name}, your ABIB JOBS wallet has been topped up.`) +
+export async function sendJobPostingFeeReceiptEmail(to: string, name: string, jobTitle: string, jobId: number, jobAmount: number, fee: number) {
+  const body = wrap("Job Posting Fee Paid",
+    heading("Job Posted Successfully! 🎉") +
+    para(`Hi ${name}, your job <strong>${jobTitle}</strong> has been published.`) +
+    para("The non-refundable posting fee was charged to cover platform services. Once a worker is accepted, pay them directly — ABIB JOBS never holds your money.") +
     table(
-      infoBox("Amount Added", fmt(amount)),
-      infoBox("New Balance", fmt(newBalance)),
+      infoBox("Job Amount", fmt(jobAmount)),
+      infoBox("Posting Fee", fmt(fee)),
     ) +
-    btn(`${APP_URL}/wallet`, "View Wallet")
+    btn(`${APP_URL}/jobs/${jobId}`, "View Job")
   );
-  await send(to, `Your wallet was topped up by ${fmt(amount)}`, body);
+  await send(to, `Your job "${jobTitle}" is live`, body);
 }
 
-export async function sendWithdrawalEmail(to: string, name: string, amount: number) {
-  const body = wrap("Withdrawal Requested",
-    heading("Withdrawal Request Received") +
-    para(`Hi ${name}, your withdrawal request of <strong>${fmt(amount)}</strong> has been received and is being processed.`) +
-    para("Funds are typically sent to your bank account within 1-2 business days.") +
-    btn(`${APP_URL}/wallet`, "View Wallet")
+export async function sendNegotiationFeeReceiptEmail(to: string, name: string, jobTitle: string, jobId: number, previousAmount: number, newAmount: number, fee: number) {
+  const body = wrap("Negotiation Fee Paid",
+    heading("Offer Accepted") +
+    para(`Hi ${name}, your offer of <strong>${fmt(newAmount)}</strong> for <strong>${jobTitle}</strong> was accepted.`) +
+    para(`A negotiation fee of <strong>${fmt(fee)}</strong> was charged on the increase from ${fmt(previousAmount)}.`) +
+    table(
+      infoBox("Initial Amount", fmt(previousAmount)),
+      infoBox("Negotiated Amount", fmt(newAmount)),
+      infoBox("Negotiation Fee", fmt(fee)),
+    ) +
+    btn(`${APP_URL}/jobs/${jobId}`, "View Job")
   );
-  await send(to, `Withdrawal of ${fmt(amount)} requested`, body);
+  await send(to, `Negotiation fee for "${jobTitle}" paid`, body);
 }
 
-export async function sendWithdrawalOtpEmail(to: string, name: string, otpCode: string, amount: number) {
-  const body = wrap("Withdrawal Verification",
-    heading("Your Withdrawal OTP") +
-    para(`Hi ${name}, to confirm your withdrawal of <strong>${fmt(amount)}</strong>, use the code below:`) +
-    `<div style="background:#f0fdf4;border:2px solid #16a34a;border-radius:12px;padding:24px;text-align:center;margin:24px 0;">
-      <span style="font-size:36px;font-weight:800;color:#16a34a;letter-spacing:8px;">${otpCode}</span>
-    </div>` +
-    para("This code expires in 10 minutes. If you did not request this withdrawal, please ignore this email or contact support immediately.")
+export async function sendJobPayableToPosterEmail(to: string, posterName: string, jobTitle: string, jobId: number, amount: number, workerName: string) {
+  const body = wrap("Pay Your Worker Directly",
+    heading("A Worker Has Been Assigned") +
+    para(`Hi ${posterName}, <strong>${workerName}</strong> has been assigned to your job <strong>${jobTitle}</strong>.`) +
+    para(`Please pay <strong>${fmt(amount)}</strong> directly to the worker when the job is complete. The platform does not hold any money — keep payment records and receipts.`) +
+    btn(`${APP_URL}/jobs/${jobId}`, "View Job")
   );
-  await send(to, `Your withdrawal verification code: ${otpCode}`, body);
+  await send(to, `Pay ${workerName} directly: ${fmt(amount)} due on completion`, body);
+}
+
+// ─── SUSPENSION / BAN / APPEALS ─────────────────────────────────────────────
+
+export async function sendUserSuspendedEmail(to: string, name: string, reason: string, duration: string | null) {
+  const body = wrap("Account Suspended",
+    heading("Your Account Has Been Suspended") +
+    para(`Hi ${name}, your ABIB JOBS account has been suspended${duration ? ` for ${duration}` : ""}.`) +
+    para(`Reason: <strong>${reason}</strong>`) +
+    para("Your active jobs have been cancelled. You can appeal this decision by replying to this email or contacting support. Suspension appeals are reviewed by our team.") +
+    btn(`${APP_URL}/appeal`, "Appeal Suspension")
+  );
+  await send(to, "Your ABIB JOBS account has been suspended", body);
+}
+
+export async function sendUserBannedEmail(to: string, name: string, reason: string) {
+  const body = wrap("Account Banned",
+    heading("Your Account Has Been Banned") +
+    para(`Hi ${name}, your ABIB JOBS account has been permanently banned.`) +
+    para(`Reason: <strong>${reason}</strong>`) +
+    para("Your active jobs have been cancelled. This decision is final. If you believe this is an error, please contact support.") +
+    btn(`${APP_URL}`, "Contact Support")
+  );
+  await send(to, "Your ABIB JOBS account has been banned", body);
+}
+
+export async function sendUserUnsuspendedEmail(to: string, name: string) {
+  const body = wrap("Account Restored",
+    heading("Welcome Back!") +
+    para(`Hi ${name}, your ABIB JOBS account has been restored and you can now use the platform again.`) +
+    btn(`${APP_URL}`, "Go to ABIB JOBS")
+  );
+  await send(to, "Your ABIB JOBS account has been restored", body);
+}
+
+export async function sendCounterPartyJobCancelledEmail(to: string, name: string, jobTitle: string, dueToAccountAction: boolean) {
+  const body = wrap("A Job Was Cancelled",
+    heading("A Job You Were Working On Was Cancelled") +
+    para(`Hi ${name}, the job <strong>${jobTitle}</strong> has been cancelled${dueToAccountAction ? " because the other party's account was suspended or banned" : ""}.`) +
+    para("No payment is taken or held by the platform. If you have already performed any work, contact the poster directly to arrange payment.")
+  );
+  await send(to, `The job "${jobTitle}" was cancelled`, body);
+}
+
+export async function sendSuspensionAppealReceivedEmail(to: string, name: string) {
+  const body = wrap("Appeal Received",
+    heading("Your Appeal Has Been Received") +
+    para(`Hi ${name}, we have received your suspension appeal. Our team will review it and get back to you by email.`) +
+    para("Thank you for your patience.")
+  );
+  await send(to, "Your suspension appeal has been received", body);
+}
+
+export async function sendSuspensionAppealDecisionEmail(to: string, name: string, approved: boolean, note: string | null) {
+  const body = wrap("Appeal Decision",
+    heading(approved ? "Appeal Approved" : "Appeal Denied") +
+    para(`Hi ${name}, your suspension appeal has been <strong>${approved ? "approved" : "denied"}</strong>.`) +
+    (note ? para(`Note from the reviewer: <strong>${note}</strong>`) : "") +
+    (approved ? para("Your account has been restored and you can now use the platform again.") : para("If you have additional information, you may contact support.")) +
+    (approved ? btn(`${APP_URL}`, "Log in to ABIB JOBS") : "")
+  );
+  await send(to, `Your suspension appeal was ${approved ? "approved" : "denied"}`, body);
+}
+
+export async function sendEscalatedCancellationAdminEmail(to: string, adminName: string, jobTitle: string, jobId: number, reason?: string) {
+  const body = wrap("Cancellation Escalated",
+    heading("A Cancellation Needs Your Review") +
+    para(`Hi ${adminName}, the cancellation of job <strong>${jobTitle}</strong> #${jobId} has been escalated for admin review.`) +
+    (reason ? para(`Reason: <strong>${reason}</strong>`) : "") +
+    para("The worker was already on the way or at the location, so please review the case and mediate between the parties.")
+  );
+  await send(to, `Cancellation #${jobId} escalated for review`, body);
 }

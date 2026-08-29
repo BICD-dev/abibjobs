@@ -15,16 +15,15 @@ import {
   adminPayments,
   adminNotifications,
   notifications,
-  scheduledPayments,
   lagosAddresses,
   ownerSettings,
   siteVisits,
   supportTickets,
   supportMessages,
-  withdrawalRequests,
   adminWithdrawals,
-  jobEscrows,
-  userBeneficiaries,
+  jobPostingFees,
+  negotiationFeeAdjustments,
+  suspensionAppeals,
   type Profile,
   type Job,
   type Transaction,
@@ -36,7 +35,6 @@ import {
   type AdminPayment,
   type AdminNotification,
   type Notification,
-  type ScheduledPayment,
   type LagosAddress,
   type CreateJobInput,
   type JobWithDetails,
@@ -47,10 +45,10 @@ import {
   type PlatformTransaction,
   type SupportTicket,
   type SupportMessage,
-  type WithdrawalRequest,
   type AdminWithdrawal,
-  type UserBeneficiary,
-  type JobEscrow,
+  type JobPostingFee,
+  type NegotiationFeeAdjustment,
+  type SuspensionAppeal,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -79,14 +77,47 @@ export interface IStorage {
   getMyJobs(userId: string): Promise<JobWithDetails[]>;
   getJobHistory(userId: string, role?: 'posted' | 'accepted'): Promise<JobWithDetails[]>;
 
-  // Wallet & Transactions
-  getTransactions(userId: string): Promise<Transaction[]>;
-  getDepositMethods(userId: string): Promise<{ bankCode: string | null; bankName: string | null; accountNumber: string | null; accountName: string | null }[]>;
-  createTransaction(tx: { userId: string; amount: string; type: string; jobId?: number; bankName?: string | null; bankCode?: string | null; accountNumber?: string | null; accountName?: string | null, reference?:string | null, fee?:string | null, status?:string }): Promise<Transaction>;
-  updateWalletBalance(userId: string, amountChange: number): Promise<Profile>;
-  getTransactionByReference(reference: string): Promise<Transaction | undefined>;
-  updateTransactionStatus(reference: string, status: 'pending' | 'success' | 'failed'): Promise<Transaction>;
-  completeDepositIfPending(reference: string, data: { amount: string; bankName: string | null; accountNumber: string | null }): Promise<Transaction | undefined>;
+  // Job Posting Fees
+  createJobPostingFee(data: {
+    userId: string;
+    jobId: number;
+    jobAmount: string;
+    feeAmount: string;
+    paystackReference?: string | null;
+    status?: string;
+  }): Promise<JobPostingFee>;
+  getJobPostingFeeByReference(reference: string): Promise<JobPostingFee | undefined>;
+  markJobPostingFeePaid(reference: string): Promise<JobPostingFee>;
+  getJobPostingFeesForUser(userId: string): Promise<JobPostingFee[]>;
+  getAllJobPostingFees(): Promise<JobPostingFee[]>;
+
+  // Negotiation Fee Adjustments
+  createNegotiationFeeAdjustment(data: {
+    userId: string;
+    offerId: number;
+    jobId: number;
+    previousAmount: string;
+    newAmount: string;
+    additionalFee: string;
+    paystackReference?: string | null;
+    status?: string;
+  }): Promise<NegotiationFeeAdjustment>;
+  getNegotiationFeeAdjustmentByReference(reference: string): Promise<NegotiationFeeAdjustment | undefined>;
+  getNegotiationFeeAdjustmentByOffer(offerId: number): Promise<NegotiationFeeAdjustment | undefined>;
+  markNegotiationFeeAdjustmentPaid(reference: string): Promise<NegotiationFeeAdjustment>;
+  getNegotiationFeeAdjustmentsForUser(userId: string): Promise<NegotiationFeeAdjustment[]>;
+  getAllNegotiationFeeAdjustments(): Promise<NegotiationFeeAdjustment[]>;
+
+  // Suspension & Appeals
+  suspendUser(userId: string, reason: string, duration?: string): Promise<Profile>;
+  unsuspendUser(userId: string): Promise<Profile>;
+  banUser(userId: string, reason: string): Promise<Profile>;
+  unbanUser(userId: string): Promise<Profile>;
+  createSuspensionAppeal(data: { userId: string; reason: string; status?: string; adminNote?: string }): Promise<SuspensionAppeal>;
+  getUserSuspensionAppeals(userId: string): Promise<SuspensionAppeal[]>;
+  getSuspensionAppeals(status?: string): Promise<(SuspensionAppeal & { userName?: string; userEmail?: string })[]>;
+  getSuspensionAppeal(id: number): Promise<SuspensionAppeal | undefined>;
+  reviewSuspensionAppeal(id: number, decision: 'approved' | 'denied', adminNote?: string): Promise<SuspensionAppeal>;
 
   // Offers
   getOffersByJob(jobId: number): Promise<OfferWithSender[]>;
@@ -158,11 +189,6 @@ export interface IStorage {
   markAllAdminNotificationsRead(adminId: number): Promise<void>;
   getUnreadAdminNotificationCount(adminId: number): Promise<number>;
 
-  // Scheduled Payments
-  createScheduledPayment(data: { userId: string; amount: string; jobId?: number; reason: string; scheduledFor: Date }): Promise<ScheduledPayment>;
-  getPendingScheduledPayments(): Promise<ScheduledPayment[]>;
-  processScheduledPayment(id: number): Promise<void>;
-
   // Nigeria Addresses
   searchAddresses(query: string): Promise<LagosAddress[]>;
   getAddressCount(): Promise<number>;
@@ -199,26 +225,12 @@ export interface IStorage {
   getSupportMessages(ticketId: number, afterId?: number): Promise<SupportMessage[]>;
   getWaitingTicketsCount(): Promise<number>;
 
-  // Withdrawal Requests
-  createWithdrawalRequest(data: { userId: string; userName: string; amount: string; bankName: string; bankCode?: string | null; accountNumber: string; accountName?: string | null; reason?: string | null }): Promise<WithdrawalRequest>;
-  getUserWithdrawalRequests(userId: string): Promise<WithdrawalRequest[]>;
-  getAllWithdrawalRequests(status?: string): Promise<WithdrawalRequest[]>;
-  processWithdrawalRequest(id: number, status: 'approved' | 'rejected', adminId: number, adminNote?: string): Promise<{ request: WithdrawalRequest; walletDebited?: boolean; reference?: string }>;
-  revertWithdrawalRequest(id: number): Promise<void>;
-
-  // Beneficiaries
-  createBeneficiary(data: { userId: string; bankName: string; bankCode?: string; accountNumber: string; accountName?: string }): Promise<UserBeneficiary>;
-  getUserBeneficiaries(userId: string): Promise<UserBeneficiary[]>;
-  deleteBeneficiary(id: number, userId: string): Promise<void>;
-  setDefaultBeneficiary(id: number, userId: string): Promise<void>;
-
   // Site Visits & Analytics
   trackVisit(visitorId: string, page: string, userAgent?: string): Promise<void>;
   getDashboardAnalytics(): Promise<{
     totalVisitors: number;
     totalSignUps: number;
-    totalTopUps: string;
-    totalPaidOut: string;
+    totalFeesEarned: string;
     todayVisitors: number;
     todaySignUps: number;
     recentVisitsByDay: { date: string; count: number }[];
@@ -230,65 +242,12 @@ export interface IStorage {
     jobBreakdown: { jobId: number; title: string; hours: number; worker: string; completedAt: string }[];
   }>;
 
-  // Job Escrow
-  createJobEscrow(data: { jobId: number; posterId: string; amount: string }): Promise<JobEscrow>;
-  getJobEscrow(jobId: number): Promise<JobEscrow | undefined>;
-  releaseJobEscrow(jobId: number): Promise<JobEscrow>;
-  refundJobEscrow(jobId: number, data: { status: 'refunded' | 'partially_refunded'; refundedAmount: string; releasedAmount?: string }): Promise<JobEscrow>;
-  getHeldBalance(userId: string): Promise<string>;
-  getUserJobEscrows(userId: string, status?: string): Promise<JobEscrow[]>;
-  adjustJobEscrowAmount(jobId: number, delta: number): Promise<JobEscrow>
+  // User moderation
+  getAllUsers(): Promise<(Profile & { userEmail?: string; userName?: string })[]>;
+  getUserActiveJobs(userId: string): Promise<JobWithDetails[]>;
 }
 
 export class DatabaseStorage implements IStorage {
-  async getTransactionByReference(reference: string): Promise<Transaction | undefined> {
-    const result = await db.select()
-      .from(transactions)
-      .where(eq(transactions.reference, reference))
-      .limit(1);
-    return result[0];
-  }
-
-  async updateTransactionStatus(reference: string, status: 'pending' | 'success' | 'failed'): Promise<Transaction> {
-    const result = await db.update(transactions)
-      .set({ status })
-      .where(eq(transactions.reference, reference))
-      .returning();
-
-    if (result.length === 0) {
-      throw new Error(`Transaction with reference ${reference} not found`);
-    }
-    return result[0];
-  }
-
-  // Atomic pending -> completed transition. Returns undefined (not a throw) if the row
-  // was already completed/failed by a concurrent request — the caller uses that to decide
-  // whether it's the "winner" allowed to actually credit the wallet.
-  async completeDepositIfPending(
-    reference: string,
-    data: { amount: string; bankName: string | null; accountNumber: string | null; userId: string }
-  ): Promise<Transaction | undefined> {
-    return db.transaction(async (tx) => {
-      const result = await tx.update(transactions)
-        .set({
-          status: 'completed',
-          amount: data.amount,
-          bankName: data.bankName,
-          accountNumber: data.accountNumber,
-        })
-        .where(and(eq(transactions.reference, reference), eq(transactions.status, 'pending')))
-        .returning();
-      if (!result[0]) return undefined;
-
-      const amountNum = parseFloat(data.amount);
-      await tx.update(profiles)
-        .set({ walletBalance: sql`(${profiles.walletBalance}::numeric + ${amountNum}::numeric)` })
-        .where(eq(profiles.userId, data.userId));
-
-      return result[0];
-    });
-  }
-
   async getUser(id: string): Promise<any | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
     return user;
@@ -492,7 +451,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createJob(job: CreateJobInput & { posterId: string }): Promise<Job> {
-    const [newJob] = await db.insert(jobs).values(job).returning();
+    const values: any = { ...job };
+    if (values.scheduledDate !== undefined && values.scheduledDate !== null) {
+      values.scheduledDate = values.scheduledDate instanceof Date ? values.scheduledDate : new Date(values.scheduledDate);
+    }
+    const [newJob] = await db.insert(jobs).values(values).returning();
     return newJob;
   }
 
@@ -501,55 +464,9 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async getTransactions(userId: string): Promise<Transaction[]> {
-    return await db.select().from(transactions)
-      .where(eq(transactions.userId, userId))
-      .orderBy(desc(transactions.createdAt));
-  }
-
-  async getDepositMethods(userId: string): Promise<{ bankCode: string | null; bankName: string | null; accountNumber: string | null; accountName: string | null }[]> {
-    const deposits = await db.select({
-      bankCode: transactions.bankCode,
-      bankName: transactions.bankName,
-      accountNumber: transactions.accountNumber,
-      accountName: transactions.accountName,
-    }).from(transactions)
-      .where(and(eq(transactions.userId, userId), eq(transactions.type, 'deposit')))
-      .orderBy(desc(transactions.createdAt));
-
-    const seen = new Set<string>();
-    const unique: { bankCode: string | null; bankName: string | null; accountNumber: string | null; accountName: string | null }[] = [];
-    for (const d of deposits) {
-      const key = `${d.accountNumber}|${d.bankName}`;
-      if (!seen.has(key) && d.accountNumber) {
-        seen.add(key);
-        unique.push(d);
-      }
-    }
-    return unique;
-  }
-
   async createTransaction(tx: { userId: string; amount: string; type: string; jobId?: number; bankName?: string | null; bankCode?: string | null; accountNumber?: string | null; accountName?: string | null, reference?:string | null, fee?:string | null, status?:string }): Promise<Transaction> {
     const [newTx] = await db.insert(transactions).values(tx).returning();
     return newTx;
-  }
-
-  async updateWalletBalance(userId: string, amountChange: number): Promise<Profile> {
-    const delta = amountChange.toFixed(2);
-    const condition = amountChange < 0
-      ? and(eq(profiles.userId, userId), sql`${profiles.walletBalance}::numeric + ${delta}::numeric >= 0`)
-      : eq(profiles.userId, userId);
-
-    const result = await db.update(profiles)
-      .set({ walletBalance: sql`(${profiles.walletBalance}::numeric + ${delta}::numeric)` })
-      .where(condition)
-      .returning();
-
-    if (result.length === 0) {
-      if (amountChange < 0) throw new Error("Insufficient wallet balance");
-      throw new Error("Profile not found");
-    }
-    return result[0];
   }
 
   async getOffersByJob(jobId: number): Promise<OfferWithSender[]> {
@@ -595,7 +512,7 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async createDispute(data: { jobId: number; posterId: string; workerId: string }): Promise<Dispute> {
+  async createDispute(data: { jobId: number; posterId: string; workerId: string; raisedBy?: string }): Promise<Dispute> {
     const [dispute] = await db.insert(disputes).values(data).returning();
     return dispute;
   }
@@ -1017,6 +934,7 @@ export class DatabaseStorage implements IStorage {
       accountNumber: adminWithdrawals.accountNumber,
       accountName: adminWithdrawals.accountName,
       status: adminWithdrawals.status,
+      reference: adminWithdrawals.reference,
       adminNote: adminWithdrawals.adminNote,
       processedBy: adminWithdrawals.processedBy,
       processedAt: adminWithdrawals.processedAt,
@@ -1218,44 +1136,6 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
-  async createScheduledPayment(data: { userId: string; amount: string; jobId?: number; reason: string; scheduledFor: Date }): Promise<ScheduledPayment> {
-    const [payment] = await db.insert(scheduledPayments).values(data).returning();
-    return payment;
-  }
-
-  async getPendingScheduledPayments(): Promise<ScheduledPayment[]> {
-    return await db.select().from(scheduledPayments)
-      .where(and(
-        eq(scheduledPayments.status, "pending"),
-        sql`${scheduledPayments.scheduledFor} <= NOW()`
-      ));
-  }
-
-  async processScheduledPayment(id: number): Promise<void> {
-    const [payment] = await db.select().from(scheduledPayments).where(eq(scheduledPayments.id, id));
-    if (!payment || payment.status !== "pending") return;
-
-    const amount = parseFloat(payment.amount);
-    await this.updateWalletBalance(payment.userId, amount);
-    await this.createTransaction({
-      userId: payment.userId,
-      amount: payment.amount,
-      type: "cancellation_compensation",
-      jobId: payment.jobId ?? undefined,
-    });
-
-    await db.update(scheduledPayments)
-      .set({ status: "completed", processedAt: new Date() })
-      .where(eq(scheduledPayments.id, id));
-
-    await this.createNotification({
-      userId: payment.userId,
-      title: "Compensation Received",
-      message: `You received ₦${amount.toLocaleString()} compensation for a cancelled job.`,
-      type: "success",
-      jobId: payment.jobId ?? undefined,
-    });
-  }
   async getPendingVerifications(): Promise<(Profile & { userName?: string; userEmail?: string })[]> {
     const results = await db.select({
       profile: profiles,
@@ -1453,15 +1333,15 @@ export class DatabaseStorage implements IStorage {
       .from(users)
       .where(gte(users.createdAt, today));
 
-    const [totalTopUpsResult] = await db
-      .select({ total: sql<string>`coalesce(sum(${transactions.amount}), '0')` })
-      .from(transactions)
-      .where(eq(transactions.type, 'deposit'));
+    const [totalFeesResult] = await db
+      .select({ total: sql<string>`coalesce(sum(${jobPostingFees.feeAmount}), '0')` })
+      .from(jobPostingFees)
+      .where(eq(jobPostingFees.status, 'paid'));
 
-    const [totalPaidOutResult] = await db
-      .select({ total: sql<string>`coalesce(sum(${transactions.amount}), '0')` })
-      .from(transactions)
-      .where(sql`${transactions.type} IN ('job_earning', 'withdrawal', 'cancellation_compensation')`);
+    const [totalAdjFeesResult] = await db
+      .select({ total: sql<string>`coalesce(sum(${negotiationFeeAdjustments.additionalFee}), '0')` })
+      .from(negotiationFeeAdjustments)
+      .where(eq(negotiationFeeAdjustments.status, 'paid'));
 
     const recentVisitsByDay = await db
       .select({
@@ -1486,8 +1366,7 @@ export class DatabaseStorage implements IStorage {
     return {
       totalVisitors: Number(totalVisitorsResult?.count || 0),
       totalSignUps: Number(totalSignUpsResult?.count || 0),
-      totalTopUps: totalTopUpsResult?.total || '0',
-      totalPaidOut: totalPaidOutResult?.total || '0',
+      totalFeesEarned: (parseFloat(totalFeesResult?.total || '0') + parseFloat(totalAdjFeesResult?.total || '0')).toFixed(2),
       todayVisitors: Number(todayVisitorsResult?.count || 0),
       todaySignUps: Number(todaySignUpsResult?.count || 0),
       recentVisitsByDay: recentVisitsByDay.map(r => ({ date: r.date, count: Number(r.count) })),
@@ -1608,162 +1487,240 @@ export class DatabaseStorage implements IStorage {
     return result?.count || 0;
   }
 
-  async createWithdrawalRequest(data: { userId: string; userName: string; amount: string; bankName: string; bankCode?: string | null; accountNumber: string; accountName?: string | null; reason?: string | null }): Promise<WithdrawalRequest> {
-    const [req] = await db.insert(withdrawalRequests).values(data).returning();
-    return req;
-  }
-
-  async getUserWithdrawalRequests(userId: string): Promise<WithdrawalRequest[]> {
-    return db.select().from(withdrawalRequests).where(eq(withdrawalRequests.userId, userId)).orderBy(desc(withdrawalRequests.createdAt));
-  }
-
-  async getAllWithdrawalRequests(status?: string): Promise<WithdrawalRequest[]> {
-    if (status) {
-      return db.select().from(withdrawalRequests).where(eq(withdrawalRequests.status, status)).orderBy(desc(withdrawalRequests.createdAt));
-    }
-    return db.select().from(withdrawalRequests).orderBy(desc(withdrawalRequests.createdAt));
-  }
-
-  async processWithdrawalRequest(id: number, status: 'approved' | 'rejected', adminId: number, adminNote?: string): Promise<{ request: WithdrawalRequest; walletDebited?: boolean; reference?: string }> {
-    return db.transaction(async (tx) => {
-      // Use the UPDATE with pending check as the atomic gate — if two concurrent
-      // requests arrive, only one will succeed (0 rows returned for the loser).
-      const [updated] = await tx.update(withdrawalRequests)
-        .set({ status, adminNote: adminNote || null, processedBy: adminId, processedAt: new Date() })
-        .where(and(eq(withdrawalRequests.id, id), eq(withdrawalRequests.status, 'pending')))
-        .returning();
-      if (!updated) throw new Error("Request not found or already processed");
-
-      // Now read the full row (for bank details etc.)
-      const [request] = await tx.select().from(withdrawalRequests)
-        .where(eq(withdrawalRequests.id, id));
-
-      if (status === 'approved') {
-        const amountNum = parseFloat(request.amount);
-        const [deducted] = await tx.update(profiles)
-          .set({ walletBalance: sql`${profiles.walletBalance} - ${amountNum}` })
-          .where(and(eq(profiles.userId, request.userId), sql`${profiles.walletBalance} >= ${amountNum}`))
-          .returning();
-        if (!deducted) throw new Error("User has insufficient wallet balance");
-
-        const reference = `wdr_${request.userId}_${Date.now()}`;
-        await tx.insert(transactions).values({
-          userId: request.userId,
-          amount: (-amountNum).toString(),
-          type: 'withdrawal',
-          bankName: request.bankName,
-          bankCode: request.bankCode,
-          accountNumber: request.accountNumber,
-          accountName: request.accountName,
-          reference,
-          status: 'pending',
-        });
-
-        return { request: updated, walletDebited: true, reference };
-      }
-
-      return { request: updated, walletDebited: false };
-    });
-  }
-
-  async revertWithdrawalRequest(id: number): Promise<void> {
-    await db.update(withdrawalRequests)
-      .set({ status: 'pending', adminNote: null, processedBy: null, processedAt: null })
-      .where(eq(withdrawalRequests.id, id));
-  }
-
   // Beneficiaries
-
-  async createBeneficiary(data: { userId: string; bankName: string; bankCode?: string; accountNumber: string; accountName?: string }): Promise<UserBeneficiary> {
-    const existing = await db.select().from(userBeneficiaries).where(eq(userBeneficiaries.userId, data.userId));
-    const isDefault = existing.length === 0;
-    const [beneficiary] = await db.insert(userBeneficiaries).values({ ...data, isDefault }).returning();
-    return beneficiary;
+  async createBeneficiary(data: { userId: string }): Promise<void> {
+    // Beneficiaries removed in the payment restructure.
+    return;
   }
 
-  async getUserBeneficiaries(userId: string): Promise<UserBeneficiary[]> {
-    return db.select().from(userBeneficiaries)
-      .where(eq(userBeneficiaries.userId, userId))
-      .orderBy(desc(userBeneficiaries.isDefault), desc(userBeneficiaries.createdAt));
+  async getUserBeneficiaries(userId: string): Promise<any[]> {
+    return [];
   }
 
   async deleteBeneficiary(id: number, userId: string): Promise<void> {
-    await db.delete(userBeneficiaries).where(and(eq(userBeneficiaries.id, id), eq(userBeneficiaries.userId, userId)));
+    return;
   }
 
   async setDefaultBeneficiary(id: number, userId: string): Promise<void> {
-    await db.update(userBeneficiaries).set({ isDefault: false }).where(eq(userBeneficiaries.userId, userId));
-    await db.update(userBeneficiaries).set({ isDefault: true }).where(eq(userBeneficiaries.id, id));
+    return;
   }
 
-  async createJobEscrow(data: { jobId: number; posterId: string; amount: string }): Promise<JobEscrow> {
-    const result = await db.insert(jobEscrows)
-      .values({ jobId: data.jobId, posterId: data.posterId, amount: data.amount })
+  // Job Posting Fees
+  async createJobPostingFee(data: {
+    userId: string;
+    jobId: number;
+    jobAmount: string;
+    feeAmount: string;
+    paystackReference?: string | null;
+    status?: string;
+  }): Promise<JobPostingFee> {
+    const [fee] = await db.insert(jobPostingFees).values({
+      userId: data.userId,
+      jobId: data.jobId,
+      jobAmount: data.jobAmount,
+      feeAmount: data.feeAmount,
+      paystackReference: data.paystackReference ?? null,
+      status: data.status ?? 'pending',
+    }).returning();
+    return fee;
+  }
+
+  async getJobPostingFeeByReference(reference: string): Promise<JobPostingFee | undefined> {
+    const [fee] = await db.select().from(jobPostingFees).where(eq(jobPostingFees.paystackReference, reference)).limit(1);
+    return fee;
+  }
+
+  async markJobPostingFeePaid(reference: string): Promise<JobPostingFee> {
+    const [fee] = await db.update(jobPostingFees)
+      .set({ status: 'paid', paidAt: new Date() })
+      .where(eq(jobPostingFees.paystackReference, reference))
       .returning();
-    return result[0];
+    return fee;
   }
 
-  async getJobEscrow(jobId: number): Promise<JobEscrow | undefined> {
-    const result = await db.select().from(jobEscrows).where(eq(jobEscrows.jobId, jobId)).limit(1);
-    return result[0];
+  async getJobPostingFeesForUser(userId: string): Promise<JobPostingFee[]> {
+    return db.select().from(jobPostingFees)
+      .where(eq(jobPostingFees.userId, userId))
+      .orderBy(desc(jobPostingFees.createdAt));
   }
 
-  async releaseJobEscrow(jobId: number): Promise<JobEscrow> {
-    const result = await db.update(jobEscrows)
-      .set({ status: 'released', releasedAmount: sql`${jobEscrows.amount}`, resolvedAt: new Date() })
-      .where(and(eq(jobEscrows.jobId, jobId), eq(jobEscrows.status, 'held')))
+  async getAllJobPostingFees(): Promise<JobPostingFee[]> {
+    return db.select().from(jobPostingFees).orderBy(desc(jobPostingFees.createdAt));
+  }
+
+  // Negotiation Fee Adjustments
+  async createNegotiationFeeAdjustment(data: {
+    userId: string;
+    offerId: number;
+    jobId: number;
+    previousAmount: string;
+    newAmount: string;
+    additionalFee: string;
+    paystackReference?: string | null;
+    status?: string;
+  }): Promise<NegotiationFeeAdjustment> {
+    const [adj] = await db.insert(negotiationFeeAdjustments).values({
+      userId: data.userId,
+      offerId: data.offerId,
+      jobId: data.jobId,
+      previousAmount: data.previousAmount,
+      newAmount: data.newAmount,
+      additionalFee: data.additionalFee,
+      paystackReference: data.paystackReference ?? null,
+      status: data.status ?? 'pending',
+    }).returning();
+    return adj;
+  }
+
+  async getNegotiationFeeAdjustmentByReference(reference: string): Promise<NegotiationFeeAdjustment | undefined> {
+    const [adj] = await db.select().from(negotiationFeeAdjustments)
+      .where(eq(negotiationFeeAdjustments.paystackReference, reference)).limit(1);
+    return adj;
+  }
+
+  async getNegotiationFeeAdjustmentByOffer(offerId: number): Promise<NegotiationFeeAdjustment | undefined> {
+    const [adj] = await db.select().from(negotiationFeeAdjustments)
+      .where(eq(negotiationFeeAdjustments.offerId, offerId)).limit(1);
+    return adj;
+  }
+
+  async markNegotiationFeeAdjustmentPaid(reference: string): Promise<NegotiationFeeAdjustment> {
+    const [adj] = await db.update(negotiationFeeAdjustments)
+      .set({ status: 'paid', paidAt: new Date() })
+      .where(eq(negotiationFeeAdjustments.paystackReference, reference))
       .returning();
+    return adj;
+  }
 
-    if (result.length === 0) {
-      throw new Error(`No held escrow found for job ${jobId} (already resolved or never created)`);
+  async getNegotiationFeeAdjustmentsForUser(userId: string): Promise<NegotiationFeeAdjustment[]> {
+    return db.select().from(negotiationFeeAdjustments)
+      .where(eq(negotiationFeeAdjustments.userId, userId))
+      .orderBy(desc(negotiationFeeAdjustments.createdAt));
+  }
+
+  async getAllNegotiationFeeAdjustments(): Promise<NegotiationFeeAdjustment[]> {
+    return db.select().from(negotiationFeeAdjustments).orderBy(desc(negotiationFeeAdjustments.createdAt));
+  }
+
+  // Suspension & Appeals
+  async suspendUser(userId: string, reason: string, duration?: string): Promise<Profile> {
+    const [updated] = await db.update(profiles)
+      .set({ isSuspended: true, suspendedReason: reason, suspendedAt: new Date(), suspensionDuration: duration ?? null })
+      .where(eq(profiles.userId, userId))
+      .returning();
+    return updated;
+  }
+
+  async unsuspendUser(userId: string): Promise<Profile> {
+    const [updated] = await db.update(profiles)
+      .set({ isSuspended: false, suspendedReason: null, suspendedAt: null, suspensionDuration: null })
+      .where(eq(profiles.userId, userId))
+      .returning();
+    return updated;
+  }
+
+  async banUser(userId: string, reason: string): Promise<Profile> {
+    const [updated] = await db.update(profiles)
+      .set({ isBanned: true, bannedReason: reason, bannedAt: new Date() })
+      .where(eq(profiles.userId, userId))
+      .returning();
+    return updated;
+  }
+
+  async unbanUser(userId: string): Promise<Profile> {
+    const [updated] = await db.update(profiles)
+      .set({ isBanned: false, bannedReason: null, bannedAt: null })
+      .where(eq(profiles.userId, userId))
+      .returning();
+    return updated;
+  }
+
+  async createSuspensionAppeal(data: { userId: string; reason: string; status?: string; adminNote?: string }): Promise<SuspensionAppeal> {
+    const [appeal] = await db.insert(suspensionAppeals).values({
+      userId: data.userId,
+      reason: data.reason,
+      status: data.status ?? 'pending',
+      adminNote: data.adminNote ?? null,
+    }).returning();
+    return appeal;
+  }
+
+  async getUserSuspensionAppeals(userId: string): Promise<SuspensionAppeal[]> {
+    return db.select().from(suspensionAppeals)
+      .where(eq(suspensionAppeals.userId, userId))
+      .orderBy(desc(suspensionAppeals.createdAt));
+  }
+
+  async getSuspensionAppeals(status?: string): Promise<(SuspensionAppeal & { userName?: string; userEmail?: string })[]> {
+    let query = db.select({
+      appeal: suspensionAppeals,
+      userName: sql<string>`COALESCE(${users.firstName} || ' ' || ${users.lastName}, 'Unknown')`,
+      userEmail: users.email,
+    }).from(suspensionAppeals)
+      .leftJoin(users, eq(suspensionAppeals.userId, users.id))
+      .orderBy(desc(suspensionAppeals.createdAt));
+
+    if (status) {
+      query = query.where(eq(suspensionAppeals.status, status)) as typeof query;
     }
-    return result[0];
+    const results = await query;
+    return results.map(r => ({ ...r.appeal, userName: r.userName, userEmail: r.userEmail ?? undefined }));
   }
 
-  async refundJobEscrow(
-    jobId: number,
-    data: { status: 'refunded' | 'partially_refunded'; refundedAmount: string; releasedAmount?: string }
-  ): Promise<JobEscrow> {
-    const result = await db.update(jobEscrows)
-      .set({
-        status: data.status,
-        refundedAmount: data.refundedAmount,
-        releasedAmount: data.releasedAmount ?? '0',
-        resolvedAt: new Date(),
-      })
-      .where(and(eq(jobEscrows.jobId, jobId), eq(jobEscrows.status, 'held')))
+  async getSuspensionAppeal(id: number): Promise<SuspensionAppeal | undefined> {
+    const [appeal] = await db.select().from(suspensionAppeals).where(eq(suspensionAppeals.id, id)).limit(1);
+    return appeal;
+  }
+
+  async reviewSuspensionAppeal(id: number, decision: 'approved' | 'denied', adminNote?: string): Promise<SuspensionAppeal> {
+    const [appeal] = await db.update(suspensionAppeals)
+      .set({ status: decision, adminNote: adminNote ?? null, reviewedAt: new Date() })
+      .where(eq(suspensionAppeals.id, id))
       .returning();
-
-    if (result.length === 0) {
-      throw new Error(`No held escrow found for job ${jobId} (already resolved or never created)`);
-    }
-    return result[0];
+    return appeal;
   }
 
-  async getHeldBalance(userId: string): Promise<string> {
-    const result = await db.select({ total: sql<string>`COALESCE(SUM(${jobEscrows.amount}), 0)` })
-      .from(jobEscrows)
-      .where(and(eq(jobEscrows.posterId, userId), eq(jobEscrows.status, 'held')));
-    return result[0]?.total ?? '0';
+  // User moderation
+  async getAllUsers(): Promise<(Profile & { userEmail?: string; userName?: string })[]> {
+    const results = await db.select({
+      profile: profiles,
+      userEmail: users.email,
+      userName: sql<string>`COALESCE(${users.firstName} || ' ' || ${users.lastName}, 'Unknown')`,
+    }).from(profiles)
+      .leftJoin(users, eq(profiles.userId, users.id))
+      .orderBy(desc(profiles.id));
+    return results.map(r => ({ ...r.profile, userEmail: r.userEmail ?? undefined, userName: r.userName }));
   }
 
-  async getUserJobEscrows(userId: string, status?: string): Promise<JobEscrow[]> {
-    const condition = status
-      ? and(eq(jobEscrows.posterId, userId), eq(jobEscrows.status, status))
-      : eq(jobEscrows.posterId, userId);
-    return db.select().from(jobEscrows).where(condition).orderBy(desc(jobEscrows.createdAt));
-  }
-  async adjustJobEscrowAmount(jobId: number, delta: number): Promise<JobEscrow> {
-    const deltaStr = delta.toFixed(2);
-    const result = await db.update(jobEscrows)
-      .set({ amount: sql`(${jobEscrows.amount}::numeric + ${deltaStr}::numeric)` })
-      .where(and(eq(jobEscrows.jobId, jobId), eq(jobEscrows.status, 'held')))
-      .returning();
+  async getUserActiveJobs(userId: string): Promise<JobWithDetails[]> {
+    const results = await db.select({
+      job: jobs,
+      poster: {
+        firstName: users.firstName,
+        lastName: users.lastName,
+        profileImageUrl: users.profileImageUrl,
+      },
+      posterProfile: {
+        profilePictureUrl: profiles.profilePictureUrl,
+      }
+    })
+    .from(jobs)
+    .leftJoin(users, eq(jobs.posterId, users.id))
+    .leftJoin(profiles, eq(jobs.posterId, profiles.userId))
+    .where(and(
+      sql`(${jobs.posterId} = ${userId} OR ${jobs.workerId} = ${userId})`,
+      sql`${jobs.status} NOT IN ('completed', 'cancelled')`
+    ))
+    .orderBy(desc(jobs.createdAt));
 
-    if (result.length === 0) {
-      throw new Error(`No held escrow found for job ${jobId} to adjust`);
-    }
-    return result[0];
+    return results.map(r => ({
+      ...r.job,
+      poster: {
+        firstName: r.poster?.firstName || 'Unknown',
+        lastName: r.poster?.lastName || '',
+        profileImageUrl: r.posterProfile?.profilePictureUrl || r.poster?.profileImageUrl || null,
+      }
+    }));
   }
 }
 

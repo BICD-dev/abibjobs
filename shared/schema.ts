@@ -6,24 +6,11 @@ export * from "./models/auth";
 
 // === TABLE DEFINITIONS ===
 
-export const jobEscrows = pgTable("job_escrows", {
-  id: serial("id").primaryKey(),
-  jobId: integer("job_id").notNull().references(() => jobs.id),
-  posterId: text("poster_id").notNull(),
-  amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
-  status: text("status").notNull().default("held"), // 'held' | 'released' | 'refunded' | 'partially_refunded'
-  refundedAmount: numeric("refunded_amount", { precision: 10, scale: 2 }),
-  releasedAmount: numeric("released_amount", { precision: 10, scale: 2 }),
-  createdAt: timestamp("created_at").defaultNow(),
-  resolvedAt: timestamp("resolved_at"),
-});
-
 export const profiles = pgTable("profiles", {
   id: serial("id").primaryKey(),
   userId: text("user_id").notNull().unique(),
   bio: text("bio"),
   role: text("role").default("user"),
-  walletBalance: numeric("wallet_balance", { precision: 10, scale: 2 }).default("0").notNull(),
   isVerified: boolean("is_verified").default(false).notNull(),
   verificationStatus: text("verification_status").default("unverified").notNull(),
   idCardUrl: text("id_card_url"),
@@ -36,6 +23,12 @@ export const profiles = pgTable("profiles", {
   profilePictureUrl: text("profile_picture_url"),
   noShowCount: integer("no_show_count").default(0).notNull(),
   isSuspended: boolean("is_suspended").default(false).notNull(),
+  suspendedReason: text("suspended_reason"),
+  suspendedAt: timestamp("suspended_at"),
+  suspensionDuration: text("suspension_duration"),
+  isBanned: boolean("is_banned").default(false).notNull(),
+  bannedReason: text("banned_reason"),
+  bannedAt: timestamp("banned_at"),
   lastSeenAt: timestamp("last_seen_at"),
   lastSeenPage: text("last_seen_page"),
   lastSeenIp: text("last_seen_ip"),
@@ -48,7 +41,7 @@ export const jobs = pgTable("jobs", {
   price: numeric("price", { precision: 10, scale: 2 }).notNull(),
   location: text("location").notNull(),
   category: text("category").notNull(),
-  status: text("status").default("open").notNull(),
+  status: text("status").default("pending_payment").notNull(),
   posterId: text("poster_id").notNull(),
   workerId: text("worker_id"),
   priceType: text("price_type").default("total").notNull(),
@@ -67,8 +60,52 @@ export const jobs = pgTable("jobs", {
   scheduledDate: timestamp("scheduled_date"),
   acceptedAt: timestamp("accepted_at"),
   completedAt: timestamp("completed_at"),
+  cancellationEscalated: boolean("cancellation_escalated").default(false),
+  cancellationEscalatedAt: timestamp("cancellation_escalated_at"),
+  cancellationReason: text("cancellation_reason"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Records the Paystack fee payment required to post a job.
+export const jobPostingFees = pgTable("job_posting_fees", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  jobId: integer("job_id").notNull().references(() => jobs.id),
+  jobAmount: numeric("job_amount", { precision: 10, scale: 2 }).notNull(),
+  feeAmount: numeric("fee_amount", { precision: 10, scale: 2 }).notNull(),
+  paystackReference: text("paystack_reference"),
+  status: text("status").default("pending").notNull(), // 'pending' | 'paid' | 'failed'
+  createdAt: timestamp("created_at").defaultNow(),
+  paidAt: timestamp("paid_at"),
+});
+
+// Records additional fees charged when a negotiated price goes above the initial amount.
+export const negotiationFeeAdjustments = pgTable("negotiation_fee_adjustments", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  jobId: integer("job_id").notNull().references(() => jobs.id),
+  offerId: integer("offer_id").notNull().references(() => offers.id),
+  previousAmount: numeric("previous_amount", { precision: 10, scale: 2 }).notNull(),
+  newAmount: numeric("new_amount", { precision: 10, scale: 2 }).notNull(),
+  additionalFee: numeric("additional_fee", { precision: 10, scale: 2 }).notNull(),
+  paystackReference: text("paystack_reference"),
+  status: text("status").default("pending").notNull(), // 'pending' | 'paid' | 'failed'
+  createdAt: timestamp("created_at").defaultNow(),
+  paidAt: timestamp("paid_at"),
+  completedAt: timestamp("completed_at"),
+});
+
+// Tracks email-based appeals against a suspension.
+export const suspensionAppeals = pgTable("suspension_appeals", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  reason: text("reason").notNull(),
+  status: text("status").default("pending").notNull(), // 'pending' | 'approved' | 'denied'
+  adminNote: text("admin_note"),
+  reviewedBy: text("reviewed_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  reviewedAt: timestamp("reviewed_at"),
 });
 
 export const transactions = pgTable("transactions", {
@@ -127,9 +164,9 @@ export const disputes = pgTable("disputes", {
   posterId: text("poster_id").notNull(),
   workerId: text("worker_id").notNull(),
   status: text("status").default("open").notNull(),
-  proposedAmount: numeric("proposed_amount", { precision: 10, scale: 2 }),
-  resolvedAmount: numeric("resolved_amount", { precision: 10, scale: 2 }),
-  resolvedBy: text("resolved_by"),
+  raisedBy: text("raised_by"),
+  resolution: text("resolution"),
+  resolvedNote: text("resolved_note"),
   assignedAdminId: text("assigned_admin_id"),
   assignedAdminName: text("assigned_admin_name"),
   assignedAt: timestamp("assigned_at"),
@@ -215,18 +252,6 @@ export const notifications = pgTable("notifications", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const scheduledPayments = pgTable("scheduled_payments", {
-  id: serial("id").primaryKey(),
-  userId: text("user_id").notNull(),
-  amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
-  jobId: integer("job_id"),
-  reason: text("reason").notNull(),
-  status: text("status").default("pending").notNull(),
-  scheduledFor: timestamp("scheduled_for").notNull(),
-  processedAt: timestamp("processed_at"),
-  createdAt: timestamp("created_at").defaultNow(),
-});
-
 export const lagosAddresses = pgTable("lagos_addresses", {
   id: serial("id").primaryKey(),
   area: text("area").notNull(),
@@ -275,41 +300,10 @@ export const supportMessages = pgTable("support_messages", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const withdrawalRequests = pgTable("withdrawal_requests", {
-  id: serial("id").primaryKey(),
-  userId: text("user_id").notNull(),
-  userName: text("user_name").notNull(),
-  amount: numeric("amount", { precision: 10, scale: 2 }).notNull(),
-  bankName: text("bank_name").notNull(),
-  bankCode: text("bank_code"),
-  accountNumber: text("account_number").notNull(),
-  accountName: text("account_name"),
-  reason: text("reason"),
-  status: text("status").default("pending").notNull(),
-  adminNote: text("admin_note"),
-  processedBy: integer("processed_by"),
-  processedAt: timestamp("processed_at"),
-  otpCode: text("otp_code"),
-  otpExpiresAt: timestamp("otp_expires_at"),
-  reference: text("reference"),
-  createdAt: timestamp("created_at").defaultNow(),
-});
-
-export const userBeneficiaries = pgTable("user_beneficiaries", {
-  id: serial("id").primaryKey(),
-  userId: text("user_id").notNull(),
-  bankName: text("bank_name").notNull(),
-  bankCode: text("bank_code"),
-  accountNumber: text("account_number").notNull(),
-  accountName: text("account_name"),
-  isDefault: boolean("is_default").default(false).notNull(),
-  createdAt: timestamp("created_at").defaultNow(),
-});
-
 // === SCHEMAS ===
 
 export const insertProfileSchema = createInsertSchema(profiles).omit({ id: true });
-export const insertJobSchema = createInsertSchema(jobs).omit({ id: true, createdAt: true, updatedAt: true, workerId: true, status: true, workersAccepted: true, workerProgress: true, posterConfirmedArrival: true, completedAt: true }).extend({
+export const insertJobSchema = createInsertSchema(jobs).omit({ id: true, createdAt: true, updatedAt: true, workerId: true, status: true, workersAccepted: true, workerProgress: true, posterConfirmedArrival: true, completedAt: true, cancellationEscalated: true, cancellationEscalatedAt: true, cancellationReason: true }).extend({
   scheduledDate: z.union([z.string(), z.date()]).optional().nullable(),
 });
 export const createJobSchema = insertJobSchema.omit({ posterId: true });
@@ -335,12 +329,12 @@ export const insertDisputeMessageSchema = createInsertSchema(disputeMessages).om
 export const insertAdminUserSchema = createInsertSchema(adminUsers).omit({ id: true, createdAt: true });
 export const insertAdminPaymentSchema = createInsertSchema(adminPayments).omit({ id: true, createdAt: true });
 export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, createdAt: true });
-export const insertScheduledPaymentSchema = createInsertSchema(scheduledPayments).omit({ id: true, createdAt: true, processedAt: true });
 export const insertSupportTicketSchema = createInsertSchema(supportTickets).omit({ id: true, createdAt: true, updatedAt: true, closedAt: true });
 export const insertSupportMessageSchema = createInsertSchema(supportMessages).omit({ id: true, createdAt: true });
-export const insertWithdrawalRequestSchema = createInsertSchema(withdrawalRequests).omit({ id: true, createdAt: true, processedAt: true });
 export const insertAdminWithdrawalSchema = createInsertSchema(adminWithdrawals).omit({ id: true, createdAt: true, processedAt: true });
-export const insertUserBeneficiarySchema = createInsertSchema(userBeneficiaries).omit({ id: true, createdAt: true });
+export const insertJobPostingFeeSchema = createInsertSchema(jobPostingFees).omit({ id: true, createdAt: true, paidAt: true });
+export const insertNegotiationFeeAdjustmentSchema = createInsertSchema(negotiationFeeAdjustments).omit({ id: true, createdAt: true, paidAt: true, completedAt: true });
+export const insertSuspensionAppealSchema = createInsertSchema(suspensionAppeals).omit({ id: true, createdAt: true, reviewedAt: true });
 
 // === TYPES ===
 
@@ -357,24 +351,23 @@ export type AdminActivity = typeof adminActivity.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
 export type AdminPayment = typeof adminPayments.$inferSelect;
 export type AdminNotification = typeof adminNotifications.$inferSelect;
-export type ScheduledPayment = typeof scheduledPayments.$inferSelect;
 export type LagosAddress = typeof lagosAddresses.$inferSelect;
 export type SiteVisit = typeof siteVisits.$inferSelect;
 export type OwnerSettings = typeof ownerSettings.$inferSelect;
 export type SupportTicket = typeof supportTickets.$inferSelect;
 export type SupportMessage = typeof supportMessages.$inferSelect;
-export type WithdrawalRequest = typeof withdrawalRequests.$inferSelect;
 export type AdminWithdrawal = typeof adminWithdrawals.$inferSelect;
-export type UserBeneficiary = typeof userBeneficiaries.$inferSelect;
-export type JobEscrow = typeof jobEscrows.$inferSelect;
+export type JobPostingFee = typeof jobPostingFees.$inferSelect;
+export type NegotiationFeeAdjustment = typeof negotiationFeeAdjustments.$inferSelect;
+export type SuspensionAppeal = typeof suspensionAppeals.$inferSelect;
 
 export type CreateJobInput = z.infer<typeof createJobSchema>;
 export type VerificationStatus = 'unverified' | 'pending' | 'verified' | 'declined' | 'redo_requested';
 export type CreateOfferInput = z.infer<typeof createOfferSchema>;
 
 export type UserRole = "user" | "admin";
-export type JobStatus = "open" | "in_progress" | "completed" | "cancelled" | "disputed";
-export type DisputeStatus = "open" | "negotiating" | "escalated" | "awaiting_payment" | "resolved";
+export type JobStatus = "pending_payment" | "open" | "in_progress" | "completed" | "cancelled" | "disputed";
+export type DisputeStatus = "open" | "negotiating" | "escalated" | "resolved";
 
 // === API CONTRACT TYPES ===
 
@@ -420,9 +413,4 @@ export interface DisputeMessageWithSender extends DisputeMessage {
     lastName: string | null;
     profileImageUrl: string | null;
   };
-}
-
-export interface WalletState {
-  balance: string;
-  transactions: Transaction[];
 }
