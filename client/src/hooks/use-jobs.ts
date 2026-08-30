@@ -99,10 +99,41 @@ export function useCreateJob() {
       queryClient.invalidateQueries({ queryKey: [api.jobs.history.path] });
       queryClient.invalidateQueries({ queryKey: [api.transactions.history.path] });
       toast({
-        title: "Job Posted",
-        description: "Pay the posting fee to activate your job.",
+        title: "Draft Created",
+        description: "Pay the posting fee to publish your job.",
         variant: "default",
       });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+}
+
+export function usePayJobFee() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (jobId: number) => {
+      const url = buildUrl(api.jobs.pay.path, { jobId });
+      const res = await fetch(url, {
+        method: api.jobs.pay.method,
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || "Failed to start payment");
+      }
+      return api.jobs.pay.responses[200].parse(await res.json());
+    },
+    onSuccess: (_, jobId) => {
+      queryClient.invalidateQueries({ queryKey: [api.jobs.get.path, jobId] });
+      queryClient.invalidateQueries({ queryKey: [api.jobs.myJobs.path] });
     },
     onError: (error: Error) => {
       toast({

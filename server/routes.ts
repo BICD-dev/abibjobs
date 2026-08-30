@@ -494,8 +494,35 @@ export async function registerRoutes(
     if (!job) {
       return res.status(404).json({ message: "Job not found" });
     }
+    // Draft jobs (posting fee unpaid) are private to their poster.
+    if (job.status === 'pending_payment') {
+      const viewerId = (req as any).user?.claims?.sub || (req as any).session?.manualUserId;
+      if (!viewerId || viewerId !== job.posterId) {
+        return res.status(404).json({ message: "Job not found" });
+      }
+    }
     res.json(job);
   });
+
+  // Emits the "new job available" notifications. Drafts (posting fee unpaid)
+  // stay private until the fee is confirmed, so this only ever runs once the
+  // job flips to "open" (payment confirmed).
+  const announceJobPublished = async (job: any) => {
+    if (!job) return;
+    storage.createAdminNotification({
+      adminId: 0,
+      title: 'New Job Posted',
+      message: `"${job.title}" posted in ${job.category} for \u20A6${parseFloat(job.price).toLocaleString()}${job.priceType === 'per_person' ? '/person' : ''} (${job.workersNeeded} worker${job.workersNeeded > 1 ? 's' : ''} needed).`,
+      type: 'info'
+    }).catch(() => {});
+    storage.broadcastNotificationToAll({
+      title: 'New Job Available',
+      message: `"${job.title}" in ${job.location} for \u20A6${parseFloat(job.price).toLocaleString()}. Check it out!`,
+      type: 'info',
+      jobId: job.id,
+      excludeUserId: job.posterId,
+    }).catch(() => {});
+  };
 
   const createJobWithFee = async (req: any, res: any) => {
     try {
@@ -561,22 +588,8 @@ export async function registerRoutes(
       } else {
         await storage.markJobPostingFeePaid(reference);
         await db.update(jobs).set({ status: 'open' }).where(eq(jobs.id, job.id));
+        await announceJobPublished(job);
       }
-
-      storage.createAdminNotification({
-        adminId: 0,
-        title: 'New Job Posted',
-        message: `"${job.title}" posted in ${job.category} for ₦${parseFloat(job.price).toLocaleString()}${job.priceType === 'per_person' ? '/person' : ''} (${job.workersNeeded} worker${job.workersNeeded > 1 ? 's' : ''} needed).`,
-        type: 'info'
-      }).catch(() => {});
-
-      storage.broadcastNotificationToAll({
-        title: 'New Job Available',
-        message: `"${job.title}" in ${job.location} for ₦${parseFloat(job.price).toLocaleString()}. Check it out!`,
-        type: 'info',
-        jobId: job.id,
-        excludeUserId: userId,
-      }).catch(() => {});
 
       res.status(201).json({ job, fee: fee.toFixed(2), authorizationUrl, reference });
     } catch (err) {
@@ -625,9 +638,69 @@ export async function registerRoutes(
       }
 
       const updated = await storage.updateJob(job.id, { status: 'open' });
+      await announceJobPublished(updated ?? job);
       res.json({ success: true, job: updated });
     } catch (err) {
       res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Lets the poster pay the posting fee for a draft job later (e.g. after an
+  // abandoned checkout) and, once the fee is confirmed, publishes the job.
+  app.post(api.jobs.pay.path, isAuthenticated, async (req, res) => {
+    try {
+      const jobId = Number(req.params.jobId);
+      const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
+
+      const job = await storage.getJob(jobId);
+      if (!job) return res.status(404).json({ message: "Job not found" });
+      if (job.posterId !== userId) return res.status(403).json({ message: "You can only pay for your own jobs" });
+      if (job.status === 'open') {
+        return res.json({ success: true, authorizationUrl: null, job });
+      }
+      if (job.status !== 'pending_payment') {
+        return res.status(400).json({ message: "This job is not awaiting payment." });
+      }
+
+      const [feeRow] = await db.select().from(jobPostingFees).where(eq(jobPostingFees.jobId, job.id)).limit(1);
+      if (!feeRow) return res.status(400).json({ message: "No posting fee was recorded for this job." });
+
+      let paid = false;
+      if (feeRow.status === 'paid') {
+        paid = true;
+      } else if (feeRow.paystackReference) {
+        // Fall back to verifying directly with Paystack if the webhook hasn't landed yet.
+        const verifyResp = await paystackRequest('GET', `/transaction/verify/${feeRow.paystackReference}`);
+        if (verifyResp.status && verifyResp.data?.status === 'success') {
+          paid = true;
+          await storage.markJobPostingFeePaid(feeRow.paystackReference);
+          await storage.addPlatformEarning(parseNumeric(feeRow.feeAmount), job.id, job.title);
+        }
+      }
+
+      if (paid) {
+        const updated = await storage.updateJob(job.id, { status: 'open' });
+        await announceJobPublished(updated ?? job);
+        return res.json({ success: true, authorizationUrl: null, job: updated ?? job });
+      }
+
+      // Not paid yet — start a fresh Paystack checkout for this draft.
+      const userRecord = await storage.getUser(userId);
+      const userEmail = userRecord?.email || `user_${userId}@abib.jobs`;
+      const init = await initializeFeePayment(userEmail, parseFloat(feeRow.feeAmount), {
+        type: 'job_posting_fee',
+        jobId: job.id,
+        userId,
+        feeAmount: feeRow.feeAmount,
+        jobAmount: feeRow.jobAmount,
+      });
+      await db.update(jobPostingFees)
+        .set({ paystackReference: init.reference })
+        .where(eq(jobPostingFees.jobId, job.id));
+
+      res.json({ success: true, authorizationUrl: init.authorizationUrl, job });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Could not initialize payment." });
     }
   });
 
@@ -3758,7 +3831,8 @@ export async function registerRoutes(
           await storage.markJobPostingFeePaid(feeRow.paystackReference);
           const job = await storage.getJob(feeRow.jobId);
           if (job && job.status === 'pending_payment') {
-            await storage.updateJob(job.id, { status: 'open' });
+            const updated = await storage.updateJob(job.id, { status: 'open' });
+            await announceJobPublished(updated ?? job);
           }
           await storage.addPlatformEarning(parseNumeric(feeRow.feeAmount), feeRow.jobId, job?.title ?? 'Job');
 

@@ -2,7 +2,7 @@ import { useState, useRef, useMemo, useCallback } from "react";
 import LiveWorkerMap from "@/components/LiveWorkerMap";
 import WorkerLocationTracker from "@/components/WorkerLocationTracker";
 import { useRoute, useLocation } from "wouter";
-import { useJob, useAcceptJob, useCompleteJob, useCancelJob, useUpdateJobProgress, useConfirmArrival, useReportNoShow } from "@/hooks/use-jobs";
+import { useJob, usePayJobFee, useAcceptJob, useCompleteJob, useCancelJob, useUpdateJobProgress, useConfirmArrival, useReportNoShow } from "@/hooks/use-jobs";
 import { useOffers, useCreateOffer, useAcceptOffer, useDeclineOffer, useCounterOffer } from "@/hooks/use-offers";
 import { useDisputeByJob, useCreateDispute, useDisputeMessage, useAcceptProposal, useEscalateDispute, useUploadDisputeImage } from "@/hooks/use-disputes";
 import { useAuth } from "@/hooks/use-auth";
@@ -26,6 +26,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
+import { api } from "@shared/routes";
 import { useCall } from "@/components/CallProvider";
 import { format } from "date-fns";
 import type { OfferWithSender, DisputeMessageWithSender } from "@shared/schema";
@@ -97,6 +98,7 @@ export default function JobDetails() {
   const { mutate: updateProgress, isPending: isUpdatingProgress } = useUpdateJobProgress();
   const { mutate: confirmArrival, isPending: isConfirmingArrival } = useConfirmArrival();
   const { mutate: reportNoShow, isPending: isReportingNoShow } = useReportNoShow();
+  const { mutate: payJobFee, isPending: isPayingFee } = usePayJobFee();
   const [showConfirmArrivalDialog, setShowConfirmArrivalDialog] = useState(false);
 
   const { mutate: createOffer, isPending: isCreatingOffer } = useCreateOffer();
@@ -155,6 +157,7 @@ export default function JobDetails() {
   if (error || !job) return <div className="min-h-screen bg-background flex items-center justify-center text-destructive">Job not found</div>;
 
   const isPoster = user?.id === job.posterId;
+  const isDraft = job.status === 'pending_payment';
   const workerIds = job.workerId ? job.workerId.split(',') : [];
   const isWorker = user?.id ? workerIds.includes(user.id) : false;
   const isOpen = job.status === "open";
@@ -162,6 +165,20 @@ export default function JobDetails() {
   const isCompleted = job.status === "completed";
   const isCancelled = job.status === "cancelled";
   const isDisputed = job.status === "disputed";
+
+  const handlePayJobFee = () => {
+    payJobFee(job.id, {
+      onSuccess: (data: any) => {
+        if (data.authorizationUrl) {
+          window.location.href = data.authorizationUrl;
+        } else if (data.success) {
+          queryClientRef.invalidateQueries({ queryKey: [api.jobs.get.path, job.id] });
+          queryClientRef.invalidateQueries({ queryKey: [api.jobs.myJobs.path] });
+          toast({ title: "Job Published", description: "Your job is now live." });
+        }
+      }
+    });
+  };
 
   const offers: OfferWithSender[] = offersData || [];
   const pendingOffers = offers.filter(o => o.status === 'pending');
@@ -315,9 +332,11 @@ export default function JobDetails() {
               <Badge variant="outline" className={`rounded-lg px-3 py-1 font-medium capitalize ${
                 isDisputed 
                   ? 'bg-red-50 text-red-600 border-red-200 dark:bg-red-950/30 dark:text-red-400 dark:border-red-800' 
-                  : 'bg-primary/5 text-primary border-primary/20'
+                  : isDraft
+                    ? 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-800'
+                    : 'bg-primary/5 text-primary border-primary/20'
               }`}>
-                {job.status.replace('_', ' ')}
+                {isDraft ? 'Draft' : job.status.replace('_', ' ')}
               </Badge>
               <h1 className="text-3xl md:text-4xl font-display font-bold text-foreground" data-testid="text-job-title">{job.title}</h1>
               <div className="flex flex-wrap items-center gap-4 text-muted-foreground">
@@ -371,6 +390,29 @@ export default function JobDetails() {
               )}
             </div>
           </div>
+
+          {isDraft && isPoster && (
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 mb-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4" data-testid="draft-banner">
+            <div className="flex items-start gap-3">
+              <Clock className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
+              <div>
+                <p className="font-semibold text-amber-800">This job is a draft</p>
+                <p className="text-sm text-amber-700 mt-1">
+                  Complete your posting-fee payment to publish it. Only you can see this draft until then.
+                </p>
+              </div>
+            </div>
+            <Button
+              onClick={handlePayJobFee}
+              disabled={isPayingFee}
+              className="bg-amber-600 hover:bg-amber-700 text-white shrink-0"
+              data-testid="button-pay-publish"
+            >
+              {isPayingFee ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Lock className="w-4 h-4 mr-2" />}
+              Pay fee & publish
+            </Button>
+          </div>
+        )}
 
           <hr className="border-border/50 my-8" />
 

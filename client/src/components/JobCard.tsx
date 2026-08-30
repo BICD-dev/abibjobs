@@ -14,6 +14,7 @@ export function JobCard({ job }: JobCardProps) {
     in_progress: "bg-blue-100 text-blue-700 border-blue-200",
     completed: "bg-gray-100 text-gray-700 border-gray-200",
     cancelled: "bg-red-100 text-red-700 border-red-200",
+    pending_payment: "bg-amber-100 text-amber-700 border-amber-200",
   };
 
   const StatusIcon = {
@@ -21,6 +22,7 @@ export function JobCard({ job }: JobCardProps) {
     in_progress: Clock,
     completed: CheckCircle2,
     cancelled: XCircle,
+    pending_payment: Clock,
   }[job.status as keyof typeof statusColors] || Briefcase;
 
   const isAccepted = job.status === 'in_progress';
@@ -51,7 +53,7 @@ export function JobCard({ job }: JobCardProps) {
           <div className="flex justify-between items-start mb-4 gap-2">
             <Badge variant="outline" className={`capitalize rounded-lg px-3 py-1 font-medium border ${statusColors[job.status as keyof typeof statusColors]}`}>
               <StatusIcon className="w-3.5 h-3.5 mr-1.5" />
-              {job.status.replace('_', ' ')}
+              {job.status === 'pending_payment' ? 'Draft' : job.status.replace('_', ' ')}
             </Badge>
             <span className="text-xs font-medium text-muted-foreground bg-muted/50 px-2 py-1 rounded-md">
               {formatDistanceToNow(new Date(job.createdAt || Date.now()), { addSuffix: true })}

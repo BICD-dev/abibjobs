@@ -336,6 +336,10 @@ export class DatabaseStorage implements IStorage {
       }
     }));
 
+    // Draft jobs (posting fee not yet paid) are only ever visible to their
+    // poster — never in the public feed, regardless of how this is queried.
+    mapped = mapped.filter(j => j.status !== 'pending_payment');
+
     if (filters) {
       if (filters.category) {
         mapped = mapped.filter(j => j.category === filters.category);
@@ -398,7 +402,7 @@ export class DatabaseStorage implements IStorage {
     .leftJoin(users, eq(jobs.posterId, users.id))
     .leftJoin(profiles, eq(jobs.posterId, profiles.userId))
     .where(
-      sql`(${jobs.posterId} = ${userId} OR ${workerMatch}) AND ${jobs.status} IN ('open', 'in_progress')`
+      sql`(${jobs.posterId} = ${userId} OR ${workerMatch}) AND (${jobs.posterId} = ${userId} OR ${jobs.status} IN ('open', 'in_progress'))`
     )
     .orderBy(desc(jobs.updatedAt));
 

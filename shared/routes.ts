@@ -80,6 +80,18 @@ export const api = {
         400: errorSchemas.validation,
       },
     },
+    pay: {
+      method: 'POST' as const,
+      path: '/api/jobs/:jobId/pay' as const,
+      responses: {
+        200: z.object({
+          success: z.boolean(),
+          authorizationUrl: z.string().nullable(),
+          job: z.any(),
+        }),
+        400: errorSchemas.validation,
+      },
+    },
     cancel: {
       method: 'POST' as const,
       path: '/api/jobs/:id/cancel' as const,
