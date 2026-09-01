@@ -456,6 +456,10 @@ export class DatabaseStorage implements IStorage {
 
   async createJob(job: CreateJobInput & { posterId: string }): Promise<Job> {
     const values: any = { ...job };
+    // New jobs are always drafts until the posting fee is paid. We set this
+    // explicitly because the jobs.status column default in the DB is 'open'
+    // from the original schema — relying on it would publish unpaid jobs.
+    values.status = 'pending_payment';
     if (values.scheduledDate !== undefined && values.scheduledDate !== null) {
       values.scheduledDate = values.scheduledDate instanceof Date ? values.scheduledDate : new Date(values.scheduledDate);
     }
