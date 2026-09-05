@@ -73,6 +73,12 @@ function OidcVerifyGuard() {
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const { user, isLoading } = useAuth();
 
+  useEffect(() => {
+    if (!isLoading && !user) {
+      window.location.href = "/";
+    }
+  }, [isLoading, user]);
+
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -81,10 +87,7 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
     );
   }
 
-  if (!user) {
-    window.location.href = "/auth";
-    return null;
-  }
+  if (!user) return null;
 
   return <Component />;
 }
@@ -93,6 +96,30 @@ function AdminPingTracker() {
   const { isStaff } = useAdminAuth();
   useAdminPing(!!isStaff);
   return null;
+}
+
+// Guards admin-only pages: shows a spinner while auth resolves and, when the
+// admin session is missing or has expired, redirects to the home page.
+function AdminGate({ children }: { children: React.ReactNode }) {
+  const { adminUser, isLoading } = useAdminAuth();
+
+  useEffect(() => {
+    if (!isLoading && !adminUser) {
+      window.location.href = "/";
+    }
+  }, [isLoading, adminUser]);
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <Loader2 className="w-10 h-10 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!adminUser) return null;
+
+  return <>{children}</>;
 }
 
 function Router() {
@@ -127,24 +154,40 @@ function Router() {
         {() => <ProtectedRoute component={Profile} />}
       </Route>
       <Route path="/admin/earnings">
-        {() => <ProtectedRoute component={AdminEarnings} />}
+        {() => <AdminGate><ProtectedRoute component={AdminEarnings} /></AdminGate>}
       </Route>
       <Route path="/admin/dashboard">
-        {() => <ProtectedRoute component={AdminDashboard} />}
+        {() => <AdminGate><ProtectedRoute component={AdminDashboard} /></AdminGate>}
       </Route>
       <Route path="/notifications">
         {() => <ProtectedRoute component={Notifications} />}
       </Route>
-      <Route path="/admin/disputes" component={AdminDisputes} />
+      <Route path="/admin/disputes">
+        {() => <AdminGate><AdminDisputes /></AdminGate>}
+      </Route>
       <Route path="/admin/login" component={AdminLogin} />
-      <Route path="/admin/staff" component={AdminManagement} />
-      <Route path="/admin/settings" component={AdminSettings} />
-      <Route path="/admin/profile" component={AdminProfile} />
+      <Route path="/admin/staff">
+        {() => <AdminGate><AdminManagement /></AdminGate>}
+      </Route>
+      <Route path="/admin/settings">
+        {() => <AdminGate><AdminSettings /></AdminGate>}
+      </Route>
+      <Route path="/admin/profile">
+        {() => <AdminGate><AdminProfile /></AdminGate>}
+      </Route>
       <Route path="/admin/payroll" component={AdminPayroll} />
-      <Route path="/admin/notifications" component={AdminNotifications} />
-      <Route path="/admin/verifications" component={AdminVerifications} />
-      <Route path="/admin/support" component={AdminSupport} />
-      <Route path="/admin/security" component={AdminSecurityRecords} />
+      <Route path="/admin/notifications">
+        {() => <AdminGate><AdminNotifications /></AdminGate>}
+      </Route>
+      <Route path="/admin/verifications">
+        {() => <AdminGate><AdminVerifications /></AdminGate>}
+      </Route>
+      <Route path="/admin/support">
+        {() => <AdminGate><AdminSupport /></AdminGate>}
+      </Route>
+      <Route path="/admin/security">
+        {() => <AdminGate><AdminSecurityRecords /></AdminGate>}
+      </Route>
 
       <Route component={NotFound} />
     </Switch>
