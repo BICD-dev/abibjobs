@@ -19,11 +19,15 @@ async function fetchUser(): Promise<User | null> {
 
 export function useAuth() {
   const queryClient = useQueryClient();
-  const { data: user, isLoading } = useQuery<User | null>({
+  const { data: user, isLoading, isFetching } = useQuery<User | null>({
     queryKey: ["/api/auth/user"],
     queryFn: fetchUser,
     retry: false,
-    staleTime: 1000 * 60 * 2, // 2 minutes — short enough to pick up session changes, long enough to avoid flicker
+    // Never treat a cached answer as current: guards that rely on this query
+    // (e.g. ProtectedRoute) must get a definitive server answer, not a stale
+    // cached null left over from before login.
+    staleTime: 0,
+    refetchOnWindowFocus: false,
   });
 
   const logoutMutation = useMutation({
@@ -52,6 +56,7 @@ export function useAuth() {
   return {
     user,
     isLoading,
+    isFetching,
     isAuthenticated: !!user,
     logout: logoutMutation.mutate,
     isLoggingOut: logoutMutation.isPending,

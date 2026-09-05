@@ -12,7 +12,7 @@ interface AdminUser {
 
 export function useAdminAuth() {
   const queryClient = useQueryClient();
-  const { data: adminUser, isLoading } = useQuery<AdminUser | null>({
+  const { data: adminUser, isLoading, isFetching } = useQuery<AdminUser | null>({
     queryKey: ["/api/admin/me"],
     queryFn: async () => {
       const res = await fetch("/api/admin/me", { credentials: "include" });
@@ -20,12 +20,16 @@ export function useAdminAuth() {
       return res.json();
     },
     retry: false,
-    staleTime: 1000 * 60 * 2,
+    // Never treat a cached answer as current: AdminGate must get a definitive
+    // server answer so freshly-logged-in admins aren't bounced by a stale null.
+    staleTime: 0,
+    refetchOnWindowFocus: false,
   });
 
   return {
     adminUser,
     isLoading,
+    isFetching,
     isAdmin: !!adminUser,
     isOwner: adminUser?.role === "owner",
     isStaff: adminUser?.role === "staff",

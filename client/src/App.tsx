@@ -70,15 +70,15 @@ function OidcVerifyGuard() {
 }
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, isFetching } = useAuth();
 
   useEffect(() => {
-    if (!isLoading && !user) {
+    if (!isLoading && !isFetching && !user) {
       window.location.href = "/";
     }
-  }, [isLoading, user]);
+  }, [isLoading, isFetching, user]);
 
-  if (isLoading) {
+  if (isLoading || isFetching) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="w-10 h-10 animate-spin text-primary" />
@@ -100,15 +100,15 @@ function AdminPingTracker() {
 // Guards admin-only pages: shows a spinner while auth resolves and, when the
 // admin session is missing or has expired, redirects to the home page.
 function AdminGate({ children }: { children: React.ReactNode }) {
-  const { adminUser, isLoading } = useAdminAuth();
+  const { adminUser, isLoading, isFetching } = useAdminAuth();
 
   useEffect(() => {
-    if (!isLoading && !adminUser) {
+    if (!isLoading && !isFetching && !adminUser) {
       window.location.href = "/";
     }
-  }, [isLoading, adminUser]);
+  }, [isLoading, isFetching, adminUser]);
 
-  if (isLoading) {
+  if (isLoading || isFetching) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="w-10 h-10 animate-spin text-primary" />
