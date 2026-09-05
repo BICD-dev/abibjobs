@@ -1,4 +1,4 @@
-import express, { type Express } from "express";
+import express, { type Express, type Response as ExpressResponse } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
 import { api, errorSchemas } from "@shared/routes";
@@ -9,8 +9,8 @@ import { setupAuth, isAuthenticated, registerAuthRoutes } from "./replit_integra
 import { registerObjectStorageRoutes, ObjectStorageService, ObjectNotFoundError, getObjectAclPolicy } from "./replit_integrations/object_storage";
 import { setupCallSignaling } from "./call";
 import { db } from "./db";
-import { users, disputeMessages, jobs, disputes, adminUsers, profiles, jobPostingFees, negotiationFeeAdjustments, suspensionAppeals } from "@shared/schema";
-import { eq, sql, and } from "drizzle-orm";
+import { users, disputeMessages, jobs, disputes, adminUsers, profiles, jobPostingFees, negotiationFeeAdjustments, suspensionAppeals, supportTickets } from "@shared/schema";
+import { eq, sql, and, count } from "drizzle-orm";
 import { getJobPostingFee, getAdditionalFee, getFeePercent } from "./config";
 import {
   sendWelcomeEmail,
@@ -2193,6 +2193,120 @@ export async function registerRoutes(
     }
     return res.status(403).json({ message: "Admin access required" });
   };
+
+  // Admin SSE stream — pushes a single aggregated update to all connected
+  // admin clients whenever opened live-support tickets or escalated disputes
+  // change. The server polls the DB once for everyone instead of each client
+  // polling independently.
+  const adminSseClients = new Set<ExpressResponse>();
+
+  app.get('/api/admin/stream', isAdminOrOwner, (req, res) => {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    res.flushHeaders?.();
+
+    const send = (data: unknown) => {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
+    adminSseClients.add(res);
+
+    const sendCounts = async () => {
+      try {
+        const [waitingRow] = await db
+          .select({ value: count() })
+          .from(supportTickets)
+          .where(eq(supportTickets.status, 'waiting'));
+        const [openDisputesRow] = await db
+          .select({ value: count() })
+          .from(disputes)
+          .where(eq(disputes.status, 'escalated'));
+        send({
+          type: 'adminCounts',
+          waitingTickets: waitingRow?.value ?? 0,
+          openDisputes: openDisputesRow?.value ?? 0,
+          ts: Date.now(),
+        });
+      } catch (err) {
+        // transient db error — skip this tick, the next interval retries
+      }
+    };
+
+    send({ type: 'connected', ts: Date.now() });
+    const interval = setInterval(sendCounts, 10000);
+
+    req.on('close', () => {
+      clearInterval(interval);
+      adminSseClients.delete(res);
+    });
+  });
+
+  // Resolve a request's identity for real-time notification streaming. Works
+  // for regular users (OIDC or manual), staff admins, and the owner.
+  const resolveNotificationIdentity = async (req: any) => {
+    const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
+    const email = await resolveUserEmail(req);
+    const isOwnerUser = !!email && email === OWNER_EMAIL;
+    let adminId: number | null = null;
+    if (isOwnerUser) {
+      const ownerAdmin = await storage.getAdminUserByEmail(OWNER_EMAIL);
+      adminId = ownerAdmin?.id ?? null;
+    } else if ((req.session as any)?.adminId) {
+      adminId = (req.session as any)?.adminId;
+    }
+    return { userId, adminId };
+  };
+
+  // Notifications SSE stream — pushes a single aggregated update to a given
+  // client whenever their unread counts change. Covers both the user's own
+  // notifications and, for admin/owner sessions, the admin notifications.
+  const notificationSseClients = new Map<number | string, { res: ExpressResponse; interval: NodeJS.Timeout }>();
+
+  app.get('/api/notifications/stream', async (req, res) => {
+    const { userId, adminId } = await resolveNotificationIdentity(req);
+    if (!userId && !adminId) return res.status(401).json({ message: "Not authenticated" });
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    res.flushHeaders?.();
+
+    const send = (data: unknown) => {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
+    const key = userId || `admin_${adminId}`;
+    if (notificationSseClients.has(key)) {
+      const existing = notificationSseClients.get(key)!;
+      clearInterval(existing.interval);
+      existing.res.end();
+      notificationSseClients.delete(key);
+    }
+    notificationSseClients.set(key, { res, interval: null as unknown as NodeJS.Timeout });
+
+    const sendCounts = async () => {
+      const payload: Record<string, any> = { type: 'notificationCounts', ts: Date.now() };
+      if (userId) payload.userUnread = await storage.getUnreadNotificationCount(userId);
+      if (adminId) payload.adminUnread = await storage.getUnreadAdminNotificationCount(adminId);
+      send(payload);
+    };
+
+    send({ type: 'connected', ts: Date.now() });
+    const interval = setInterval(sendCounts, 10000);
+    notificationSseClients.get(key)!.interval = interval;
+
+    req.on('close', () => {
+      clearInterval(interval);
+      notificationSseClients.delete(key);
+    });
+  });
 
   // Staff admin auth routes
   app.post('/api/admin/login', async (req, res) => {

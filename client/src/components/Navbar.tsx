@@ -1,7 +1,8 @@
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
 import { useAdminAuth, useAdminLogout } from "@/hooks/use-admin-auth";
-import { useUnreadNotificationCount } from "@/hooks/use-notifications";
+import { useAdminStream } from "@/hooks/use-admin-stream";
+import { useNotificationStream } from "@/hooks/use-notification-stream";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { 
@@ -40,8 +41,11 @@ export function Navbar() {
   const { user, logout, isAuthenticated } = useAuth();
   const { adminUser, isOwner, isStaff } = useAdminAuth();
   const { mutate: adminLogout } = useAdminLogout();
-  const { data: unreadData } = useUnreadNotificationCount(isAuthenticated);
-  const unreadCount = unreadData?.count || 0;
+
+  const isAdminArea = isStaff || isOwner;
+  const streamEnabled = isAuthenticated || isStaff || isOwner;
+  const { userUnread: unreadCount, adminUnread: adminUnreadCount } = useNotificationStream(streamEnabled);
+  const { waitingTickets, openDisputes } = useAdminStream(isAdminArea);
 
   const { data: profileData } = useQuery<any>({
     queryKey: ["/api/profile/me"],
@@ -53,18 +57,6 @@ export function Navbar() {
     enabled: isAuthenticated,
   });
   const avatarUrl = profileData?.profilePictureUrl || user?.profileImageUrl || undefined;
-
-  const { data: adminUnreadData } = useQuery<{ count: number }>({
-    queryKey: ["/api/admin/notifications/unread-count"],
-    queryFn: async () => {
-      const res = await fetch("/api/admin/notifications/unread-count", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed");
-      return res.json();
-    },
-    refetchInterval: 30000,
-    enabled: !!isStaff || !!isOwner,
-  });
-  const adminUnreadCount = adminUnreadData?.count || 0;
 
   const navLinks = isStaff
     ? []
@@ -113,6 +105,9 @@ export function Navbar() {
                 {allLinks.map((link) => {
                   const Icon = link.icon;
                   const isActive = location === link.href;
+                  const badgeCount = link.href === "/admin/disputes" ? openDisputes
+                    : link.href === "/admin/support" ? waitingTickets
+                    : 0;
                   return (
                     <Link key={link.href} href={link.href}>
                       <span className={`
@@ -123,6 +118,11 @@ export function Navbar() {
                       `}>
                         <Icon className="w-4 h-4 mr-2" />
                         {link.label}
+                        {badgeCount > 0 && (
+                          <span className="ml-2 bg-destructive text-destructive-foreground text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1" data-testid={`badge-admin-${link.href.replace("/admin/", "")}`}>
+                            {badgeCount > 99 ? '99+' : badgeCount}
+                          </span>
+                        )}
                       </span>
                     </Link>
                   );
@@ -325,6 +325,16 @@ export function Navbar() {
                     <div className={`flex items-center p-3 rounded-xl ${location === link.href ? "bg-primary/10 text-primary" : "text-foreground"}`}>
                       <link.icon className="w-5 h-5 mr-3" />
                       <span className="font-medium">{link.label}</span>
+                      {(() => {
+                        const badgeCount = link.href === "/admin/disputes" ? openDisputes
+                          : link.href === "/admin/support" ? waitingTickets
+                          : 0;
+                        return badgeCount > 0 ? (
+                          <span className="ml-auto bg-destructive text-destructive-foreground text-xs font-bold rounded-full min-w-[20px] h-5 flex items-center justify-center px-1.5">
+                            {badgeCount > 99 ? '99+' : badgeCount}
+                          </span>
+                        ) : null;
+                      })()}
                     </div>
                   </Link>
                 ))}
