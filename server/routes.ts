@@ -1928,14 +1928,17 @@ export async function registerRoutes(
       const newTotal = newPrice * multiplier;
       const increase = newTotal - oldTotal;
 
-      // No price increase — accept immediately. Nothing more to collect.
-      if (increase <= 0) {
+      // No price increase, OR the poster raised the price themselves via a
+      // counter-offer (offer.senderId === job.posterId). In both cases there is
+      // nothing extra to collect — the poster's own counterdrive shouldn't push
+      // a fee onto the worker who simply accepts it.
+      if (increase <= 0 || offer.senderId === job.posterId) {
         const result = await finalizeOfferAcceptance(offer, job);
         return res.json(result);
       }
 
-      // The offer raises the price above the posted amount. The poster owes a
-      // fee on the delta before the offer can be finalized.
+      // The worker raised the price above the posted amount and the poster is
+      // accepting. The poster owes a fee on the delta before finalizing.
       let adjustment = await storage.getNegotiationFeeAdjustmentByOffer(offerId);
       if (!adjustment) {
         const feeAmount = getAdditionalFee(oldTotal, newTotal);
