@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Loader2, Eye, UserPlus, ArrowUpCircle, ArrowDownCircle, TrendingUp, CalendarIcon, Clock, Briefcase, Users, Megaphone, Send } from "lucide-react";
+import { Loader2, Eye, UserPlus, TrendingUp, CalendarIcon, Clock, Briefcase, Users, Megaphone, Send } from "lucide-react";
 import { useAdminAuth } from "@/hooks/use-admin-auth";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
@@ -18,8 +18,6 @@ import { cn } from "@/lib/utils";
 interface DashboardAnalytics {
   totalVisitors: number;
   totalSignUps: number;
-  totalTopUps: string;
-  totalPaidOut: string;
   todayVisitors: number;
   todaySignUps: number;
   recentVisitsByDay: { date: string; count: number }[];
@@ -38,11 +36,6 @@ interface AdminHoursEntry {
   email: string;
   date: string;
   secondsWorked: number;
-}
-
-function formatNaira(amount: string | number) {
-  const num = typeof amount === 'string' ? parseFloat(amount) : amount;
-  return new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', minimumFractionDigits: 0 }).format(num);
 }
 
 function StatCard({ title, value, subtitle, icon: Icon, color }: {
@@ -210,7 +203,7 @@ export default function AdminDashboard() {
           </Card>
         ) : data ? (
           <>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-4 mb-8">
               <StatCard
                 title="Total Visitors"
                 value={data.totalVisitors.toLocaleString()}
@@ -224,20 +217,6 @@ export default function AdminDashboard() {
                 subtitle={`${data.todaySignUps.toLocaleString()} today`}
                 icon={UserPlus}
                 color="bg-green-500/10 text-green-500"
-              />
-              <StatCard
-                title="Total Top Ups"
-                value={formatNaira(data.totalTopUps)}
-                subtitle="All user deposits"
-                icon={ArrowUpCircle}
-                color="bg-purple-500/10 text-purple-500"
-              />
-              <StatCard
-                title="Total Paid Out"
-                value={formatNaira(data.totalPaidOut)}
-                subtitle="Earnings + withdrawals"
-                icon={ArrowDownCircle}
-                color="bg-orange-500/10 text-orange-500"
               />
             </div>
 
