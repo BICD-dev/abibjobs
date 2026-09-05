@@ -7,7 +7,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useProfile } from "@/hooks/use-profile";
 import { useAdminAuth, useAdminPing } from "@/hooks/use-admin-auth";
 import { Loader2 } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import { useGlobalVisitorTracking } from "@/hooks/use-visitor-tracking";
 import Home from "@/pages/Home";
@@ -70,15 +70,40 @@ function OidcVerifyGuard() {
 }
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
-  const { user, isLoading, isFetching } = useAuth();
+  const { user, isLoading, refetch } = useAuth();
+  // True while we re-verify a missing user against the server (e.g. right after
+  // login or session expiry). We must not jump to a conclusion from a cached
+  // null, but we must not unmount children (Navbar etc.) on background
+  // refetches either — that would cause a refetch/spinner loop.
+  const [checking, setChecking] = useState(false);
 
   useEffect(() => {
-    if (!isLoading && !isFetching && !user) {
+    let cancelled = false;
+    // The initial mount fetch already answers the question; don't stack a
+    // second request on top of it while it is still in flight.
+    if (isLoading) return;
+    if (user) {
+      setChecking(false);
+      return;
+    }
+    setChecking(true);
+    refetch().finally(() => {
+      // `finally` also covers a rejected refetch so `checking` can never stay
+      // true forever (which would leave the gate on an eternal spinner).
+      if (!cancelled) setChecking(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoading, user, refetch]);
+
+  useEffect(() => {
+    if (!isLoading && !checking && !user) {
       window.location.href = "/";
     }
-  }, [isLoading, isFetching, user]);
+  }, [isLoading, checking, user]);
 
-  if (isLoading || isFetching) {
+  if (isLoading || (checking && !user)) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="w-10 h-10 animate-spin text-primary" />
@@ -100,15 +125,40 @@ function AdminPingTracker() {
 // Guards admin-only pages: shows a spinner while auth resolves and, when the
 // admin session is missing or has expired, redirects to the home page.
 function AdminGate({ children }: { children: React.ReactNode }) {
-  const { adminUser, isLoading, isFetching } = useAdminAuth();
+  const { adminUser, isLoading, refetch } = useAdminAuth();
+  // True while we re-verify a missing admin session against the server. Same
+  // rationale as ProtectedRoute: verify a cached null, but never unmount
+  // children (which contain other useAdminAuth consumers) on background
+  // refetches, or the page enters a spinner/refetch loop.
+  const [checking, setChecking] = useState(false);
 
   useEffect(() => {
-    if (!isLoading && !isFetching && !adminUser) {
+    let cancelled = false;
+    // The initial mount fetch already answers the question; don't stack a
+    // second request on top of it while it is still in flight.
+    if (isLoading) return;
+    if (adminUser) {
+      setChecking(false);
+      return;
+    }
+    setChecking(true);
+    refetch().finally(() => {
+      // `finally` also covers a rejected refetch so `checking` can never stay
+      // true forever (which would leave the gate on an eternal spinner).
+      if (!cancelled) setChecking(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoading, adminUser, refetch]);
+
+  useEffect(() => {
+    if (!isLoading && !checking && !adminUser) {
       window.location.href = "/";
     }
-  }, [isLoading, isFetching, adminUser]);
+  }, [isLoading, checking, adminUser]);
 
-  if (isLoading || isFetching) {
+  if (isLoading || (checking && !adminUser)) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="w-10 h-10 animate-spin text-primary" />
