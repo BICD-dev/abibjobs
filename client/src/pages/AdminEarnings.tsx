@@ -17,6 +17,16 @@ export default function AdminEarnings() {
   const { mutate: withdraw, isPending: isWithdrawing } = useAdminWithdraw();
   const { mutate: updateBank, isPending: isUpdatingBank } = useUpdateAdminBank();
 
+  const { data: config } = useQuery<{ feePercent?: number }>({
+    queryKey: ['/api/config'],
+    queryFn: async () => {
+      const res = await fetch('/api/config', { credentials: "include" });
+      if (!res.ok) return {};
+      return res.json();
+    },
+  });
+  const feePercent = config?.feePercent ?? 15;
+
   const [withdrawOpen, setWithdrawOpen] = useState(false);
   const [bankSettingsOpen, setBankSettingsOpen] = useState(false);
   const [amount, setAmount] = useState("");
@@ -103,7 +113,7 @@ export default function AdminEarnings() {
           </Card>
           <Card className="rounded-2xl">
             <CardContent className="p-6">
-              <p className="text-sm text-muted-foreground mb-1">Total Earned (22% fees)</p>
+              <p className="text-sm text-muted-foreground mb-1">Total Earned ({feePercent}% fees)</p>
               <p className="text-3xl font-bold font-display text-green-600 dark:text-green-400" data-testid="text-total-earned">
                 ₦{totalEarned.toLocaleString()}
               </p>
@@ -291,7 +301,7 @@ export default function AdminEarnings() {
           <CardContent>
             {!earnings?.transactions || earnings.transactions.length === 0 ? (
               <div className="text-center py-10 text-muted-foreground" data-testid="text-no-earnings">
-                No earnings yet. You'll see your 22% fees from completed jobs here.
+                No earnings yet. You'll see your {feePercent}% fees from completed jobs here.
               </div>
             ) : (
               <div className="space-y-4">
@@ -307,7 +317,7 @@ export default function AdminEarnings() {
                       </div>
                       <div>
                         <p className="font-bold text-foreground">
-                          {tx.type === 'withdrawal_fee' ? 'Withdrawal Fee (1.5%)' : tx.type === 'fee_earned' ? '22% Fee Earned' : 'Withdrawal'}
+                          {tx.type === 'withdrawal_fee' ? 'Withdrawal Fee (1.5%)' : tx.type === 'fee_earned' ? `${feePercent}% Fee Earned` : 'Withdrawal'}
                         </p>
                         {tx.jobTitle && (
                           <p className="text-xs text-muted-foreground">Job: {tx.jobTitle}</p>

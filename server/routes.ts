@@ -11,7 +11,7 @@ import { setupCallSignaling } from "./call";
 import { db } from "./db";
 import { users, disputeMessages, jobs, disputes, adminUsers, profiles, jobPostingFees, negotiationFeeAdjustments, suspensionAppeals } from "@shared/schema";
 import { eq, sql, and } from "drizzle-orm";
-import { getJobPostingFee, getAdditionalFee } from "./config";
+import { getJobPostingFee, getAdditionalFee, getFeePercent } from "./config";
 import {
   sendWelcomeEmail,
   sendPasswordResetEmail,
@@ -171,7 +171,12 @@ export async function registerRoutes(
   // Setup Auth
   await setupAuth(app);
   registerAuthRoutes(app);
-  
+
+  // Public platform config (fee percentage, etc.) — safe to expose
+  app.get('/api/config', (_req, res) => {
+    res.json({ feePercent: getFeePercent() });
+  });
+
   // Setup Object Storage (auth middleware + intent recording enforced inside)
   registerObjectStorageRoutes(app, isAuthenticated, uploadIntents);
 
