@@ -122,6 +122,8 @@ export default function JobDetails() {
   const [confirmingNoShow, setConfirmingNoShow] = useState(false);
   const [noShowStep, setNoShowStep] = useState<'confirm' | 'choose'>('confirm');
   const [showPenaltyConfirm, setShowPenaltyConfirm] = useState(false);
+  const [showCancelConfirmDialog, setShowCancelConfirmDialog] = useState(false);
+  const [cancelWillEscalate, setCancelWillEscalate] = useState(false);
 
   const [showDisputeForm, setShowDisputeForm] = useState(false);
   const [disputeMessage, setDisputeMessage] = useState("");
@@ -778,12 +780,15 @@ export default function JobDetails() {
                             <Button
                               variant="destructive"
                               className="w-full rounded-xl"
-                              onClick={() => workerEnRoute ? setShowPenaltyConfirm(true) : cancelJob(job.id)}
+                              onClick={() => {
+                                setCancelWillEscalate(workerEnRoute);
+                                setShowCancelConfirmDialog(true);
+                              }}
                               disabled={isCancelling}
                               data-testid="button-cancel-job"
                             >
                               {isCancelling ? <Loader2 className="animate-spin mr-2" /> : <XCircle className="mr-2 h-4 w-4" />}
-                              {workerEnRoute ? "Cancel Job" : "Cancel Job"}
+                              Cancel Job
                             </Button>
                           );
                         })()}
@@ -1601,6 +1606,51 @@ export default function JobDetails() {
             >
               <MapPinCheck className="w-4 h-4 mr-2" />
               Yes, Worker Has Arrived
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Cancel Job Confirmation Dialog */}
+      <AlertDialog open={showCancelConfirmDialog} onOpenChange={setShowCancelConfirmDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <XCircle className="w-5 h-5 text-destructive" />
+              Cancel this job?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-3 text-sm">
+              {cancelWillEscalate ? (
+                <span className="block">
+                  The worker is already on the way. This cancellation will be <strong>escalated for admin review</strong>.
+                </span>
+              ) : (
+                <span className="block">
+                  Are you sure you want to cancel this job?
+                </span>
+              )}
+              <span className="block text-muted-foreground">
+                The <strong>posting fee is non-refundable</strong> once the job is published. Please confirm before proceeding.
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-dialog-dismiss">Go Back</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive hover:bg-destructive/90 text-white"
+              disabled={isCancelling}
+              onClick={() => {
+                setShowCancelConfirmDialog(false);
+                if (cancelWillEscalate) {
+                  setShowPenaltyConfirm(true);
+                } else {
+                  cancelJob(job!.id);
+                }
+              }}
+              data-testid="button-cancel-dialog-confirm"
+            >
+              <XCircle className="w-4 h-4 mr-2" />
+              {isCancelling ? "Cancelling..." : "Yes, Cancel Job"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
