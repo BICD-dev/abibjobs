@@ -27,7 +27,6 @@ import AdminProfile from "@/pages/AdminProfile";
 import AdminPayroll from "@/pages/AdminPayroll";
 import AdminNotifications from "@/pages/AdminNotifications";
 import AdminSupport from "@/pages/AdminSupport";
-import AdminWithdrawalRequests from "@/pages/AdminWithdrawalRequests";
 import AdminSecurityRecords from "@/pages/AdminSecurityRecords";
 import Notifications from "@/pages/Notifications";
 import MyJobs from "@/pages/MyJobs";
@@ -145,7 +144,6 @@ function Router() {
       <Route path="/admin/notifications" component={AdminNotifications} />
       <Route path="/admin/verifications" component={AdminVerifications} />
       <Route path="/admin/support" component={AdminSupport} />
-      <Route path="/admin/withdrawal-requests" component={AdminWithdrawalRequests} />
       <Route path="/admin/security" component={AdminSecurityRecords} />
 
       <Route component={NotFound} />
