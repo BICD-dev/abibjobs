@@ -1,19 +1,13 @@
 import { useState, useMemo } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Navbar } from "@/components/Navbar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Calendar } from "@/components/ui/calendar";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Badge } from "@/components/ui/badge";
-import { Loader2, Clock, Building2, CreditCard, Check, User, CalendarIcon, ChevronLeft, ChevronRight, Wallet, ArrowDownToLine, CheckCircle2, XCircle, AlertCircle } from "lucide-react";
+import { Loader2, Clock, User, CalendarIcon, ChevronLeft, ChevronRight } from "lucide-react";
 import { useAdminAuth } from "@/hooks/use-admin-auth";
-import { useToast } from "@/hooks/use-toast";
-import { useBanks } from "@/hooks/use-banks";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, isSameMonth, addMonths, subMonths, isWithinInterval, parseISO } from "date-fns";
+import { format, startOfMonth, endOfMonth, addMonths, subMonths } from "date-fns";
 
 interface AdminHoursResponse {
   hours: { date: string; secondsWorked: number }[];
@@ -22,40 +16,7 @@ interface AdminHoursResponse {
     id: number;
     name: string;
     email: string;
-    walletBalance: string;
-    bankName: string | null;
-    bankCode: string | null;
-    accountNumber: string | null;
-    accountName: string | null;
   };
-}
-
-interface AdminWithdrawalRecord {
-  id: number;
-  adminId: number;
-  amount: string;
-  bankName: string;
-  accountNumber: string;
-  accountName: string | null;
-  status: string;
-  adminNote: string | null;
-  processedAt: string | null;
-  createdAt: string;
-}
-
-interface AdminPaymentRecord {
-  id: number;
-  adminId: number;
-  amount: string;
-  periodStart: string | null;
-  periodEnd: string | null;
-  hoursWorked: string | null;
-  bankName: string | null;
-  accountNumber: string | null;
-  accountName: string | null;
-  status: string;
-  note: string | null;
-  createdAt: string;
 }
 
 function formatDuration(totalSeconds: number) {
@@ -66,37 +27,15 @@ function formatDuration(totalSeconds: number) {
   return `${hours}h ${minutes}m`;
 }
 
-function formatNaira(amount: string | number) {
-  const num = typeof amount === 'string' ? parseFloat(amount) : amount;
-  return new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', minimumFractionDigits: 0 }).format(num);
-}
-
-function WithdrawalStatusBadge({ status }: { status: string }) {
-  if (status === 'pending') return <Badge className="bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400"><Clock className="w-3 h-3 mr-1" />Pending</Badge>;
-  if (status === 'approved') return <Badge className="bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-400"><CheckCircle2 className="w-3 h-3 mr-1" />Paid</Badge>;
-  return <Badge className="bg-red-100 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-400"><XCircle className="w-3 h-3 mr-1" />Rejected</Badge>;
-}
-
 export default function AdminProfile() {
   const { isStaff, isLoading: authLoading } = useAdminAuth();
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
 
-  const [bankName, setBankName] = useState("");
-  const [bankCode, setBankCode] = useState("");
-  const [accountNumber, setAccountNumber] = useState("");
-  const [accountName, setAccountName] = useState("");
-  const [isEditing, setIsEditing] = useState(false);
   const [calendarMonth, setCalendarMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [rangeFrom, setRangeFrom] = useState<Date | null>(null);
   const [rangeTo, setRangeTo] = useState<Date | null>(null);
   const [rangeFromOpen, setRangeFromOpen] = useState(false);
-
-  const { data: banks = [] } = useBanks();
   const [rangeToOpen, setRangeToOpen] = useState(false);
-  const [withdrawDialogOpen, setWithdrawDialogOpen] = useState(false);
-  const [withdrawAmount, setWithdrawAmount] = useState("");
 
   const { data: hoursData, isLoading } = useQuery<AdminHoursResponse>({
     queryKey: ["/api/admin/my-hours"],
@@ -106,52 +45,6 @@ export default function AdminProfile() {
       return res.json();
     },
     enabled: !!isStaff,
-  });
-
-  const { data: payments, isLoading: paymentsLoading } = useQuery<AdminPaymentRecord[]>({
-    queryKey: ["/api/admin/my-payments"],
-    queryFn: async () => {
-      const res = await fetch("/api/admin/my-payments", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed");
-      return res.json();
-    },
-    enabled: !!isStaff,
-  });
-
-  const { data: withdrawals, isLoading: withdrawalsLoading } = useQuery<AdminWithdrawalRecord[]>({
-    queryKey: ["/api/admin/my-withdrawals"],
-    queryFn: async () => {
-      const res = await fetch("/api/admin/my-withdrawals", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed");
-      return res.json();
-    },
-    enabled: !!isStaff,
-  });
-
-  const withdrawMutation = useMutation({
-    mutationFn: async (amount: string) => {
-      const res = await fetch("/api/admin/my-withdraw", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount }),
-        credentials: "include",
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.message || "Failed to request withdrawal");
-      }
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/my-hours"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/my-withdrawals"] });
-      toast({ title: "Withdrawal Requested", description: "Your request is pending owner approval." });
-      setWithdrawDialogOpen(false);
-      setWithdrawAmount("");
-    },
-    onError: (error: Error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-    },
   });
 
   const rangeResult = useMemo(() => {
@@ -165,66 +58,6 @@ export default function AdminProfile() {
     const totalSeconds = filtered.reduce((sum, h) => sum + h.secondsWorked, 0);
     return { totalSeconds, daysWorked: filtered.length, hours: filtered, start, end };
   }, [rangeFrom, rangeTo, hoursData]);
-
-  const bankMutation = useMutation({
-    mutationFn: async (data: { bankName: string; bankCode: string; accountNumber: string; accountName: string }) => {
-      const res = await fetch("/api/admin/my-bank", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-        credentials: "include",
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.message || "Failed");
-      }
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/my-hours"] });
-      toast({ title: "Bank Account Updated", description: "Your salary account has been saved." });
-      setIsEditing(false);
-    },
-    onError: (error: Error) => {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-    },
-  });
-
-  const hasBankSetup = hoursData?.admin?.bankName && hoursData?.admin?.accountNumber;
-  const walletBalance = parseFloat(hoursData?.admin?.walletBalance || "0");
-
-  const handleWithdrawSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const amount = parseFloat(withdrawAmount);
-    if (!isFinite(amount) || amount <= 0) {
-      toast({ title: "Invalid Amount", description: "Enter a valid amount to withdraw.", variant: "destructive" });
-      return;
-    }
-    if (amount > walletBalance) {
-      toast({ title: "Insufficient Balance", description: "You cannot withdraw more than your wallet balance.", variant: "destructive" });
-      return;
-    }
-    withdrawMutation.mutate(amount.toFixed(2));
-  };
-
-  const initEditForm = () => {
-    if (hoursData?.admin) {
-      setBankName(hoursData.admin.bankName || "");
-      setBankCode(hoursData.admin.bankCode || "");
-      setAccountNumber(hoursData.admin.accountNumber || "");
-      setAccountName(hoursData.admin.accountName || "");
-    }
-    setIsEditing(true);
-  };
-
-  const handleBankSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!bankName || !accountNumber || !accountName) {
-      toast({ title: "Missing Info", description: "Please fill in all required fields", variant: "destructive" });
-      return;
-    }
-    bankMutation.mutate({ bankName, bankCode, accountNumber, accountName });
-  };
 
   if (authLoading) {
     return (
@@ -480,265 +313,9 @@ export default function AdminProfile() {
                 </div>
               </CardContent>
             </Card>
-
-            <Card data-testid="card-wallet">
-              <CardHeader>
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-emerald-500/10 flex items-center justify-center flex-shrink-0">
-                    <Wallet className="w-4 h-4 text-emerald-500" />
-                  </div>
-                  <CardTitle className="text-lg">My Wallet</CardTitle>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/20 mb-4">
-                  <p className="text-sm text-muted-foreground mb-1">Available Balance</p>
-                  <p className="text-3xl font-bold text-foreground" data-testid="text-wallet-balance">
-                    {formatNaira(walletBalance)}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">Salary paid to you lands here. Withdraw it to your salary bank account.</p>
-                </div>
-
-                {!hasBankSetup ? (
-                  <div className="flex items-start gap-2 p-3 rounded-xl bg-orange-500/10 text-sm text-orange-700 dark:text-orange-400">
-                    <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                    <p>Set up your salary bank account below before you can withdraw.</p>
-                  </div>
-                ) : (
-                  <Button
-                    className="w-full"
-                    disabled={walletBalance <= 0}
-                    onClick={() => { setWithdrawAmount(""); setWithdrawDialogOpen(true); }}
-                    data-testid="button-open-withdraw"
-                  >
-                    <ArrowDownToLine className="w-4 h-4 mr-2" />
-                    Withdraw to Bank
-                  </Button>
-                )}
-
-                {withdrawalsLoading ? (
-                  <div className="flex justify-center py-6">
-                    <Loader2 className="w-6 h-6 animate-spin text-primary" />
-                  </div>
-                ) : withdrawals && withdrawals.length > 0 ? (
-                  <div className="mt-5 pt-4 border-t">
-                    <p className="text-sm font-medium text-muted-foreground mb-2">Withdrawal History</p>
-                    <div className="space-y-2">
-                      {withdrawals.map((w) => (
-                        <div key={w.id} className="flex items-center justify-between gap-4 p-3 rounded-xl bg-muted/20" data-testid={`row-withdrawal-${w.id}`}>
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm font-medium text-foreground">{formatNaira(w.amount)}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {w.createdAt ? format(new Date(w.createdAt), "MMM d, yyyy") : ""}
-                              {` · ${w.bankName} (${w.accountNumber})`}
-                            </p>
-                            {w.adminNote && (
-                              <p className="text-xs text-muted-foreground mt-0.5">Note: {w.adminNote}</p>
-                            )}
-                          </div>
-                          <WithdrawalStatusBadge status={w.status} />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-              </CardContent>
-            </Card>
-
-            <Card data-testid="card-bank-account">
-              <CardHeader>
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-green-500/10 flex items-center justify-center flex-shrink-0">
-                      <Building2 className="w-4 h-4 text-green-500" />
-                    </div>
-                    <CardTitle className="text-lg">Salary Account</CardTitle>
-                  </div>
-                  {hasBankSetup && !isEditing && (
-                    <Button variant="outline" size="sm" onClick={initEditForm} data-testid="button-edit-bank">
-                      Change
-                    </Button>
-                  )}
-                </div>
-              </CardHeader>
-              <CardContent>
-                {!hasBankSetup && !isEditing ? (
-                  <div className="text-center py-6">
-                    <Building2 className="w-10 h-10 text-muted-foreground/30 mx-auto mb-3" />
-                    <p className="text-sm text-muted-foreground mb-4">No salary account set up yet</p>
-                    <Button onClick={() => setIsEditing(true)} data-testid="button-setup-bank">
-                      Set Up Salary Account
-                    </Button>
-                  </div>
-                ) : isEditing ? (
-                  <form onSubmit={handleBankSubmit} className="space-y-4">
-                    <div>
-                      <label className="text-sm font-medium text-foreground mb-1 block">Bank Name</label>
-                      <Select
-                        value={bankCode}
-                        onValueChange={(val) => {
-                          setBankCode(val);
-                          const bank = banks.find(b => b.code === val);
-                          if (bank) setBankName(bank.name);
-                        }}
-                      >
-                        <SelectTrigger data-testid="select-bank-name">
-                          <SelectValue placeholder="Select your bank" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {banks.map((bank) => (
-                            <SelectItem key={bank.code} value={bank.code}>
-                              {bank.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium text-foreground mb-1 block">Account Number</label>
-                      <Input
-                        value={accountNumber}
-                        onChange={(e) => setAccountNumber(e.target.value)}
-                        placeholder="0123456789"
-                        maxLength={10}
-                        data-testid="input-account-number"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium text-foreground mb-1 block">Account Name</label>
-                      <Input
-                        value={accountName}
-                        onChange={(e) => setAccountName(e.target.value)}
-                        placeholder="Your account name"
-                        data-testid="input-account-name"
-                      />
-                    </div>
-                    <div className="flex gap-2">
-                      <Button type="submit" disabled={bankMutation.isPending} data-testid="button-save-bank">
-                        {bankMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-                        Save Account
-                      </Button>
-                      {hasBankSetup && (
-                        <Button type="button" variant="outline" onClick={() => setIsEditing(false)} data-testid="button-cancel-bank">
-                          Cancel
-                        </Button>
-                      )}
-                    </div>
-                  </form>
-                ) : (
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2 p-3 rounded-xl bg-muted/30">
-                      <Check className="w-4 h-4 text-green-500 flex-shrink-0" />
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-foreground" data-testid="text-bank-name">{hoursData?.admin?.bankName}</p>
-                        <p className="text-sm text-muted-foreground" data-testid="text-account-number">{hoursData?.admin?.accountNumber}</p>
-                        <p className="text-xs text-muted-foreground" data-testid="text-account-name">{hoursData?.admin?.accountName}</p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card data-testid="card-payment-history">
-              <CardHeader>
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-purple-500/10 flex items-center justify-center flex-shrink-0">
-                    <CreditCard className="w-4 h-4 text-purple-500" />
-                  </div>
-                  <CardTitle className="text-lg">Payment History</CardTitle>
-                </div>
-              </CardHeader>
-              <CardContent>
-                {paymentsLoading ? (
-                  <div className="flex justify-center py-6">
-                    <Loader2 className="w-6 h-6 animate-spin text-primary" />
-                  </div>
-                ) : payments && payments.length > 0 ? (
-                  <div className="space-y-2">
-                    {payments.map((p) => (
-                      <div key={p.id} className="flex items-center justify-between gap-4 p-3 rounded-xl bg-muted/20" data-testid={`row-payment-${p.id}`}>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium text-foreground">{formatNaira(p.amount)}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {p.createdAt ? format(new Date(p.createdAt), "MMM d, yyyy") : ""}
-                            {p.note ? ` · ${p.note}` : ""}
-                          </p>
-                        </div>
-                        <span className="text-xs font-medium text-green-600 bg-green-500/10 px-2 py-1 rounded-md">{p.status}</span>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground text-center py-6">No payments received yet</p>
-                )}
-              </CardContent>
-            </Card>
           </div>
         )}
       </main>
-
-      <Dialog open={withdrawDialogOpen} onOpenChange={setWithdrawDialogOpen}>
-        <DialogContent className="rounded-2xl">
-          <DialogHeader>
-            <DialogTitle>Withdraw to Bank</DialogTitle>
-          </DialogHeader>
-          <form onSubmit={handleWithdrawSubmit} className="space-y-4">
-            <div className="bg-muted/50 rounded-xl p-4 space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Available</span>
-                <span className="font-bold text-primary">{formatNaira(walletBalance)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">To</span>
-                <span className="font-medium">{hoursData?.admin?.bankName}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Account</span>
-                <span className="font-medium">{hoursData?.admin?.accountNumber}</span>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Amount to Withdraw</label>
-              <Input
-                type="number"
-                placeholder="Enter amount"
-                value={withdrawAmount}
-                onChange={(e) => setWithdrawAmount(e.target.value)}
-                min="0"
-                step="100"
-                data-testid="input-withdraw-amount"
-              />
-            </div>
-
-            <div className="flex items-start gap-2 p-3 bg-blue-50 dark:bg-blue-950/30 rounded-xl text-sm text-blue-700 dark:text-blue-400">
-              <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-              <p>The amount is held from your wallet right away and paid out once the owner approves your request.</p>
-            </div>
-
-            <div className="flex gap-3">
-              <Button
-                type="button"
-                variant="outline"
-                className="flex-1 rounded-xl"
-                onClick={() => setWithdrawDialogOpen(false)}
-                data-testid="button-cancel-withdraw"
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                className="flex-1 rounded-xl"
-                disabled={withdrawMutation.isPending}
-                data-testid="button-confirm-withdraw"
-              >
-                {withdrawMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Request Withdrawal"}
-              </Button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
