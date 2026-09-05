@@ -2,7 +2,7 @@ import { useState, useRef, useMemo, useCallback } from "react";
 import LiveWorkerMap from "@/components/LiveWorkerMap";
 import WorkerLocationTracker from "@/components/WorkerLocationTracker";
 import { useRoute, useLocation } from "wouter";
-import { useJob, usePayJobFee, useAcceptJob, useCompleteJob, useCancelJob, useUpdateJobProgress, useConfirmArrival, useReportNoShow } from "@/hooks/use-jobs";
+import { useJob, usePayJobFee, useAcceptJob, useCompleteJob, useCancelJob, useUpdateJobProgress, useConfirmArrival, useReportNoShow, useRepostJob } from "@/hooks/use-jobs";
 import { useOffers, useCreateOffer, useAcceptOffer, useDeclineOffer, useCounterOffer } from "@/hooks/use-offers";
 import { useDisputeByJob, useCreateDispute, useDisputeMessage, useAcceptProposal, useEscalateDispute, useUploadDisputeImage } from "@/hooks/use-disputes";
 import { useAuth } from "@/hooks/use-auth";
@@ -99,6 +99,7 @@ export default function JobDetails() {
   const { mutate: confirmArrival, isPending: isConfirmingArrival } = useConfirmArrival();
   const { mutate: reportNoShow, isPending: isReportingNoShow } = useReportNoShow();
   const { mutate: payJobFee, isPending: isPayingFee } = usePayJobFee();
+  const { mutate: repostJob, isPending: isReposting } = useRepostJob();
   const [showConfirmArrivalDialog, setShowConfirmArrivalDialog] = useState(false);
 
   const { mutate: createOffer, isPending: isCreatingOffer } = useCreateOffer();
@@ -167,6 +168,7 @@ export default function JobDetails() {
   const isCompleted = job.status === "completed";
   const isCancelled = job.status === "cancelled";
   const isDisputed = job.status === "disputed";
+  const isExpired = job.status === "expired";
 
   const handlePayJobFee = () => {
     payJobFee(job.id, {
@@ -336,9 +338,11 @@ export default function JobDetails() {
                   ? 'bg-red-50 text-red-600 border-red-200 dark:bg-red-950/30 dark:text-red-400 dark:border-red-800' 
                   : isDraft
                     ? 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-800'
-                    : 'bg-primary/5 text-primary border-primary/20'
+                    : isExpired
+                      ? 'bg-gray-200 text-gray-600 border-gray-300 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-700'
+                      : 'bg-primary/5 text-primary border-primary/20'
               }`}>
-                {isDraft ? 'Draft' : job.status.replace('_', ' ')}
+                {isDraft ? 'Draft' : isExpired ? 'Expired' : job.status.replace('_', ' ')}
               </Badge>
               <h1 className="text-3xl md:text-4xl font-display font-bold text-foreground" data-testid="text-job-title">{job.title}</h1>
               <div className="flex flex-wrap items-center gap-4 text-muted-foreground">
@@ -739,6 +743,23 @@ export default function JobDetails() {
                           <p className="text-sm font-medium text-amber-600 bg-amber-50 dark:bg-amber-950/30 p-3 rounded-lg border border-amber-100 dark:border-amber-900">
                             Waiting for workers to accept your job ({job.workersAccepted}/{job.workersNeeded} joined).
                           </p>
+                        ) : isExpired ? (
+                          <div className="space-y-3 p-4 rounded-xl border border-gray-300 bg-gray-50 dark:bg-gray-900 dark:border-gray-700" data-testid="section-job-expired">
+                            <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                              This job expired because no worker accepted it before its scheduled time passed. The
+                              posting fee was non-refundable, but you can repost it for free.
+                            </p>
+                            <Button
+                              variant="default"
+                              className="w-full rounded-xl"
+                              onClick={() => repostJob(job.id)}
+                              disabled={isReposting}
+                              data-testid="button-repost-expired"
+                            >
+                              {isReposting ? <Loader2 className="animate-spin mr-2" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                              Repost Job for Free
+                            </Button>
+                          </div>
                         ) : null}
 
                         {!job.workerMarkedComplete && (isOpen || isInProgress) && (() => {
@@ -797,7 +818,14 @@ export default function JobDetails() {
 
                     {!isPoster && (
                       <div className="space-y-4">
-                        {isOpen && !isWorker ? (
+                        {isExpired ? (
+                          <div className="p-4 rounded-xl border border-gray-300 bg-gray-50 dark:bg-gray-900 dark:border-gray-700" data-testid="section-worker-job-expired">
+                            <p className="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center gap-2">
+                              <XCircle className="h-4 w-4" />
+                              This job has expired — you can no longer accept it.
+                            </p>
+                          </div>
+                        ) : isOpen && !isWorker ? (
                           <>
                             <Button
                               className="w-full h-12 text-lg bg-primary text-white rounded-xl shadow-lg shadow-primary/25"

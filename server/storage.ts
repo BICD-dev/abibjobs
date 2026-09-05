@@ -338,7 +338,9 @@ export class DatabaseStorage implements IStorage {
 
     // Draft jobs (posting fee not yet paid) are only ever visible to their
     // poster — never in the public feed, regardless of how this is queried.
-    mapped = mapped.filter(j => j.status !== 'pending_payment');
+    // Expired jobs are likewise excluded from the public feed; the poster still
+    // sees them (and can repost) via their job history.
+    mapped = mapped.filter(j => j.status !== 'pending_payment' && j.status !== 'expired');
 
     if (filters) {
       if (filters.category) {

@@ -34,6 +34,7 @@ import {
   sendSuspensionAppealReceivedEmail,
   sendSuspensionAppealDecisionEmail,
   sendEscalatedCancellationAdminEmail,
+  sendJobExpiredEmail,
   SUPPORT_EMAIL,
 } from "./email";
 
@@ -53,6 +54,56 @@ interface PaystackSession {
 const paystackSessions = new Map<string, PaystackSession>();
 
 const WITHDRAWAL_FEE_PERCENT = parseFloat(process.env.PAYSTACK_WITHDRAWAL_FEE_PERCENT || '1.5');
+
+// Jobs whose scheduled start time (plus this grace period) has passed without
+// any accepted worker are automatically expired. Configurable via env (hours).
+const JOB_EXPIRY_GRACE_HOURS = parseFloat(process.env.JOB_EXPIRY_GRACE_HOURS || '2');
+
+function getJobExpiryGraceMs(): number {
+  const hours = isFinite(JOB_EXPIRY_GRACE_HOURS) && JOB_EXPIRY_GRACE_HOURS > 0 ? JOB_EXPIRY_GRACE_HOURS : 2;
+  return hours * 60 * 60 * 1000;
+}
+
+// A job expires only while it is still open (nothing was ever accepted) AND it
+// has a scheduled time in the past (past its grace window). Accepted jobs and
+// jobs without a schedule are never auto-expired.
+function jobIsExpired(job: { status: string; scheduledDate: Date | string | null }): boolean {
+  if (job.status !== 'open' || !job.scheduledDate) return false;
+  const deadline = new Date(job.scheduledDate).getTime() + getJobExpiryGraceMs();
+  return Date.now() > deadline;
+}
+
+// Idempotent-ish close-out for a job that never got any workers. Declines any
+// pending offers, then notifies the poster (in-app + email) and the admin.
+async function expireJob(job: any): Promise<void> {
+  await storage.updateJob(job.id, { status: 'expired' });
+
+  const pendingOffers = await storage.getOffersByJob(job.id);
+  for (const o of pendingOffers) {
+    if (o.status === 'pending') {
+      await storage.updateOffer(o.id, { status: 'declined' });
+    }
+  }
+
+  storage.createNotification({
+    userId: job.posterId,
+    title: 'Job Expired',
+    message: `No worker accepted "${job.title}" before its scheduled time passed, so it has expired. You can repost it for free.`,
+    type: 'warning',
+    jobId: job.id,
+  }).catch(() => {});
+
+  storage.getUser(job.posterId).then(u => {
+    if (u?.email) sendJobExpiredEmail(u.email, u.firstName || u.email, job.title, job.id).catch(() => {});
+  }).catch(() => {});
+
+  storage.createAdminNotification({
+    adminId: 0,
+    title: 'Job Expired',
+    message: `"${job.title}" (#${job.id}) expired — no worker accepted it before the scheduled time.`,
+    type: 'warning',
+  }).catch(() => {});
+}
 
 // Upload intents track which user requested each presigned upload URL.
 // When the client later submits a path (verification docs, dispute evidence),
@@ -731,6 +782,11 @@ export async function registerRoutes(
     const job = await storage.getJob(jobId);
     if (!job) return res.status(404).json({ message: "Job not found" });
 
+    if (jobIsExpired(job)) {
+      await expireJob(job);
+      return res.status(400).json({ message: "This job has expired because its scheduled time passed without any accepted worker." });
+    }
+
     if (job.status !== 'open') {
       return res.status(400).json({ message: "Job is not open for new workers" });
     }
@@ -1220,6 +1276,37 @@ export async function registerRoutes(
       }
     } catch (err) {
       console.error("No-show error:", err);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Free repost of an expired job. The posting fee was non-refundable and no
+  // work happened, so the poster gets another chance without paying again. The
+  // schedule is cleared so the job opens immediately and never auto-expires.
+  app.post('/api/jobs/:id/repost', isAuthenticated, async (req, res) => {
+    try {
+      const jobId = Number(req.params.id);
+      const userId = (req.user as any)?.claims?.sub || (req.session as any)?.manualUserId;
+
+      const job = await storage.getJob(jobId);
+      if (!job) return res.status(404).json({ message: "Job not found" });
+      if (job.posterId !== userId) return res.status(403).json({ message: "Only the poster can repost this job" });
+      if (job.status !== 'expired') return res.status(400).json({ message: "Only expired jobs can be reposted" });
+
+      const updated = await storage.updateJob(jobId, {
+        status: 'open',
+        workerId: null,
+        workersAccepted: 0,
+        workerProgress: null,
+        posterConfirmedArrival: false,
+        acceptedAt: null,
+        scheduledDate: null,
+      });
+
+      await announceJobPublished(updated ?? job);
+      res.json({ message: "Job reposted and is now live for workers.", job: updated ?? job });
+    } catch (err) {
+      console.error("Repost error:", err);
       res.status(500).json({ message: "Internal server error" });
     }
   });
@@ -1871,6 +1958,10 @@ export async function registerRoutes(
 
       const job = await storage.getJob(jobId);
       if (!job) return res.status(404).json({ message: "Job not found" });
+      if (jobIsExpired(job)) {
+        await expireJob(job);
+        return res.status(400).json({ message: "This job has expired because its scheduled time passed without any accepted worker." });
+      }
       if (job.status !== 'open') return res.status(400).json({ message: "Job is not open for offers" });
       if (job.posterId === userId) return res.status(400).json({ message: "You cannot make an offer on your own job" });
 
@@ -1912,6 +2003,10 @@ export async function registerRoutes(
 
       const job = await storage.getJob(offer.jobId);
       if (!job) return res.status(404).json({ message: "Job not found" });
+      if (jobIsExpired(job)) {
+        await expireJob(job);
+        return res.status(400).json({ message: "This job has expired because its scheduled time passed without any accepted worker." });
+      }
       if (job.status !== 'open') return res.status(400).json({ message: "Job is no longer open for negotiation" });
 
       const isPoster = job.posterId === userId;
@@ -2057,6 +2152,10 @@ export async function registerRoutes(
 
       const job = await storage.getJob(offer.jobId);
       if (!job) return res.status(404).json({ message: "Job not found" });
+      if (jobIsExpired(job)) {
+        await expireJob(job);
+        return res.status(400).json({ message: "This job has expired because its scheduled time passed without any accepted worker." });
+      }
       if (job.status !== 'open') return res.status(400).json({ message: "Job is no longer open for negotiation" });
 
       const isPoster = job.posterId === userId;
@@ -2093,6 +2192,10 @@ export async function registerRoutes(
 
       const job = await storage.getJob(offer.jobId);
       if (!job) return res.status(404).json({ message: "Job not found" });
+      if (jobIsExpired(job)) {
+        await expireJob(job);
+        return res.status(400).json({ message: "This job has expired because its scheduled time passed without any accepted worker." });
+      }
       if (job.status !== 'open') return res.status(400).json({ message: "Job is no longer open for negotiation" });
 
       const isPoster = job.posterId === userId;
@@ -4621,6 +4724,33 @@ export async function registerRoutes(
     await storage.updateOwnerEmail(parsed.data.newEmail);
     res.json({ message: `Owner email updated to ${parsed.data.newEmail}` });
   });
+
+  // --- JOB EXPIRY SWEEPER ---
+  // Periodically closes open jobs whose scheduled start (+ grace) has passed.
+  // The write-path checks (accept / offers / negotiation) are the primary guard;
+  // this background pass catches jobs nobody tried to act on.
+  let jobExpirySweeperStarted = false;
+  const sweepExpiredJobs = async () => {
+    try {
+      const nowMs = Date.now();
+      const graceMs = getJobExpiryGraceMs();
+      const candidates = await db.select().from(jobs).where(and(eq(jobs.status, 'open'), sql`${jobs.scheduledDate} is not null`));
+      for (const candidate of candidates) {
+        if (nowMs > new Date(candidate.scheduledDate as Date).getTime() + graceMs) {
+          await expireJob(candidate);
+        }
+      }
+    } catch (err) {
+      console.error("Job expiry sweep failed:", err);
+    }
+  };
+  const startJobExpirySweeper = () => {
+    if (jobExpirySweeperStarted) return;
+    jobExpirySweeperStarted = true;
+    sweepExpiredJobs();
+    setInterval(sweepExpiredJobs, 10 * 60 * 1000);
+  };
+  startJobExpirySweeper();
 
   return httpServer;
 }

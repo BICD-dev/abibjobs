@@ -15,6 +15,7 @@ export function JobCard({ job }: JobCardProps) {
     completed: "bg-gray-100 text-gray-700 border-gray-200",
     cancelled: "bg-red-100 text-red-700 border-red-200",
     pending_payment: "bg-amber-100 text-amber-700 border-amber-200",
+    expired: "bg-gray-200 text-gray-600 border-gray-300",
   };
 
   const StatusIcon = {
@@ -23,6 +24,7 @@ export function JobCard({ job }: JobCardProps) {
     completed: CheckCircle2,
     cancelled: XCircle,
     pending_payment: Clock,
+    expired: XCircle,
   }[job.status as keyof typeof statusColors] || Briefcase;
 
   const isAccepted = job.status === 'in_progress';

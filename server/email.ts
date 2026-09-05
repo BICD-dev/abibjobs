@@ -258,6 +258,18 @@ export async function sendJobCancelledToWorkerEmail(to: string, workerName: stri
   await send(to, `Job "${jobTitle}" was cancelled`, body);
 }
 
+// ─── JOB EXPIRED ───────────────────────────────────────────────────────────
+
+export async function sendJobExpiredEmail(to: string, posterName: string, jobTitle: string, jobId: number) {
+  const body = wrap("Job Expired",
+    heading("Your Job Expired") +
+    para(`Hi ${posterName}, no worker accepted <strong>${jobTitle}</strong> before its scheduled time passed, so the job has expired.`) +
+    para("The posting fee was non-refundable, but you can repost the job for free anytime to reach workers again.") +
+    btn(`${APP_URL}/my-jobs`, "View My Jobs")
+  );
+  await send(to, `Your job "${jobTitle}" expired on ABIB JOBS`, body);
+}
+
 // ─── NO-SHOW ────────────────────────────────────────────────────────────────
 
 export async function sendNoShowWarningEmail(to: string, workerName: string, jobTitle: string, remainingChances: number, suspended: boolean) {
