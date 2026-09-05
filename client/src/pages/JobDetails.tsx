@@ -552,10 +552,23 @@ export default function JobDetails() {
                 <h3 className="text-lg font-bold font-display mb-4">Actions</h3>
 
                 {isCompleted ? (
-                  <div className="flex items-center text-green-600 bg-green-50 dark:bg-green-950/30 p-4 rounded-xl border border-green-100 dark:border-green-900">
-                    <CheckCircle className="w-5 h-5 mr-2" />
-                    This job has been completed and paid for.
-                  </div>
+                  <>
+                    <div className="flex items-center text-green-600 bg-green-50 dark:bg-green-950/30 p-4 rounded-xl border border-green-100 dark:border-green-900">
+                      <CheckCircle className="w-5 h-5 mr-2" />
+                      This job has been completed and paid for.
+                    </div>
+                    {!dispute && (isPoster || isWorker) && (
+                      <Button
+                        variant="outline"
+                        className="w-full rounded-xl text-amber-600 border-amber-200 dark:border-amber-800"
+                        onClick={() => setShowDisputeForm(!showDisputeForm)}
+                        data-testid="button-completed-toggle-dispute-form"
+                      >
+                        <Flag className="mr-2 h-4 w-4" />
+                        {showDisputeForm ? "Cancel" : "Raise a Concern (e.g. you were defrauded)"}
+                      </Button>
+                    )}
+                  </>
                 ) : isCancelled ? (
                   <div className="flex items-center text-red-600 bg-red-50 dark:bg-red-950/30 p-4 rounded-xl border border-red-100 dark:border-red-900">
                     <XCircle className="w-5 h-5 mr-2" />
@@ -892,10 +905,6 @@ export default function JobDetails() {
                             </div>
                             {(job.workerProgress === 'on_the_way' || job.workerProgress === 'at_location') && (
                               <div className="space-y-3">
-                                <div className="flex items-center text-amber-600 bg-amber-50 dark:bg-amber-950/30 p-3 rounded-xl border border-amber-100 dark:border-amber-900 text-sm">
-                                  <AlertTriangle className="w-4 h-4 mr-2 shrink-0" />
-                                  If the poster cancels now, you will receive 10% compensation within 24 hours.
-                                </div>
                                 <WorkerLocationTracker
                                   jobId={job.id}
                                   workerProgress={job.workerProgress}
@@ -1030,7 +1039,7 @@ export default function JobDetails() {
                 )}
               </div>
 
-              {showDisputeForm && isInProgress && !dispute && (isPoster || (isWorker && job.workerMarkedComplete)) && (
+              {showDisputeForm && !dispute && (isInProgress || isCompleted) && (isPoster || (isWorker && (job.workerMarkedComplete || isCompleted))) && (
                 <Card className="p-6">
                   <h4 className="font-bold font-display mb-4 flex items-center gap-2">
                     <Flag className="w-5 h-5 text-amber-600" />
