@@ -12,6 +12,7 @@ import { db } from "./db";
 import { users, disputeMessages, jobs, disputes, adminUsers, profiles, jobPostingFees, negotiationFeeAdjustments, suspensionAppeals, supportTickets } from "@shared/schema";
 import { eq, sql, and, count } from "drizzle-orm";
 import { getJobPostingFee, getAdditionalFee, getFeePercent } from "./config";
+import { authRateLimit, accountRateLimit, adminRateLimit } from "./rate-limit";
 import {
   sendWelcomeEmail,
   sendPasswordResetEmail,
@@ -299,7 +300,7 @@ export async function registerRoutes(
   app.use(ensureProfile);
 
   // --- MANUAL AUTH ROUTES ---
-  app.post('/api/auth/register', async (req, res) => {
+  app.post('/api/auth/register', accountRateLimit, async (req, res) => {
     try {
       const { firstName, lastName, email, password, phoneNumber } = req.body;
       if (!firstName || !lastName || !email || !password) {
@@ -351,7 +352,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post('/api/auth/login-manual', async (req, res) => {
+  app.post('/api/auth/login-manual', authRateLimit, async (req, res) => {
     try {
       const { email, password } = req.body;
       if (!email || !password) {
@@ -385,7 +386,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post('/api/auth/forgot-password', async (req, res) => {
+  app.post('/api/auth/forgot-password', accountRateLimit, async (req, res) => {
     try {
       const { email } = req.body;
       if (!email) return res.status(400).json({ message: "Email is required" });
@@ -408,7 +409,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post('/api/auth/reset-password', async (req, res) => {
+  app.post('/api/auth/reset-password', accountRateLimit, async (req, res) => {
     try {
       const { token, newPassword } = req.body;
       if (!token || !newPassword) return res.status(400).json({ message: "Token and new password are required" });
@@ -2309,7 +2310,7 @@ export async function registerRoutes(
   });
 
   // Staff admin auth routes
-  app.post('/api/admin/login', async (req, res) => {
+  app.post('/api/admin/login', adminRateLimit, async (req, res) => {
     try {
       const { email, password } = req.body;
       if (!email || !password) return res.status(400).json({ message: "Email and password required" });

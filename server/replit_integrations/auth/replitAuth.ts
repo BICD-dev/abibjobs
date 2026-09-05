@@ -8,6 +8,7 @@ import memoize from "memoizee";
 import connectPg from "connect-pg-simple";
 import { authStorage } from "./storage";
 import { setupGoogleAuth } from "./googleAuth";
+import { authRateLimit } from "../../rate-limit";
 
 const getOidcConfig = memoize(
   async () => {
@@ -23,7 +24,9 @@ let _sessionMiddleware: ReturnType<typeof session> | null = null;
 
 export function getSession() {
   if (_sessionMiddleware) return _sessionMiddleware;
-  const sessionTtl = 7 * 24 * 60 * 60 * 1000; // 1 week
+  // Session lifetime in hours, configurable via env (default: 1 hour).
+  const ttlHours = parseFloat(process.env.SESSION_TTL_HOURS ?? "1");
+  const sessionTtl = (isFinite(ttlHours) && ttlHours > 0 ? ttlHours : 1) * 60 * 60 * 1000;
   const pgStore = connectPg(session);
   const sessionStore = new pgStore({
     conString: process.env.DATABASE_URL,
@@ -123,7 +126,7 @@ export async function setupAuth(app: Express) {
     }
   };
 
-  app.get("/api/login", (req, res, next) => {
+  app.get("/api/login", authRateLimit, (req, res, next) => {
     if (!oidcConfig) {
       return res.redirect("/auth?login_error=oidc_unavailable");
     }
@@ -138,7 +141,7 @@ export async function setupAuth(app: Express) {
     })(req, res, next);
   });
 
-  app.get("/api/callback", (req, res, next) => {
+  app.get("/api/callback", authRateLimit, (req, res, next) => {
     if (!oidcConfig) {
       return res.redirect("/auth?login_error=oidc_unavailable");
     }

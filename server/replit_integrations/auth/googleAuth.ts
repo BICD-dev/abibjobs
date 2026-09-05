@@ -8,6 +8,7 @@ import { authStorage } from "./storage";
 import { db } from "../../db";
 import { adminUsers } from "@shared/schema";
 import { eq } from "drizzle-orm";
+import { authRateLimit } from "../../rate-limit";
 
 const GOOGLE_ISSUER = "https://accounts.google.com";
 const GOOGLE_STRATEGY = "google";
@@ -109,7 +110,7 @@ export async function setupGoogleAuth(app: Express) {
     )
   );
 
-  app.get("/auth/google", (req, res, next) => {
+  app.get("/auth/google", authRateLimit, (req, res, next) => {
     const returnTo = req.query.returnTo as string;
     if (returnTo && req.session) {
       (req.session as any).returnTo = returnTo;
@@ -120,7 +121,7 @@ export async function setupGoogleAuth(app: Express) {
     })(req, res, next);
   });
 
-  app.get("/auth/google/callback", (req, res, next) => {
+  app.get("/auth/google/callback", authRateLimit, (req, res, next) => {
     const returnTo = (req.session as any)?.returnTo || "/";
     if (req.session) {
       delete (req.session as any).returnTo;
