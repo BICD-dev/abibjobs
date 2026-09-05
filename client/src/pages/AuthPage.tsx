@@ -30,6 +30,17 @@ export default function AuthPage() {
     } else if (loginError === "google_failed") {
       toast({ title: "Login failed", description: "Google login failed. Please try again.", variant: "destructive" });
       window.history.replaceState({}, "", "/auth");
+    } else if (loginError === "banned") {
+      fetch("/api/config")
+        .then((r) => r.json())
+        .then((cfg: { supportEmail?: string }) => {
+          const support = cfg.supportEmail || "the company";
+          toast({ title: "Account banned", description: `Your account has been banned. To discuss this, please email ${support}.`, variant: "destructive" });
+        })
+        .catch(() => {
+          toast({ title: "Account banned", description: "Your account has been banned. Please contact the company to discuss this.", variant: "destructive" });
+        });
+      window.history.replaceState({}, "", "/auth");
     }
   }, []);
 

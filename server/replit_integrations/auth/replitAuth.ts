@@ -9,6 +9,9 @@ import connectPg from "connect-pg-simple";
 import { authStorage } from "./storage";
 import { setupGoogleAuth } from "./googleAuth";
 import { authRateLimit } from "../../rate-limit";
+import { db } from "../../db";
+import { profiles } from "@shared/schema";
+import { eq } from "drizzle-orm";
 
 const getOidcConfig = memoize(
   async () => {
@@ -155,10 +158,25 @@ export async function setupAuth(app: Express) {
         console.error("Auth callback error:", err?.message || info);
         return res.redirect("/?login_error=1");
       }
-      req.logIn(user, (loginErr) => {
+      req.logIn(user, async (loginErr) => {
         if (loginErr) {
           console.error("Login error:", loginErr.message);
           return res.redirect("/?login_error=1");
+        }
+        try {
+          const sub = String((user as any)?.claims?.sub ?? "");
+          const [profile] = await db.select().from(profiles).where(eq(profiles.userId, sub));
+          if (profile?.isBanned) {
+            console.warn("[auth] Banned Replit user login blocked:", sub);
+            req.logout(() => {
+              req.session.destroy(() => {
+                res.redirect("/auth?login_error=banned");
+              });
+            });
+            return;
+          }
+        } catch (err) {
+          console.error("[auth] Ban check failed during login:", err);
         }
         return res.redirect(returnTo);
       });

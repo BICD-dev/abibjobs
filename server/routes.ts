@@ -34,6 +34,7 @@ import {
   sendSuspensionAppealReceivedEmail,
   sendSuspensionAppealDecisionEmail,
   sendEscalatedCancellationAdminEmail,
+  SUPPORT_EMAIL,
 } from "./email";
 
 interface PaystackSession {
@@ -175,7 +176,7 @@ export async function registerRoutes(
 
   // Public platform config (fee percentage, etc.) — safe to expose
   app.get('/api/config', (_req, res) => {
-    res.json({ feePercent: getFeePercent() });
+    res.json({ feePercent: getFeePercent(), supportEmail: SUPPORT_EMAIL });
   });
 
   // Setup Object Storage (auth middleware + intent recording enforced inside)
@@ -371,6 +372,11 @@ export async function registerRoutes(
       const valid = await bcrypt.compare(password, user.passwordHash);
       if (!valid) {
         return res.status(401).json({ message: "Invalid email or password" });
+      }
+
+      const profile = await storage.getProfile(user.id);
+      if (profile?.isBanned) {
+        return res.status(403).json({ message: "Your account has been banned. Please contact the company to discuss this." });
       }
 
       if (req.isAuthenticated && req.isAuthenticated()) {

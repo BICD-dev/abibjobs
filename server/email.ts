@@ -33,6 +33,8 @@ const APP_URL = process.env.REPLIT_DOMAINS
   ? `https://${process.env.REPLIT_DOMAINS.split(",")[0]}`
   : "http://localhost:5000";
 
+export const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || "support@abibjobs.com";
+
 function fmt(amount: number) {
   return `₦${amount.toLocaleString("en-NG", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
@@ -335,8 +337,9 @@ export async function sendUserBannedEmail(to: string, name: string, reason: stri
     heading("Your Account Has Been Banned") +
     para(`Hi ${name}, your ABIB JOBS account has been permanently banned.`) +
     para(`Reason: <strong>${reason}</strong>`) +
-    para("Your active jobs have been cancelled. This decision is final. If you believe this is an error, please contact support.") +
-    btn(`${APP_URL}`, "Contact Support")
+    para("Your active jobs have been cancelled. This decision is final.") +
+    para(`If you believe this is a mistake, you can contact the company by emailing <a href="mailto:${SUPPORT_EMAIL}" style="color:#16a34a;text-decoration:underline;">${SUPPORT_EMAIL}</a> and we will review your case.`) +
+    btn(APP_URL, "Visit ABIB JOBS")
   );
   await send(to, "Your ABIB JOBS account has been banned", body);
 }

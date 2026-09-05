@@ -6,7 +6,7 @@ import type { Express } from "express";
 import memoize from "memoizee";
 import { authStorage } from "./storage";
 import { db } from "../../db";
-import { adminUsers } from "@shared/schema";
+import { adminUsers, profiles } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { authRateLimit } from "../../rate-limit";
 
@@ -135,10 +135,25 @@ export async function setupGoogleAuth(app: Express) {
         console.error("Google auth callback error:", err?.message || info);
         return res.redirect("/auth?login_error=google_failed");
       }
-      req.logIn(user, (loginErr) => {
+      req.logIn(user, async (loginErr) => {
         if (loginErr) {
           console.error("Google login error:", loginErr.message);
           return res.redirect("/auth?login_error=google_failed");
+        }
+        try {
+          const sub = String((user as any)?.claims?.sub ?? "");
+          const [profile] = await db.select().from(profiles).where(eq(profiles.userId, sub));
+          if (profile?.isBanned) {
+            console.warn("[auth] Banned Google user login blocked:", sub);
+            req.logout(() => {
+              req.session.destroy(() => {
+                res.redirect("/auth?login_error=banned");
+              });
+            });
+            return;
+          }
+        } catch (err) {
+          console.error("[auth] Ban check failed during login:", err);
         }
         return res.redirect(returnTo);
       });
