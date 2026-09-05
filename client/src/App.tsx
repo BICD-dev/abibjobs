@@ -24,7 +24,6 @@ import AdminSettings from "@/pages/AdminSettings";
 import AdminVerifications from "@/pages/AdminVerifications";
 import AdminDashboard from "@/pages/AdminDashboard";
 import AdminProfile from "@/pages/AdminProfile";
-import AdminPayroll from "@/pages/AdminPayroll";
 import AdminNotifications from "@/pages/AdminNotifications";
 import AdminSupport from "@/pages/AdminSupport";
 import AdminSecurityRecords from "@/pages/AdminSecurityRecords";
@@ -175,7 +174,6 @@ function Router() {
       <Route path="/admin/profile">
         {() => <AdminGate><AdminProfile /></AdminGate>}
       </Route>
-      <Route path="/admin/payroll" component={AdminPayroll} />
       <Route path="/admin/notifications">
         {() => <AdminGate><AdminNotifications /></AdminGate>}
       </Route>

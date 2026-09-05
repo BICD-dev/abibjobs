@@ -9,7 +9,6 @@ import {
   Menu, 
   X, 
   Briefcase, 
-  Wallet, 
   Receipt, 
   User, 
   LogOut,
@@ -69,7 +68,6 @@ export function Navbar() {
   if (isOwner) {
     adminLinks.push({ href: "/admin/dashboard", label: "Dashboard", icon: LayoutDashboard });
     adminLinks.push({ href: "/admin/earnings", label: "Earnings", icon: TrendingUp });
-    adminLinks.push({ href: "/admin/payroll", label: "Payroll", icon: Wallet });
     adminLinks.push({ href: "/admin/disputes", label: "Disputes", icon: Scale });
     adminLinks.push({ href: "/admin/staff", label: "Admin Staff", icon: Users });
     adminLinks.push({ href: "/admin/security", label: "Investigations", icon: Shield });
@@ -200,12 +198,6 @@ export function Navbar() {
                           <DropdownMenuItem className="cursor-pointer">
                             <TrendingUp className="mr-2 h-4 w-4" />
                             <span>Platform Earnings</span>
-                          </DropdownMenuItem>
-                        </Link>
-                        <Link href="/admin/payroll">
-                          <DropdownMenuItem className="cursor-pointer">
-                            <Wallet className="mr-2 h-4 w-4" />
-                            <span>Admin Payroll</span>
                           </DropdownMenuItem>
                         </Link>
                         <Link href="/admin/staff">
