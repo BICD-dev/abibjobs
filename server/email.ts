@@ -42,7 +42,11 @@ async function sendViaEmailJS(to: string, subject: string, html: string) {
     "https://api.emailjs.com/api/v1.0/email/send",
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        // EmailJS rejects requests without this header (400 Bad request).
+        "X-Requested-With": "XMLHttpRequest",
+      },
       body: JSON.stringify({
         service_id: EMAILJS_SERVICE_ID,
         template_id: EMAILJS_TEMPLATE_ID,
@@ -65,10 +69,16 @@ async function sendViaEmailJS(to: string, subject: string, html: string) {
 async function send(to: string, subject: string, html: string) {
   try {
     if (EMAIL_PROVIDER === "emailjs") {
-      if (!EMAILJS_SERVICE_ID || !EMAILJS_TEMPLATE_ID || !EMAILJS_PUBLIC_KEY) return;
+      if (!EMAILJS_SERVICE_ID || !EMAILJS_TEMPLATE_ID || !EMAILJS_PUBLIC_KEY) {
+        console.warn("[email] EmailJS is enabled but credentials are missing — email NOT sent:", subject, "->", to);
+        return;
+      }
       await sendViaEmailJS(to, subject, html);
     } else {
-      if (!process.env.SMTP_USER) return;
+      if (!process.env.SMTP_USER) {
+        console.warn("[email] EMAIL_PROVIDER is not emailjs but SMTP_USER is missing — email NOT sent:", subject, "->", to);
+        return;
+      }
       await transporter!.sendMail({ from: FROM, to, subject, html });
     }
   } catch (err) {

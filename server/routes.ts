@@ -3731,7 +3731,7 @@ export async function registerRoutes(
 
       const user = await storage.getUser(targetUserId);
       const name = user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || (user?.email || 'User') : 'User';
-      if (user?.email) sendUserSuspendedEmail(user.email, name, parsed.data.reason, parsed.data.duration ?? null).catch(() => {});
+      if (user?.email) sendUserSuspendedEmail(user.email, name, parsed.data.reason, parsed.data.duration ?? null).catch(err => console.error("[email] Suspension notification failed:", err));
 
       res.json({ success: true, cancelledJobs });
     } catch (err) {
@@ -3750,7 +3750,7 @@ export async function registerRoutes(
 
       const user = await storage.getUser(targetUserId);
       const name = user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || (user?.email || 'User') : 'User';
-      if (user?.email) sendUserUnsuspendedEmail(user.email, name).catch(() => {});
+      if (user?.email) sendUserUnsuspendedEmail(user.email, name).catch(err => console.error("[email] Unsuspension notification failed:", err));
 
       res.json({ success: true });
     } catch (err) {
@@ -3774,7 +3774,7 @@ export async function registerRoutes(
 
       const user = await storage.getUser(targetUserId);
       const name = user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || (user?.email || 'User') : 'User';
-      if (user?.email) sendUserBannedEmail(user.email, name, parsed.data.reason).catch(() => {});
+      if (user?.email) sendUserBannedEmail(user.email, name, parsed.data.reason).catch(err => console.error("[email] Ban notification failed:", err));
 
       res.json({ success: true, cancelledJobs });
     } catch (err) {
@@ -3794,7 +3794,7 @@ export async function registerRoutes(
 
       const user = await storage.getUser(targetUserId);
       const name = user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || (user?.email || 'User') : 'User';
-      if (user?.email) sendUserUnsuspendedEmail(user.email, name).catch(() => {});
+      if (user?.email) sendUserUnsuspendedEmail(user.email, name).catch(err => console.error("[email] Unban notification failed:", err));
 
       res.json({ success: true });
     } catch (err) {
